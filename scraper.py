@@ -26,8 +26,8 @@ from pathlib import Path
 # ═══════════════════════════════════════════════════════════════
 
 CONCURRENT_TABS = 5
-MIN_DELAY = 2.0
-MAX_DELAY = 5.0
+MIN_DELAY = 4.0
+MAX_DELAY = 8.0
 CHECKPOINT_INTERVAL = 10  # Save progress every N products
 CHECKPOINT_FILE = Path("scrape_checkpoint.json")
 
@@ -594,8 +594,27 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None):
             for p in products if p.get("variations")
         )
 
+        # Save failed URLs
+        scraped_product_urls = {p.get("product_url") or p.get("source_url") for p in products}
+        failed = [u for u in urls if u not in scraped_product_urls and u not in scraped_urls
+                  or (u in scraped_urls and u not in scraped_product_urls)]
+        # More reliable: any URL not in successful products
+        successful_ids = {p.get("id") for p in products if p.get("id")}
+        failed = [u for u in urls
+                  if _extract_product_id(u) not in successful_ids]
+
+        failed_file = output_csv.replace(".csv", "_failed.txt")
+        if not failed_file.endswith("_failed.txt"):
+            failed_file = "failed_urls.txt"
+        if failed:
+            with open(failed_file, "w") as f:
+                for u in failed:
+                    f.write(u + "\n")
+            print(f"  Failed:        {len(failed)} URLs → {failed_file}")
+
         print(f"\n  {'='*50}")
         print(f"  Scraped:      {len(products)} products")
+        print(f"  Failed:       {len(failed)} URLs")
         print(f"  With variants: {var_products} products ({total_vars} total variants)")
         print(f"  Time:          {elapsed:.0f}s ({len(products)/max(elapsed,1):.1f} products/s)")
         print(f"  Output:        {output_csv}")
@@ -605,5 +624,10 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None):
         _clear_checkpoint()
     else:
         print("\n  No products scraped successfully.")
+        # Save all as failed
+        with open("failed_urls.txt", "w") as f:
+            for u in urls:
+                f.write(u + "\n")
+        print(f"  All {len(urls)} URLs saved to failed_urls.txt for retry")
 
     return products

@@ -87,9 +87,11 @@ CATEGORIES = {
         "keywords": [
             "car model", "race car", "rally", "f1", "formula", "motorcycle",
             "motorbike", "truck", "muscle car", "classic car", "sports car",
-            "1/24", "1/18",
+            "1/24", "1/18", "car", "automobile", "vehicle model",
+            "hot rod", "drag car", "racing", "gt", "supercar",
         ],
-        "negative": ["tank", "aircraft", "ship", "bust", "infantry"],
+        "negative": ["tank", "aircraft", "ship", "bust", "infantry",
+                      "armored car"],
     },
 
     # ── Anime & Fantasy Figures ──
@@ -106,22 +108,36 @@ CATEGORIES = {
             "fantasy figure", "barbarian", "viking", "gladiator", "samurai",
             "knight figure", "crusader", "elven warrior", "dark elf",
             "female warrior", "amazon", "valkyrie", "berserker", "conan",
+            "warrior", "knight", "soldier", "archer", "swordsman",
+            "spartan", "centurion", "legionary", "roman soldier",
+            "medieval", "templar", "musketeer", "pirate figure",
+            "notre dame", "statue", "goddess", "angel figure",
+            "figure colorless", "self-assembled",
+            "resin model kits figure", "resin figure",
         ],
-        "negative": ["vehicle", "terrain", "tank", "aircraft", "bust"],
+        "negative": ["vehicle", "terrain", "tank", "aircraft",
+                      "1/64", "1/100", "1/144", "garage", "diorama scene"],
     },
     "scifi-figures": {
         "keywords": [
             "sci-fi figure", "cyberpunk", "robot figure", "android", "cyborg",
             "mecha pilot", "power armor", "alien figure", "post-apocalyptic",
+            "science fiction", "sci fi",
         ],
-        "negative": ["tank", "terrain", "bust", "fantasy"],
+        "negative": ["tank", "terrain", "fantasy"],
     },
     "busts-portraits": {
         "keywords": [
-            "bust", "portrait", "head", "torso", "1/10 bust", "1/12 bust",
+            "bust", "portrait", "torso", "1/10 bust", "1/12 bust",
             "display bust", "pedestal", "museum piece",
+            "resin bust", "model bust",
+            "200mm", "150mm", "100mm", "90mm", "75mm", "54mm",
+            "1/10", "1/9", "1/8", "1/7", "1/6",
+            "head sculpt", "face", "half body",
         ],
-        "negative": ["infantry", "vehicle", "terrain", "army", "troops"],
+        "negative": ["infantry", "vehicle", "terrain", "army", "troops",
+                      "1/64", "1/35", "1/72", "1/48", "1/100", "1/144",
+                      "garage", "diorama scene"],
     },
 
     # ── Diorama & Terrain ──

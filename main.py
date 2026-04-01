@@ -278,6 +278,8 @@ def process_products(products):
             "seo_description": seo_data["seo_description"],
             "handle": seo_data["handle"],
             "sku": f"CF-{sku_counter:06d}",
+            "variations": p.get("variations", ""),
+            "variation_images": p.get("variation_images", ""),
         })
         sku_counter += 1
 
