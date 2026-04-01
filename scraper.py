@@ -25,11 +25,18 @@ from pathlib import Path
 # CONFIG
 # ═══════════════════════════════════════════════════════════════
 
-CONTEXTS = 3              # Parallel browser contexts
-URLS_PER_CONTEXT = 25     # URLs before context dies and respawns
+# Speed profiles
+SPEED_PROFILES = {
+    "safe": {"contexts": 3, "urls_per_context": 25, "min_delay": 3.0, "max_delay": 6.0, "cooldown": 15},
+    "fast": {"contexts": 5, "urls_per_context": 30, "min_delay": 2.0, "max_delay": 4.0, "cooldown": 10},
+}
+
+# Defaults (overridden by --speed flag)
+CONTEXTS = 3
+URLS_PER_CONTEXT = 25
 MIN_DELAY = 3.0
 MAX_DELAY = 6.0
-COOLDOWN = 15             # Seconds between cycles
+COOLDOWN = 15
 
 CHECKPOINT_FILE = Path("scrape_checkpoint.json")
 
@@ -127,7 +134,8 @@ def _clear_checkpoint():
 # ASYNC PAGE SCRAPER
 # ═══════════════════════════════════════════════════════════════
 
-async def _scrape_page_async(context, url, debug=False):
+async def _scrape_page_async(context, url, debug=False,
+                              min_delay=MIN_DELAY, max_delay=MAX_DELAY):
     """Scrape one AliExpress product page (async Playwright)."""
     product_id = _extract_product_id(url)
     if not product_id:
@@ -228,11 +236,10 @@ async def _scrape_page_async(context, url, debug=False):
                             break
 
         # ── DOM: Images ──
-        # Product images are .jpg from alicdn.com/kf/S*.jpg (always start with S)
-        # Reject: icons, store logos, dimension-suffixed paths, non-jpg
         if not product.get("product_images"):
             images = []
             seen_hashes = set()
+            fallback_images = []  # any alicdn/kf/*.jpg for zero-image fallback
 
             all_imgs = await page.query_selector_all("img")
             if debug:
@@ -248,16 +255,22 @@ async def _scrape_page_async(context, url, debug=False):
                     if not full.startswith("http"):
                         full = f"https:{full}"
 
-                    # MUST be alicdn.com/kf/S (product images always start with S)
+                    # Skip ALL .png files (icons, badges, logos)
+                    if full.lower().endswith(".png") or full.lower().endswith(".gif"):
+                        continue
+
+                    # Collect fallback: any alicdn/kf/*.jpg
+                    if "alicdn.com/kf/" in full and re.search(r"\.jpe?g$", full, re.IGNORECASE):
+                        if full not in fallback_images:
+                            fallback_images.append(full)
+
+                    # Strict filter: alicdn.com/kf/S*.jpg only
                     if not re.search(r"alicdn\.com/kf/S", full):
                         continue
-                    # MUST end in .jpg or .jpeg
-                    if not re.search(r"\.(jpg|jpeg)$", full, re.IGNORECASE):
+                    if not re.search(r"\.jpe?g$", full, re.IGNORECASE):
                         continue
-                    # REJECT dimension patterns in path like /27x27/ or /48x48/
                     if re.search(r"/\d+x\d+", full):
                         continue
-                    # REJECT short filenames (logos tend to be short, product photos long)
                     fname_match = re.search(r"/kf/(.+)$", full)
                     if fname_match and len(fname_match.group(1)) < 20:
                         continue
@@ -272,6 +285,12 @@ async def _scrape_page_async(context, url, debug=False):
                     images.append(full)
                     if debug:
                         print(f"  [DEBUG] KEEP: {full[:80]}")
+
+            # Fallback: if strict filter found nothing, use any alicdn jpg
+            if not images and fallback_images:
+                images = fallback_images[:6]
+                if debug:
+                    print(f"[DEBUG] Using {len(images)} fallback images")
 
             if images:
                 product["product_image"] = images[0]
@@ -555,7 +574,8 @@ def _extract_variations_json(obj, product):
 # ═══════════════════════════════════════════════════════════════
 
 async def _context_worker(browser, worker_id, url_chunk, scraped_ids,
-                           progress, debug=False):
+                           progress, debug=False,
+                           min_delay=MIN_DELAY, max_delay=MAX_DELAY):
     """
     One browser context that scrapes its chunk of URLs.
     Returns list of scraped products.
@@ -578,7 +598,8 @@ async def _context_worker(browser, worker_id, url_chunk, scraped_ids,
             continue
 
         try:
-            product = await _scrape_page_async(context, url, debug=debug)
+            product = await _scrape_page_async(context, url, debug=debug,
+                                                min_delay=min_delay, max_delay=max_delay)
             if product and product.get("product_title"):
                 local_products.append(product)
                 scraped_ids.add(pid)
@@ -602,23 +623,30 @@ async def _context_worker(browser, worker_id, url_chunk, scraped_ids,
 # ORCHESTRATOR
 # ═══════════════════════════════════════════════════════════════
 
-async def _run_scraper(urls, scraped_ids, products, debug=False):
+async def _run_scraper(urls, scraped_ids, products, debug=False,
+                       contexts=None, urls_per_context=None,
+                       min_delay=None, max_delay=None, cooldown=None):
     """Main async scraper loop with rotating contexts."""
     from playwright.async_api import async_playwright
+
+    ctx_count = contexts or CONTEXTS
+    batch_size = urls_per_context or URLS_PER_CONTEXT
+    cd = cooldown or COOLDOWN
 
     remaining = [u for u in urls if _extract_product_id(u) not in scraped_ids]
     total = len(urls)
     already = total - len(remaining)
-    urls_per_cycle = CONTEXTS * URLS_PER_CONTEXT  # 75
+    urls_per_cycle = ctx_count * batch_size
 
     print(f"  {total} total URLs, {already} already scraped, "
           f"{len(remaining)} remaining")
-    print(f"  Strategy: {CONTEXTS} contexts × {URLS_PER_CONTEXT} URLs = "
-          f"{urls_per_cycle}/cycle, {COOLDOWN}s cooldown")
-    num_cycles = (len(remaining) + urls_per_cycle - 1) // urls_per_cycle
-    print(f"  Estimated: {num_cycles} cycles, ~{num_cycles * 3:.0f} minutes\n")
+    print(f"  Strategy: {ctx_count} contexts × {batch_size} URLs = "
+          f"{urls_per_cycle}/cycle, {cd}s cooldown")
+    num_cycles = max(1, (len(remaining) + urls_per_cycle - 1) // urls_per_cycle)
+    print(f"  Estimated: {num_cycles} cycles\n")
 
     progress = {"ok": 0, "fail": 0, "skip": already, "total": total}
+    scrape_start = time.time()
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
@@ -631,38 +659,46 @@ async def _run_scraper(urls, scraped_ids, products, debug=False):
             cycle_urls = remaining[cycle_start:cycle_start + urls_per_cycle]
             cycle_num = cycle_start // urls_per_cycle + 1
 
-            print(f"\n  ── Cycle {cycle_num}/{num_cycles}: "
-                  f"{len(cycle_urls)} URLs across {CONTEXTS} contexts ──")
+            # ETA calculation
+            elapsed = time.time() - scrape_start
+            if cycle_num > 1:
+                rate = (cycle_start) / elapsed if elapsed > 0 else 1
+                remaining_urls = len(remaining) - cycle_start
+                eta_secs = remaining_urls / rate if rate > 0 else 0
+                eta_min = eta_secs / 60
+                eta_str = f" | ETA: {eta_min:.0f} min"
+            else:
+                eta_str = ""
 
-            # Split URLs across contexts
+            print(f"\n  ── Cycle {cycle_num}/{num_cycles}: "
+                  f"{len(cycle_urls)} URLs across {ctx_count} contexts{eta_str} ──")
+
             chunks = []
-            for i in range(CONTEXTS):
-                chunk = cycle_urls[i * URLS_PER_CONTEXT:(i + 1) * URLS_PER_CONTEXT]
+            for i in range(ctx_count):
+                chunk = cycle_urls[i * batch_size:(i + 1) * batch_size]
                 if chunk:
                     chunks.append(chunk)
 
-            # Run all contexts concurrently with asyncio.gather
             tasks = [
-                _context_worker(browser, i + 1, chunk, scraped_ids, progress, debug=debug)
+                _context_worker(browser, i + 1, chunk, scraped_ids, progress,
+                                debug=debug, min_delay=min_delay or MIN_DELAY,
+                                max_delay=max_delay or MAX_DELAY)
                 for i, chunk in enumerate(chunks)
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Collect products from all contexts
             for result in results:
                 if isinstance(result, list):
                     products.extend(result)
                 elif isinstance(result, Exception):
                     print(f"  Context error: {result}")
 
-            # Checkpoint
             _save_checkpoint(scraped_ids, products)
             print(f"  Checkpoint: {len(products)} products saved")
 
-            # Cooldown (skip after last cycle)
             if cycle_start + urls_per_cycle < len(remaining):
-                print(f"  Cooling down {COOLDOWN}s...")
-                await asyncio.sleep(COOLDOWN)
+                print(f"  Cooling down {cd}s...")
+                await asyncio.sleep(cd)
 
         await browser.close()
 
@@ -673,9 +709,10 @@ async def _run_scraper(urls, scraped_ids, products, debug=False):
 # PUBLIC API
 # ═══════════════════════════════════════════════════════════════
 
-def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None, debug=False):
+def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None,
+                debug=False, speed="safe"):
     """
-    Scrape AliExpress URLs using 3 parallel browser contexts.
+    Scrape AliExpress URLs using parallel browser contexts.
     Each context processes 25 URLs then dies and respawns fresh.
     75 URLs per cycle, 15s cooldown between cycles.
     """
@@ -689,7 +726,20 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None, debug=
     scraped_ids, products = _load_checkpoint()
 
     start = time.time()
-    products = asyncio.run(_run_scraper(urls, scraped_ids, products, debug=debug))
+    profile = SPEED_PROFILES.get(speed, SPEED_PROFILES["safe"])
+    if speed == "fast":
+        print(f"  FAST MODE: {profile['contexts']} contexts, "
+              f"{profile['min_delay']}-{profile['max_delay']}s delays, "
+              f"{profile['cooldown']}s cooldown\n")
+
+    products = asyncio.run(_run_scraper(
+        urls, scraped_ids, products, debug=debug,
+        contexts=profile["contexts"],
+        urls_per_context=profile["urls_per_context"],
+        min_delay=profile["min_delay"],
+        max_delay=profile["max_delay"],
+        cooldown=profile["cooldown"],
+    ))
     elapsed = time.time() - start
 
     # Write CSV

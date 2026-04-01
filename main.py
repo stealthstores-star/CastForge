@@ -13,11 +13,15 @@ Commands:
   python main.py audit                          — Audit existing Shopify products
 """
 
+import base64
 import csv
 import hashlib
+import io
 import json
 import math
 import sys
+import time
+from pathlib import Path
 import os
 import re
 
@@ -667,7 +671,7 @@ def cmd_process_images(csv_path, fast=False):
     image_processor.process_batch(products, fast=fast, api_key=api_key)
 
 
-def cmd_scrape(urls_file, limit=None, debug=False):
+def cmd_scrape(urls_file, limit=None, debug=False, speed="safe"):
     """Scrape AliExpress product URLs to CSV."""
     print("\n══════════════════════════════════════")
     print("  CastForge AliExpress Scraper")
@@ -677,7 +681,182 @@ def cmd_scrape(urls_file, limit=None, debug=False):
     output = urls_file.replace(".txt", "_scraped.csv")
     if output == urls_file:
         output = "scraped_products.csv"
-    scrape_urls(urls_file, output, limit=limit, debug=debug)
+    scrape_urls(urls_file, output, limit=limit, debug=debug, speed=speed)
+
+
+def cmd_brand_images():
+    """Apply branded overlays to products already on Shopify."""
+    print("\n══════════════════════════════════════")
+    print("  CastForge Brand Image Processor")
+    print("══════════════════════════════════════\n")
+
+    from uploader import get_shopify_token
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
+
+    BRAND_CACHE = Path("brand_image_cache.json")
+    AMBER = (245, 158, 11)
+
+    def _load_brand_cache():
+        if BRAND_CACHE.exists():
+            return json.loads(BRAND_CACHE.read_text())
+        return {}
+
+    def _save_brand_cache(cache):
+        BRAND_CACHE.write_text(json.dumps(cache, indent=2))
+
+    # Load upload log
+    if not os.path.exists("upload_log.json"):
+        print("  No upload_log.json found. Upload products first.")
+        return
+
+    with open("upload_log.json") as f:
+        log = json.load(f)
+
+    product_ids = log.get("product_ids", [])
+    print(f"  Found {len(product_ids)} products in upload_log.json")
+
+    token = get_shopify_token()
+    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
+    base_url = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+
+    cache = _load_brand_cache()
+    processed = 0
+    skipped = 0
+    failed = 0
+
+    for batch_start in range(0, len(product_ids), 10):
+        batch = product_ids[batch_start:batch_start + 10]
+
+        for pid in batch:
+            pid_str = str(pid)
+            if pid_str in cache:
+                skipped += 1
+                continue
+
+            try:
+                # Fetch product
+                resp = requests.get(f"{base_url}/products/{pid}.json?fields=id,title,images",
+                                     headers=headers)
+                if resp.status_code != 200:
+                    failed += 1
+                    continue
+
+                product = resp.json()["product"]
+                title = product.get("title", "")
+                product_images = product.get("images", [])
+                if not product_images:
+                    failed += 1
+                    continue
+
+                first_image = product_images[0]
+                img_url = first_image.get("src", "")
+                if not img_url:
+                    failed += 1
+                    continue
+
+                # Download image
+                img_resp = requests.get(img_url, timeout=15)
+                if img_resp.status_code != 200:
+                    failed += 1
+                    continue
+
+                original = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
+
+                # Apply branded overlay
+                canvas = original.copy()
+                w, h = canvas.size
+
+                # Dark vignette
+                vignette = Image.new("L", (w, h), 0)
+                draw_v = ImageDraw.Draw(vignette)
+                cx, cy = w // 2, h // 2
+                max_r = int((w ** 2 + h ** 2) ** 0.5 / 2)
+                for r in range(max_r, 0, -4):
+                    brightness = int(100 * (r / max_r) ** 2)
+                    draw_v.ellipse([cx - r, cy - r, cx + r, cy + r], fill=brightness)
+                vignette = vignette.filter(ImageFilter.GaussianBlur(60))
+                vignette_rgb = Image.merge("RGB", [vignette, vignette, vignette])
+                canvas = ImageChops.subtract(canvas, vignette_rgb)
+
+                # Watermark
+                overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                draw_w = ImageDraw.Draw(overlay)
+                try:
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
+                except (OSError, IOError):
+                    try:
+                        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 18)
+                    except (OSError, IOError):
+                        font = ImageFont.load_default()
+                bbox = draw_w.textbbox((0, 0), "CASTFORGE", font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                draw_w.text((w - tw - 30, h - th - 25), "CASTFORGE",
+                            fill=(*AMBER, 26), font=font)
+                canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+
+                # Scale badge
+                scale = ""
+                m = re.search(r"(\d{2,3})\s*mm", title, re.IGNORECASE)
+                if m:
+                    scale = f"{m.group(1)}mm"
+                else:
+                    m = re.search(r"1[:/](\d{1,3})", title)
+                    if m:
+                        scale = f"1/{m.group(1)}"
+
+                if scale:
+                    badge_overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                    draw_b = ImageDraw.Draw(badge_overlay)
+                    try:
+                        bfont = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+                    except (OSError, IOError):
+                        try:
+                            bfont = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
+                        except (OSError, IOError):
+                            bfont = ImageFont.load_default()
+                    bbox = draw_b.textbbox((0, 0), scale, font=bfont)
+                    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                    px, py = 12, 6
+                    bx, by = 25, h - th - py * 2 - 25
+                    draw_b.rounded_rectangle([bx, by, bx + tw + px * 2, by + th + py * 2],
+                                              radius=8, fill=(20, 20, 20, 200))
+                    draw_b.text((bx + px, by + py), scale, fill=(*AMBER, 230), font=bfont)
+                    canvas = Image.alpha_composite(canvas.convert("RGBA"), badge_overlay).convert("RGB")
+
+                # Save to buffer
+                buf = io.BytesIO()
+                canvas.save(buf, "JPEG", quality=92)
+                img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+                # Upload as new position 1 image
+                upload_resp = requests.post(
+                    f"{base_url}/products/{pid}/images.json",
+                    headers=headers,
+                    json={"image": {
+                        "attachment": img_b64,
+                        "filename": f"castforge_hero_{pid}.jpg",
+                        "position": 1,
+                    }},
+                )
+                if upload_resp.status_code == 200:
+                    cache[pid_str] = True
+                    processed += 1
+                else:
+                    failed += 1
+
+                time.sleep(0.5)
+
+            except Exception as e:
+                failed += 1
+                if failed <= 3:
+                    print(f"    Error: {str(e)[:80]}")
+
+        _save_brand_cache(cache)
+        done = batch_start + len(batch)
+        print(f"  [{done}/{len(product_ids)}] {processed} branded, "
+              f"{skipped} cached, {failed} failed")
+
+    print(f"\n  Done: {processed} branded, {skipped} already done, {failed} failed")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -715,14 +894,17 @@ if __name__ == "__main__":
     debug_mode = "--debug" in args
     file_args = [a for a in args if not a.startswith("--")]
 
-    # Parse --limit N
+    # Parse --limit N and --speed fast|safe
     limit_val = None
+    speed_val = "safe"
     for i, a in enumerate(args):
         if a == "--limit" and i + 1 < len(args):
             try:
                 limit_val = int(args[i + 1])
             except ValueError:
                 pass
+        if a == "--speed" and i + 1 < len(args):
+            speed_val = args[i + 1]
 
     if command in COMMANDS_WITH_FILE and not file_args:
         print(f"Error: {command} requires an input file")
@@ -742,9 +924,11 @@ if __name__ == "__main__":
     elif command == "stats":
         cmd_stats(file_args[0])
     elif command == "scrape":
-        cmd_scrape(file_args[0], limit=limit_val, debug=debug_mode)
+        cmd_scrape(file_args[0], limit=limit_val, debug=debug_mode, speed=speed_val)
     elif command == "audit":
         cmd_audit()
+    elif command == "brand-images":
+        cmd_brand_images()
     else:
         print(f"Unknown command: {command}")
         print(USAGE)
