@@ -3,16 +3,18 @@
 CastForge Pipeline CLI
 
 Commands:
-  python main.py comply <input.csv>         — Run title compliance scan only
-  python main.py comply-images <input.csv>  — Scan images via Claude Vision
-  python main.py upload <input.csv>         — Full pipeline: comply → categorize → upload
-  python main.py export <input.csv>         — Comply → categorize → Shopify CSV export
-  python main.py stats <input.csv>          — Show category breakdown (no upload)
-  python main.py scrape <urls.txt>          — Scrape AliExpress URLs to CSV
-  python main.py audit                      — Audit existing Shopify products
+  python main.py comply <input.csv>             — Run title compliance scan only
+  python main.py comply-images <input.csv>      — Scan images via Claude Vision
+  python main.py upload <input.csv>             — Full pipeline: comply → categorize → upload
+  python main.py export <input.csv> [--fast]    — Comply → categorize → Shopify CSV export
+  python main.py process-images <input.csv>     — Download + process images (rembg)
+  python main.py stats <input.csv>              — Show category breakdown (no upload)
+  python main.py scrape <urls.txt>              — Scrape AliExpress URLs to CSV
+  python main.py audit                          — Audit existing Shopify products
 """
 
 import csv
+import hashlib
 import json
 import math
 import sys
@@ -24,6 +26,7 @@ import requests
 import config
 import compliance
 import categorizer
+import seo as seo_module
 from uploader import ShopifyUploader
 from exporter import export_shopify_csv
 
@@ -139,6 +142,154 @@ def calculate_price(product_price_gbp, shipping_gbp):
 
 
 # ═══════════════════════════════════════════════════════════════
+# DUPLICATE DETECTION
+# ═══════════════════════════════════════════════════════════════
+
+def _normalise_for_dedup(title):
+    """Reduce a title to a canonical form for duplicate detection."""
+    t = title.lower()
+    # Strip scale, numbers, common filler
+    t = re.sub(r"\b1[:/]\d{1,3}\b", "", t)
+    t = re.sub(r"\b\d{2,3}\s*mm\b", "", t)
+    t = re.sub(r"\b(resin|model|kit|diorama|miniature|figure|miniatura|"
+               r"minifigures?|minifigura|props?|diy|craft|toys?|collectib\w*|"
+               r"scenes?|garage|handmade|painted|sand|table|micro|landscape|"
+               r"display|collection|decoration|creative|photography|"
+               r"accessories|accessory|unpainted|unassembled)\b", "", t)
+    t = re.sub(r"[^a-z]", "", t)  # letters only
+    return t
+
+
+def _image_fingerprint(url):
+    """Extract a stable fingerprint from an image URL (AliExpress CDN hash)."""
+    # AliExpress URLs contain a unique hash like S1525b82106694501b6c2731009ed5b5bj
+    m = re.search(r"/([A-Za-z0-9]{30,})\.", url)
+    if m:
+        return m.group(1).lower()
+    return hashlib.md5(url.encode()).hexdigest()
+
+
+def deduplicate(products):
+    """
+    Remove duplicate products. Two products are duplicates if:
+      1. Their normalised titles match, OR
+      2. Their main image URL fingerprints match
+    Returns (unique_products, duplicate_count).
+    """
+    seen_titles = {}
+    seen_images = {}
+    unique = []
+    dupes = 0
+
+    for p in products:
+        title = p.get("title", "")
+        norm = _normalise_for_dedup(title)
+        img = p.get("image_url", "")
+        img_fp = _image_fingerprint(img) if img else None
+
+        # Check title duplicate
+        if norm and norm in seen_titles:
+            dupes += 1
+            continue
+
+        # Check image duplicate
+        if img_fp and img_fp in seen_images:
+            dupes += 1
+            continue
+
+        if norm:
+            seen_titles[norm] = True
+        if img_fp:
+            seen_images[img_fp] = True
+        unique.append(p)
+
+    if dupes:
+        print(f"  Dedup: removed {dupes} duplicates, {len(unique)} unique products remain")
+    return unique, dupes
+
+
+# ═══════════════════════════════════════════════════════════════
+# PRODUCT PROCESSING (shared between export/upload)
+# ═══════════════════════════════════════════════════════════════
+
+def process_products(products):
+    """
+    Run the full processing pipeline on a list of raw products:
+    compliance → dedup → categorize → price → SEO.
+    Returns (export_ready, blocked, dupes_removed).
+    """
+    # Step 1: Compliance
+    print("  Running compliance scan...")
+    blocked, warnings, clean, changed = compliance.compliance_report(products)
+    compliance.write_report(blocked, warnings, clean, changed)
+    print(f"  Blocked: {len(blocked)}, Changed: {len(changed)}, Clean: {len(clean)}")
+
+    uploadable = clean + changed
+    if not uploadable:
+        return [], blocked, 0
+
+    # Step 2: Dedup
+    uploadable, dupes_removed = deduplicate(uploadable)
+
+    # Step 3: Categorize + Price + SEO
+    print(f"  Categorizing and pricing {len(uploadable)} products...")
+    export_products = []
+    category_counts = {}
+    sku_counter = 1
+
+    for p in uploadable:
+        title = categorizer.clean_title(p["title"])
+        handle, score, parent = categorizer.categorize(title)
+        category_counts[handle] = category_counts.get(handle, 0) + 1
+        scale = categorizer.detect_scale(p.get("title", title))
+
+        price_gbp = _parse_price(p.get("raw_price", "0"))
+        shipping_gbp = _parse_price(p.get("raw_shipping", "0"))
+        sell_usd, compare_usd = calculate_price(price_gbp, shipping_gbp)
+
+        body_html = categorizer.generate_description(title, handle, scale)
+        parent_name = categorizer.PARENT_DISPLAY_NAMES.get(parent, "Collectible") if parent else "Collectible"
+
+        # Use full-size first image if available
+        image_url = p.get("image_url", "")
+        images_raw = p.get("images", "")
+        if images_raw:
+            first_full = images_raw.split("|")[0].strip()
+            if first_full:
+                image_url = first_full
+
+        # SEO
+        seo_data = seo_module.generate_seo(title, handle)
+
+        export_products.append({
+            "title": title,
+            "body_html": body_html,
+            "product_type": parent_name,
+            "tags": seo_data["tags"],
+            "price": sell_usd,
+            "compare_at_price": compare_usd,
+            "image_url": image_url,
+            "images": images_raw,
+            "category_handle": handle,
+            "parent_handle": parent,
+            "seo_title": seo_data["seo_title"],
+            "seo_description": seo_data["seo_description"],
+            "handle": seo_data["handle"],
+            "sku": f"CF-{sku_counter:06d}",
+        })
+        sku_counter += 1
+
+    # Category breakdown
+    print(f"\n  {'Category':<35} {'Count':>5}")
+    print(f"  {'-'*40}")
+    for h in sorted(category_counts, key=category_counts.get, reverse=True):
+        name = categorizer.CATEGORY_DISPLAY_NAMES.get(h, h)
+        print(f"  {name:<35} {category_counts[h]:>5}")
+
+    return export_products, blocked, dupes_removed
+
+
+# ═══════════════════════════════════════════════════════════════
 # COMMANDS
 # ═══════════════════════════════════════════════════════════════
 
@@ -219,101 +370,32 @@ def cmd_stats(csv_path):
 
 
 def cmd_upload(csv_path):
-    """Full pipeline: comply → categorize → price → upload as drafts."""
+    """Full pipeline: comply → dedup → categorize → price → upload as drafts."""
     print("\n╔══════════════════════════════════════╗")
     print("║  CastForge Full Upload Pipeline      ║")
     print("╚══════════════════════════════════════╝\n")
 
-    # ── Step 1: Load CSV ──
     print("Step 1: Loading CSV...")
     products = load_csv(csv_path)
 
-    # ── Step 2: Compliance scan ──
-    print("Step 2: Running compliance scan...")
-    blocked, warnings, clean, changed = compliance.compliance_report(products)
-    compliance.write_report(blocked, warnings, clean, changed)
+    print("Step 2: Processing products...")
+    upload_ready, blocked, dupes = process_products(products)
 
-    print(f"  Blocked:  {len(blocked)}")
-    print(f"  Changed:  {len(changed)}")
-    print(f"  Clean:    {len(clean)}")
-    print(f"  Warnings: {len(warnings)}")
-
-    # Merge clean + changed as uploadable (warnings go as drafts too in strict mode)
-    uploadable = clean + changed
-    if not uploadable:
+    if not upload_ready:
         print("\nNo products passed compliance. Aborting upload.")
         return
 
-    # ── Step 3: Categorize + Price + Enrich ──
-    print(f"\nStep 3: Categorizing and pricing {len(uploadable)} products...")
-    category_counts = {}
-    upload_ready = []
-
-    for p in uploadable:
-        # Clean title (AliExpress junk)
-        title = categorizer.clean_title(p["title"])
-
-        # Categorize
-        handle, score, parent = categorizer.categorize(title)
-        category_counts[handle] = category_counts.get(handle, 0) + 1
-
-        # Detect scale
-        scale = categorizer.detect_scale(p["title"])
-
-        # Calculate price
-        price_gbp = _parse_price(p.get("raw_price", "0"))
-        shipping_gbp = _parse_price(p.get("raw_shipping", "0"))
-        sell_usd, compare_usd = calculate_price(price_gbp, shipping_gbp)
-
-        # Generate description
-        body_html = categorizer.generate_description(title, handle, scale)
-        seo_title = categorizer.generate_seo_title(title)
-        seo_desc = categorizer.generate_seo_description(title)
-
-        # Get image URL (use full-size from product_images if available)
-        image_url = p.get("image_url", "")
-        images_raw = p.get("images", "")
-        if images_raw:
-            first_full = images_raw.split("|")[0].strip()
-            if first_full:
-                image_url = first_full
-
-        # Parent display name for product_type
-        parent_name = categorizer.PARENT_DISPLAY_NAMES.get(parent, "Collectible") if parent else "Collectible"
-
-        upload_ready.append({
-            "title": title,
-            "body_html": body_html,
-            "product_type": parent_name,
-            "tags": "new",
-            "price": sell_usd,
-            "compare_at_price": compare_usd,
-            "image_url": image_url,
-            "category_handle": handle,
-            "parent_handle": parent,
-            "seo_title": seo_title,
-            "seo_description": seo_desc,
-        })
-
-    # Print category breakdown
-    print(f"\n  {'Category':<35} {'Count':>5}")
-    print(f"  {'-'*40}")
-    for handle in sorted(category_counts, key=category_counts.get, reverse=True):
-        name = categorizer.CATEGORY_DISPLAY_NAMES.get(handle, handle)
-        print(f"  {name:<35} {category_counts[handle]:>5}")
-
-    # Print price samples
+    # Price samples
     print(f"\n  Price samples (first 5):")
     for p in upload_ready[:5]:
         print(f"    ${p['price']:.2f} (was ${p['compare_at_price']:.2f}) — {p['title'][:50]}")
 
-    # ── Step 4: Upload to Shopify ──
-    print(f"\nStep 4: Uploading {len(upload_ready)} products to Shopify as drafts...")
+    # Upload
+    print(f"\nStep 3: Uploading {len(upload_ready)} products to Shopify as drafts...")
     uploader = ShopifyUploader()
     results = uploader.upload_batch(upload_ready)
     uploader.print_summary()
 
-    # Save upload log
     with open("upload_log.json", "w") as f:
         json.dump({
             "total": len(upload_ready),
@@ -321,6 +403,7 @@ def cmd_upload(csv_path):
             "failed": results["failed"],
             "product_ids": results["product_ids"],
             "blocked_count": len(blocked),
+            "duplicates_removed": dupes,
         }, f, indent=2)
     print("  Saved upload_log.json")
 
@@ -384,46 +467,69 @@ def cmd_audit():
         print(f"Saved audit_results.json ({len(issues_found)} issues)")
 
 
-def cmd_export(csv_path):
-    """Comply → categorize → price → export Shopify-compatible CSV."""
-    print("\n╔══════════════════════════════════════╗")
-    print("║  CastForge CSV Export Pipeline       ║")
-    print("╚══════════════════════════════════════╝\n")
+def cmd_export(csv_path, fast=False):
+    """Comply → dedup → categorize → price → export Shopify-compatible CSV."""
+    mode = "FAST" if fast else "FULL"
+    print(f"\n╔══════════════════════════════════════╗")
+    print(f"║  CastForge CSV Export ({mode:4s} mode)    ║")
+    print(f"╚══════════════════════════════════════╝\n")
+    if fast:
+        print("  --fast: skipping image processing, using original images as-is\n")
 
-    # Step 1: Load
     print("Step 1: Loading CSV...")
     products = load_csv(csv_path)
 
-    # Step 2: Compliance
-    print("Step 2: Running compliance scan...")
-    blocked, warnings, clean, changed = compliance.compliance_report(products)
-    compliance.write_report(blocked, warnings, clean, changed)
-    print(f"  Blocked: {len(blocked)}, Changed: {len(changed)}, Clean: {len(clean)}")
+    print("Step 2: Processing products...")
+    export_products, blocked, dupes = process_products(products)
 
-    uploadable = clean + changed
-    if not uploadable:
+    if not export_products:
         print("\nNo products passed compliance.")
         return
 
-    # Step 3: Categorize + Price
-    print(f"\nStep 3: Categorizing and pricing {len(uploadable)} products...")
-    export_products = []
-    category_counts = {}
-    sku_counter = 1
+    # Export
+    output_path = csv_path.replace(".csv", "_shopify_import.csv")
+    if output_path == csv_path:
+        output_path = "shopify_import.csv"
 
-    for p in uploadable:
-        title = categorizer.clean_title(p["title"])
-        handle, score, parent = categorizer.categorize(title)
-        category_counts[handle] = category_counts.get(handle, 0) + 1
-        scale = categorizer.detect_scale(p.get("title", title))
+    print(f"\nStep 3: Exporting Shopify CSV...")
+    export_shopify_csv(export_products, output_path)
 
-        price_gbp = _parse_price(p.get("raw_price", "0"))
-        shipping_gbp = _parse_price(p.get("raw_shipping", "0"))
-        sell_usd, compare_usd = calculate_price(price_gbp, shipping_gbp)
+    print(f"\n  {'='*50}")
+    print(f"  Export complete!")
+    print(f"  Products:    {len(export_products)}")
+    print(f"  Blocked:     {len(blocked)}")
+    print(f"  Duplicates:  {dupes}")
+    print(f"  Output:      {output_path}")
+    print(f"  {'='*50}")
+    print(f"\n  Import via: Shopify Admin → Products → Import → {output_path}")
 
-        body_html = categorizer.generate_description(title, handle, scale)
-        parent_name = categorizer.PARENT_DISPLAY_NAMES.get(parent, "Collectible") if parent else "Collectible"
 
+def cmd_process_images(csv_path):
+    """Download and process product images with rembg background removal."""
+    print("\n══════════════════════════════════════")
+    print("  CastForge Image Processor")
+    print("══════════════════════════════════════\n")
+
+    try:
+        from rembg import remove as rembg_remove
+        from PIL import Image, ImageDraw, ImageFilter
+    except ImportError:
+        print("Image processing requires rembg and Pillow:")
+        print("  pip install rembg onnxruntime Pillow")
+        sys.exit(1)
+
+    products = load_csv(csv_path)
+
+    output_dir = "processed_images"
+    os.makedirs(output_dir, exist_ok=True)
+
+    BG_COLOR = (13, 13, 13)
+    CANVAS_SIZE = (1200, 1200)
+    total = len(products)
+    success = 0
+    failed = 0
+
+    for i, p in enumerate(products):
         image_url = p.get("image_url", "")
         images_raw = p.get("images", "")
         if images_raw:
@@ -431,45 +537,87 @@ def cmd_export(csv_path):
             if first_full:
                 image_url = first_full
 
-        export_products.append({
-            "title": title,
-            "body_html": body_html,
-            "product_type": parent_name,
-            "tags": "new",
-            "price": sell_usd,
-            "compare_at_price": compare_usd,
-            "image_url": image_url,
-            "images": images_raw,
-            "category_handle": handle,
-            "parent_handle": parent,
-            "seo_title": categorizer.generate_seo_title(title),
-            "seo_description": categorizer.generate_seo_description(title),
-            "sku": f"CF-{sku_counter:06d}",
-        })
-        sku_counter += 1
+        if not image_url:
+            failed += 1
+            continue
 
-    # Category breakdown
-    print(f"\n  {'Category':<35} {'Count':>5}")
-    print(f"  {'-'*40}")
-    for handle in sorted(category_counts, key=category_counts.get, reverse=True):
-        name = categorizer.CATEGORY_DISPLAY_NAMES.get(handle, handle)
-        print(f"  {name:<35} {category_counts[handle]:>5}")
+        title_slug = re.sub(r"[^a-z0-9]", "-", p.get("title", "img")[:40].lower()).strip("-")
+        output_path = os.path.join(output_dir, f"{i+1:04d}_{title_slug}.jpg")
 
-    # Step 4: Export
-    output_path = csv_path.replace(".csv", "_shopify_import.csv")
-    if output_path == csv_path:
-        output_path = "shopify_import.csv"
+        if os.path.exists(output_path):
+            success += 1
+            continue
 
-    print(f"\nStep 4: Exporting Shopify CSV...")
-    export_shopify_csv(export_products, output_path)
+        try:
+            # Download
+            resp = requests.get(image_url, timeout=15, headers={"Referer": "https://www.aliexpress.com/"})
+            if resp.status_code != 200:
+                failed += 1
+                continue
 
-    print(f"\n  {'='*50}")
-    print(f"  Export complete!")
-    print(f"  Products:    {len(export_products)}")
-    print(f"  Blocked:     {len(blocked)}")
-    print(f"  Output:      {output_path}")
-    print(f"  {'='*50}")
-    print(f"\n  Import via: Shopify Admin → Products → Import → {output_path}")
+            import io
+            original = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+
+            # Remove background
+            try:
+                no_bg = rembg_remove(original)
+            except Exception:
+                no_bg = original
+
+            # Create dark studio canvas
+            canvas = Image.new("RGB", CANVAS_SIZE, BG_COLOR)
+
+            # Add subtle radial gradient
+            gradient = Image.new("L", CANVAS_SIZE, 0)
+            draw = ImageDraw.Draw(gradient)
+            cx, cy = CANVAS_SIZE[0] // 2, CANVAS_SIZE[1] // 2
+            for r in range(min(CANVAS_SIZE) // 2, 0, -1):
+                brightness = int(30 * (1 - r / (min(CANVAS_SIZE) // 2)))
+                draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=brightness)
+            gradient = gradient.filter(ImageFilter.GaussianBlur(80))
+
+            # Composite gradient onto canvas
+            grad_rgb = Image.merge("RGB", [gradient, gradient, gradient])
+            from PIL import ImageChops
+            canvas = ImageChops.add(canvas, grad_rgb)
+
+            # Scale product to 75% of canvas, slight upward offset
+            product_img = no_bg
+            max_dim = int(CANVAS_SIZE[0] * 0.75)
+            product_img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+            pw, ph = product_img.size
+            x = (CANVAS_SIZE[0] - pw) // 2
+            y = (CANVAS_SIZE[1] - ph) // 2 - 30  # slight upward offset
+
+            # Add drop shadow
+            shadow = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+            shadow.paste(product_img, (x + 5, y + 8))
+            shadow_blur = shadow.filter(ImageFilter.GaussianBlur(15))
+            shadow_rgb = Image.new("RGB", CANVAS_SIZE, BG_COLOR)
+            shadow_rgb.paste(shadow_blur, mask=shadow_blur.split()[3])
+            canvas = Image.composite(
+                canvas,
+                shadow_rgb,
+                Image.new("L", CANVAS_SIZE, 200),
+            )
+
+            # Paste product
+            canvas.paste(product_img, (x, y), product_img if product_img.mode == "RGBA" else None)
+
+            # Save
+            canvas.save(output_path, "JPEG", quality=92)
+            success += 1
+
+        except Exception as e:
+            failed += 1
+            if failed <= 5:
+                print(f"    Failed: {p.get('title', '?')[:40]} — {str(e)[:60]}")
+
+        if (i + 1) % 20 == 0 or (i + 1) == total:
+            print(f"  [{i+1}/{total}] Processed — {success} OK, {failed} failed")
+
+    print(f"\n  Done: {success} images processed, {failed} failed")
+    print(f"  Output: {output_dir}/")
 
 
 def cmd_scrape(urls_file):
@@ -493,17 +641,21 @@ USAGE = """
 CastForge Pipeline CLI
 
 Usage:
-  python main.py comply <input.csv>         Title compliance scan
-  python main.py comply-images <input.csv>  Image compliance scan (Claude Vision)
-  python main.py upload <input.csv>         Full pipeline: comply → categorize → upload
-  python main.py export <input.csv>         Comply → categorize → Shopify CSV export
-  python main.py stats <input.csv>          Category breakdown (no upload)
-  python main.py scrape <urls.txt>          Scrape AliExpress URLs to CSV
-  python main.py audit                      Audit existing Shopify products
-  streamlit run dashboard.py                Web dashboard UI
+  python main.py comply <input.csv>              Title compliance scan
+  python main.py comply-images <input.csv>       Image compliance scan (Claude Vision)
+  python main.py upload <input.csv>              Full pipeline: comply → categorize → upload
+  python main.py export <input.csv> [--fast]     Comply → categorize → Shopify CSV export
+  python main.py process-images <input.csv>      Download + process images (rembg)
+  python main.py stats <input.csv>               Category breakdown (no upload)
+  python main.py scrape <urls.txt>               Scrape AliExpress URLs to CSV
+  python main.py audit                           Audit existing Shopify products
+  streamlit run dashboard.py                     Web dashboard UI
+
+Flags:
+  --fast    Skip image processing (use original images as-is)
 """
 
-COMMANDS_WITH_FILE = ("comply", "comply-images", "upload", "export", "stats", "scrape")
+COMMANDS_WITH_FILE = ("comply", "comply-images", "upload", "export", "process-images", "stats", "scrape")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -511,24 +663,29 @@ if __name__ == "__main__":
         sys.exit(1)
 
     command = sys.argv[1]
+    args = sys.argv[2:]
+    fast_mode = "--fast" in args
+    file_args = [a for a in args if not a.startswith("--")]
 
-    if command in COMMANDS_WITH_FILE and len(sys.argv) < 3:
+    if command in COMMANDS_WITH_FILE and not file_args:
         print(f"Error: {command} requires an input file")
         print(USAGE)
         sys.exit(1)
 
     if command == "comply":
-        cmd_comply(sys.argv[2])
+        cmd_comply(file_args[0])
     elif command == "comply-images":
-        cmd_comply_images(sys.argv[2])
+        cmd_comply_images(file_args[0])
     elif command == "upload":
-        cmd_upload(sys.argv[2])
+        cmd_upload(file_args[0])
     elif command == "export":
-        cmd_export(sys.argv[2])
+        cmd_export(file_args[0], fast=fast_mode)
+    elif command == "process-images":
+        cmd_process_images(file_args[0])
     elif command == "stats":
-        cmd_stats(sys.argv[2])
+        cmd_stats(file_args[0])
     elif command == "scrape":
-        cmd_scrape(sys.argv[2])
+        cmd_scrape(file_args[0])
     elif command == "audit":
         cmd_audit()
     else:

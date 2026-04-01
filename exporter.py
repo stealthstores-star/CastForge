@@ -2,10 +2,12 @@
 CastForge Shopify CSV Exporter
 Generates a Shopify-compatible CSV for bulk import via Admin → Products → Import.
 Follows Shopify's exact CSV format including multi-image rows.
+Uses the SEO module for handles, alt text, tags, titles, and descriptions.
 """
 
 import csv
-import re
+
+from seo import url_handle, image_alt_text, seo_title, meta_description, auto_tags
 
 
 # Shopify CSV columns (official import format)
@@ -21,24 +23,16 @@ SHOPIFY_COLUMNS = [
 ]
 
 
-def _make_handle(title):
-    """Generate a URL-safe handle from a product title."""
-    handle = title.lower().strip()
-    handle = re.sub(r"[^a-z0-9\s-]", "", handle)
-    handle = re.sub(r"\s+", "-", handle)
-    handle = re.sub(r"-{2,}", "-", handle)
-    handle = handle.strip("-")
-    return handle[:80]
-
-
 def export_shopify_csv(products, output_path):
     """
     Export products to Shopify-compatible CSV.
 
     Each product dict should have:
         title, body_html, product_type, tags, price, compare_at_price,
-        image_url, images (pipe-separated), category_handle,
-        seo_title, seo_description, sku
+        image_url, images (pipe-separated), category_handle
+
+    SEO title, meta description, handle, alt text, and auto-tags are
+    generated automatically by the SEO module.
 
     First row per product has all data + main image.
     Subsequent rows with same Handle have additional images only.
@@ -47,7 +41,25 @@ def export_shopify_csv(products, output_path):
     sku_counter = 1
 
     for product in products:
-        handle = _make_handle(product["title"])
+        cat = product.get("category_handle", "uncategorized")
+        title = product["title"]
+
+        # SEO-generated fields
+        handle = url_handle(title)
+        seo_t = seo_title(title, cat)
+        seo_d = meta_description(title, cat)
+
+        # Auto-tags merged with any existing tags
+        tags = auto_tags(title, cat)
+        extra_tags = product.get("tags", "")
+        if extra_tags:
+            if isinstance(extra_tags, str):
+                extra_tags = [t.strip() for t in extra_tags.split(",") if t.strip()]
+            for t in extra_tags:
+                if t.lower() not in [x.lower() for x in tags]:
+                    tags.append(t)
+        tags_str = ", ".join(tags)
+
         sku = product.get("sku", f"CF-{sku_counter:06d}")
         sku_counter += 1
 
@@ -64,20 +76,16 @@ def export_shopify_csv(products, output_path):
                 if img and img not in all_images:
                     all_images.append(img)
 
-        tags = product.get("tags", "new")
-        if isinstance(tags, list):
-            tags = ", ".join(tags)
-
         # First row — full product data + first image
         first_row = {
             "Handle": handle,
-            "Title": product["title"],
+            "Title": title,
             "Body (HTML)": product.get("body_html", ""),
             "Vendor": "CastForge",
             "Product Category": "",
             "Type": product.get("product_type", ""),
-            "Tags": tags,
-            "Published": "FALSE",  # Draft
+            "Tags": tags_str,
+            "Published": "FALSE",
             "Option1 Name": "Title",
             "Option1 Value": "Default Title",
             "Variant SKU": sku,
@@ -93,20 +101,20 @@ def export_shopify_csv(products, output_path):
             "Variant Weight Unit": "kg",
             "Image Src": all_images[0] if all_images else "",
             "Image Position": "1" if all_images else "",
-            "Image Alt Text": product["title"][:100] if all_images else "",
-            "SEO Title": product.get("seo_title", ""),
-            "SEO Description": product.get("seo_description", ""),
+            "Image Alt Text": image_alt_text(title, 1) if all_images else "",
+            "SEO Title": seo_t,
+            "SEO Description": seo_d,
             "Status": "draft",
         }
         rows.append(first_row)
 
-        # Additional image rows (same Handle, everything else blank)
+        # Additional image rows
         for i, img_url in enumerate(all_images[1:], start=2):
             img_row = {col: "" for col in SHOPIFY_COLUMNS}
             img_row["Handle"] = handle
             img_row["Image Src"] = img_url
             img_row["Image Position"] = str(i)
-            img_row["Image Alt Text"] = f"{product['title'][:80]} - Image {i}"
+            img_row["Image Alt Text"] = image_alt_text(title, i)
             rows.append(img_row)
 
     # Write CSV
@@ -117,5 +125,5 @@ def export_shopify_csv(products, output_path):
 
     product_count = len(products)
     image_count = len(rows)
-    print(f"  Exported {product_count} products ({image_count} rows including images) → {output_path}")
+    print(f"  Exported {product_count} products ({image_count} rows incl. images) → {output_path}")
     return output_path
