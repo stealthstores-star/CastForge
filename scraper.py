@@ -1,7 +1,8 @@
 """
 CastForge AliExpress Scraper
 
-3 parallel browsers, each processing 25 URLs before full restart.
+3 parallel browser contexts on one browser, async Playwright.
+Each context processes 25 URLs then dies and respawns fresh.
 75 URLs per cycle, 15s cooldown between cycles.
 ~1,500 URLs in ~55 minutes.
 
@@ -10,6 +11,7 @@ Usage:
     cd ~/CastForge && python3 main.py scrape links_part2.txt --limit 150
 """
 
+import asyncio
 import csv
 import json
 import os
@@ -17,20 +19,17 @@ import random
 import re
 import sys
 import time
-import threading
 from pathlib import Path
 
 # ═══════════════════════════════════════════════════════════════
 # CONFIG
 # ═══════════════════════════════════════════════════════════════
 
-BROWSERS = 3              # Parallel browser instances
-URLS_PER_BROWSER = 25     # URLs before browser dies and respawns
-TABS_PER_BROWSER = 2      # Concurrent tabs within each browser
-MIN_DELAY = 3.0           # Min seconds between pages
-MAX_DELAY = 6.0           # Max seconds between pages
-COOLDOWN = 15             # Seconds between browser respawn cycles
-CHECKPOINT_INTERVAL = 25  # Save progress every N products
+CONTEXTS = 3              # Parallel browser contexts
+URLS_PER_CONTEXT = 25     # URLs before context dies and respawns
+MIN_DELAY = 3.0
+MAX_DELAY = 6.0
+COOLDOWN = 15             # Seconds between cycles
 
 CHECKPOINT_FILE = Path("scrape_checkpoint.json")
 
@@ -56,6 +55,18 @@ CSV_FIELDNAMES = [
     "variations", "variation_images",
 ]
 
+STEALTH_JS = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+window.chrome = { runtime: {} };
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) =>
+    parameters.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : originalQuery(parameters);
+"""
+
 
 def _extract_product_id(url):
     m = re.search(r"(?:/item/|productId=)(\d+)", url)
@@ -72,9 +83,6 @@ def _random_viewport():
 # CHECKPOINT
 # ═══════════════════════════════════════════════════════════════
 
-_checkpoint_lock = threading.Lock()
-
-
 def _load_checkpoint():
     if CHECKPOINT_FILE.exists():
         data = json.loads(CHECKPOINT_FILE.read_text())
@@ -83,11 +91,10 @@ def _load_checkpoint():
 
 
 def _save_checkpoint(scraped_ids, products):
-    with _checkpoint_lock:
-        CHECKPOINT_FILE.write_text(json.dumps({
-            "scraped_ids": list(scraped_ids),
-            "products": products,
-        }, ensure_ascii=False))
+    CHECKPOINT_FILE.write_text(json.dumps({
+        "scraped_ids": list(scraped_ids),
+        "products": products,
+    }, ensure_ascii=False))
 
 
 def _clear_checkpoint():
@@ -96,38 +103,21 @@ def _clear_checkpoint():
 
 
 # ═══════════════════════════════════════════════════════════════
-# STEALTH
+# ASYNC PAGE SCRAPER
 # ═══════════════════════════════════════════════════════════════
 
-STEALTH_JS = """
-Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-window.chrome = { runtime: {} };
-const originalQuery = window.navigator.permissions.query;
-window.navigator.permissions.query = (parameters) =>
-    parameters.name === 'notifications'
-        ? Promise.resolve({ state: Notification.permission })
-        : originalQuery(parameters);
-"""
-
-
-# ═══════════════════════════════════════════════════════════════
-# SINGLE PAGE SCRAPER
-# ═══════════════════════════════════════════════════════════════
-
-def _scrape_page(context, url):
-    """Scrape one AliExpress product page."""
+async def _scrape_page_async(context, url):
+    """Scrape one AliExpress product page (async Playwright)."""
     product_id = _extract_product_id(url)
     if not product_id:
         return None
 
-    page = context.new_page()
-    page.add_init_script(STEALTH_JS)
+    page = await context.new_page()
+    await page.add_init_script(STEALTH_JS)
 
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=25000)
-        page.wait_for_timeout(int(random.uniform(MIN_DELAY, MAX_DELAY) * 1000))
+        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        await page.wait_for_timeout(int(random.uniform(MIN_DELAY, MAX_DELAY) * 1000))
 
         product = {
             "id": product_id,
@@ -141,18 +131,18 @@ def _scrape_page(context, url):
             "variations": "", "variation_images": "",
         }
 
-        html = page.content()
+        html = await page.content()
 
-        # Try embedded JSON first
+        # Try embedded JSON first (fast)
         json_product = _extract_from_embedded_json(html, url, product_id)
         if json_product and json_product.get("product_title"):
             return json_product
 
         # DOM fallback
         for sel in ["h1[data-pl='product-title']", "h1.product-title-text", "h1"]:
-            el = page.query_selector(sel)
+            el = await page.query_selector(sel)
             if el:
-                text = el.inner_text().strip()
+                text = (await el.inner_text()).strip()
                 if len(text) > 5:
                     product["product_title"] = text
                     break
@@ -161,25 +151,25 @@ def _scrape_page(context, url):
                      "[class*='price--current'] span",
                      "[class*='Price_price__'] span",
                      "[class*='product-price-value']"]:
-            el = page.query_selector(sel)
+            el = await page.query_selector(sel)
             if el:
-                product["product_price"] = el.inner_text().strip()
+                product["product_price"] = (await el.inner_text()).strip()
                 break
 
         for sel in ["[class*='Price_originalPrice__']",
                      "[class*='price--original'] span"]:
-            el = page.query_selector(sel)
+            el = await page.query_selector(sel)
             if el:
-                product["product_original_price"] = el.inner_text().strip()
+                product["product_original_price"] = (await el.inner_text()).strip()
                 break
 
         images = []
         for sel in ["img[class*='slider--img']", ".images-view-item img",
                      "[class*='magnifier'] img", "img[class*='pdp-img']"]:
-            img_els = page.query_selector_all(sel)
+            img_els = await page.query_selector_all(sel)
             if img_els:
                 for img_el in img_els:
-                    src = img_el.get_attribute("src") or ""
+                    src = await img_el.get_attribute("src") or ""
                     if src and ("alicdn" in src or "ae01" in src):
                         full = re.sub(r"_\d+x\d+\.\w+$", ".jpg", src)
                         if not full.startswith("http"):
@@ -193,9 +183,9 @@ def _scrape_page(context, url):
 
         for sel in ["[class*='dynamic-shipping'] span[class*='bold']",
                      "[class*='shipping-value']"]:
-            el = page.query_selector(sel)
+            el = await page.query_selector(sel)
             if el:
-                text = el.inner_text().strip()
+                text = (await el.inner_text()).strip()
                 if "free" in text.lower():
                     product["shipping"] = "0"
                 else:
@@ -205,20 +195,20 @@ def _scrape_page(context, url):
                 break
 
         for sel in ["[class*='store-name'] a", "a[class*='store--name']"]:
-            el = page.query_selector(sel)
+            el = await page.query_selector(sel)
             if el:
-                product["store_name"] = el.inner_text().strip()
+                product["store_name"] = (await el.inner_text()).strip()
                 break
 
         for sel in ["[class*='reviewer--sold']", "span[class*='count--trade']"]:
-            el = page.query_selector(sel)
+            el = await page.query_selector(sel)
             if el:
-                product["total_sales"] = el.inner_text().strip()
+                product["total_sales"] = (await el.inner_text()).strip()
                 product["trade_info"] = product["total_sales"]
                 break
 
-        # Variations from DOM
-        variations = _scrape_variations_dom(page)
+        # DOM variations
+        variations = await _scrape_variations_dom(page)
         if variations:
             product["variations"] = json.dumps(variations, ensure_ascii=False)
             var_imgs = {v["name"]: v["image"] for v in variations if v.get("image")}
@@ -230,11 +220,48 @@ def _scrape_page(context, url):
     except Exception:
         return None
     finally:
-        page.close()
+        await page.close()
+
+
+async def _scrape_variations_dom(page):
+    variations = []
+    els = []
+    for sel in ["[class*='sku-item']", "[class*='skuItem']",
+                 "[class*='sku-property-item']", "[class*='property-item']"]:
+        els = await page.query_selector_all(sel)
+        if els:
+            break
+    if not els:
+        return []
+
+    option_name = "Style"
+    for lsel in ["[class*='sku-title']", "[class*='property-title']", "[class*='sku--title']"]:
+        lel = await page.query_selector(lsel)
+        if lel:
+            text = (await lel.inner_text()).strip().rstrip(":")
+            if text:
+                option_name = text
+            break
+
+    for el in els:
+        var = {"name": "", "price": "", "image": "", "option_name": option_name, "available": True}
+        var["name"] = (await el.get_attribute("title")) or (await el.inner_text()).strip()
+        img_el = await el.query_selector("img")
+        if img_el:
+            src = (await img_el.get_attribute("src")) or ""
+            if src and ("alicdn" in src or "ae01" in src):
+                full = re.sub(r"_\d+x\d+\.\w+$", ".jpg", src)
+                var["image"] = full if full.startswith("http") else f"https:{full}"
+        classes = (await el.get_attribute("class")) or ""
+        if "disabled" in classes or "unavailable" in classes:
+            var["available"] = False
+        if var["name"]:
+            variations.append(var)
+    return variations
 
 
 # ═══════════════════════════════════════════════════════════════
-# JSON EXTRACTION
+# JSON EXTRACTION (sync — operates on strings, no Playwright)
 # ═══════════════════════════════════════════════════════════════
 
 def _extract_from_embedded_json(html, url, product_id):
@@ -352,7 +379,6 @@ def _extract_variations_json(obj, product):
     prop_list = obj.get("productSKUPropertyList", [])
     if not isinstance(prop_list, list) or not prop_list:
         return
-
     variations = []
     for prop in prop_list:
         option_name = prop.get("skuPropertyName", "Style")
@@ -370,7 +396,6 @@ def _extract_variations_json(obj, product):
                 var["image"] = img if img.startswith("http") else f"https:{img}"
             if var["name"]:
                 variations.append(var)
-
     if variations:
         product["variations"] = json.dumps(variations, ensure_ascii=False)
         var_imgs = {v["name"]: v["image"] for v in variations if v.get("image")}
@@ -378,208 +403,153 @@ def _extract_variations_json(obj, product):
             product["variation_images"] = json.dumps(var_imgs, ensure_ascii=False)
 
 
-def _scrape_variations_dom(page):
-    variations = []
-    els = []
-    for sel in ["[class*='sku-item']", "[class*='skuItem']",
-                 "[class*='sku-property-item']", "[class*='property-item']"]:
-        els = page.query_selector_all(sel)
-        if els:
-            break
-    if not els:
-        return []
-
-    option_name = "Style"
-    for lsel in ["[class*='sku-title']", "[class*='property-title']", "[class*='sku--title']"]:
-        lel = page.query_selector(lsel)
-        if lel:
-            text = lel.inner_text().strip().rstrip(":")
-            if text:
-                option_name = text
-            break
-
-    for el in els:
-        var = {"name": "", "price": "", "image": "", "option_name": option_name, "available": True}
-        var["name"] = el.get_attribute("title") or el.inner_text().strip()
-        img_el = el.query_selector("img")
-        if img_el:
-            src = img_el.get_attribute("src") or ""
-            if src and ("alicdn" in src or "ae01" in src):
-                full = re.sub(r"_\d+x\d+\.\w+$", ".jpg", src)
-                var["image"] = full if full.startswith("http") else f"https:{full}"
-        classes = el.get_attribute("class") or ""
-        if "disabled" in classes or "unavailable" in classes:
-            var["available"] = False
-        if var["name"]:
-            variations.append(var)
-    return variations
-
-
 # ═══════════════════════════════════════════════════════════════
-# WORKER — one browser instance processing its URL chunk
+# CONTEXT WORKER — one context processing its URL chunk
 # ═══════════════════════════════════════════════════════════════
 
-def _browser_worker(pw, worker_id, url_chunk, results, results_lock,
-                    scraped_ids, total_all, counter, counter_lock):
+async def _context_worker(browser, worker_id, url_chunk, scraped_ids,
+                           progress):
     """
-    One browser instance that scrapes its chunk of URLs then dies.
-    Thread-safe via locks for shared state.
+    One browser context that scrapes its chunk of URLs.
+    Returns list of scraped products.
     """
     ua = random.choice(USER_AGENTS)
     vp = _random_viewport()
+    tz = random.choice(["America/New_York", "Europe/London",
+                         "America/Chicago", "America/Los_Angeles"])
 
-    try:
-        browser = pw.chromium.launch(
+    context = await browser.new_context(
+        user_agent=ua, viewport=vp, locale="en-US", timezone_id=tz,
+    )
+
+    local_products = []
+
+    for url in url_chunk:
+        pid = _extract_product_id(url)
+        if pid and pid in scraped_ids:
+            progress["skip"] += 1
+            continue
+
+        try:
+            product = await _scrape_page_async(context, url)
+            if product and product.get("product_title"):
+                local_products.append(product)
+                scraped_ids.add(pid)
+                progress["ok"] += 1
+            else:
+                progress["fail"] += 1
+        except Exception:
+            progress["fail"] += 1
+
+        done = progress["ok"] + progress["fail"] + progress["skip"]
+        total = progress["total"]
+        if done % 5 == 0:
+            print(f"  [{done}/{total}] {progress['ok']} OK, "
+                  f"{progress['fail']} fail — Ctx {worker_id}")
+
+    await context.close()
+    return local_products
+
+
+# ═══════════════════════════════════════════════════════════════
+# ORCHESTRATOR
+# ═══════════════════════════════════════════════════════════════
+
+async def _run_scraper(urls, scraped_ids, products):
+    """Main async scraper loop with rotating contexts."""
+    from playwright.async_api import async_playwright
+
+    remaining = [u for u in urls if _extract_product_id(u) not in scraped_ids]
+    total = len(urls)
+    already = total - len(remaining)
+    urls_per_cycle = CONTEXTS * URLS_PER_CONTEXT  # 75
+
+    print(f"  {total} total URLs, {already} already scraped, "
+          f"{len(remaining)} remaining")
+    print(f"  Strategy: {CONTEXTS} contexts × {URLS_PER_CONTEXT} URLs = "
+          f"{urls_per_cycle}/cycle, {COOLDOWN}s cooldown")
+    num_cycles = (len(remaining) + urls_per_cycle - 1) // urls_per_cycle
+    print(f"  Estimated: {num_cycles} cycles, ~{num_cycles * 3:.0f} minutes\n")
+
+    progress = {"ok": 0, "fail": 0, "skip": already, "total": total}
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled",
                   "--no-sandbox", "--disable-dev-shm-usage"],
         )
-        context = browser.new_context(
-            user_agent=ua,
-            viewport=vp,
-            locale="en-US",
-            timezone_id=random.choice(["America/New_York", "Europe/London",
-                                        "America/Chicago", "America/Los_Angeles"]),
-        )
 
-        local_products = []
-        local_success = 0
-        local_fail = 0
+        for cycle_start in range(0, len(remaining), urls_per_cycle):
+            cycle_urls = remaining[cycle_start:cycle_start + urls_per_cycle]
+            cycle_num = cycle_start // urls_per_cycle + 1
 
-        for url in url_chunk:
-            pid = _extract_product_id(url)
+            print(f"\n  ── Cycle {cycle_num}/{num_cycles}: "
+                  f"{len(cycle_urls)} URLs across {CONTEXTS} contexts ──")
 
-            # Skip already-scraped
-            with results_lock:
-                if pid and pid in scraped_ids:
-                    continue
+            # Split URLs across contexts
+            chunks = []
+            for i in range(CONTEXTS):
+                chunk = cycle_urls[i * URLS_PER_CONTEXT:(i + 1) * URLS_PER_CONTEXT]
+                if chunk:
+                    chunks.append(chunk)
 
-            try:
-                product = _scrape_page(context, url)
-                if product and product.get("product_title"):
-                    local_products.append(product)
-                    local_success += 1
-                    with results_lock:
-                        scraped_ids.add(pid)
-                else:
-                    local_fail += 1
-            except Exception:
-                local_fail += 1
+            # Run all contexts concurrently with asyncio.gather
+            tasks = [
+                _context_worker(browser, i + 1, chunk, scraped_ids, progress)
+                for i, chunk in enumerate(chunks)
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Update global counter for progress
-            with counter_lock:
-                counter[0] += 1
-                done = counter[0]
-                if done % 5 == 0 or done == total_all:
-                    with results_lock:
-                        total_ok = len(results) + sum(
-                            len(r) for r in [local_products])
-                    print(f"  [{done}/{total_all}] ~{total_ok} OK — "
-                          f"Browser {worker_id}: {local_success} OK, {local_fail} fail")
+            # Collect products from all contexts
+            for result in results:
+                if isinstance(result, list):
+                    products.extend(result)
+                elif isinstance(result, Exception):
+                    print(f"  Context error: {result}")
 
-        context.close()
-        browser.close()
+            # Checkpoint
+            _save_checkpoint(scraped_ids, products)
+            print(f"  Checkpoint: {len(products)} products saved")
 
-        # Merge results
-        with results_lock:
-            results.extend(local_products)
+            # Cooldown (skip after last cycle)
+            if cycle_start + urls_per_cycle < len(remaining):
+                print(f"  Cooling down {COOLDOWN}s...")
+                await asyncio.sleep(COOLDOWN)
 
-    except Exception as e:
-        print(f"  Browser {worker_id} crashed: {str(e)[:80]}")
+        await browser.close()
+
+    return products
 
 
 # ═══════════════════════════════════════════════════════════════
-# ORCHESTRATOR — parallel browser cycles
+# PUBLIC API
 # ═══════════════════════════════════════════════════════════════
 
 def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None):
     """
-    Scrape AliExpress URLs using 3 parallel browsers.
-    Each browser processes 25 URLs then dies and respawns fresh.
+    Scrape AliExpress URLs using 3 parallel browser contexts.
+    Each context processes 25 URLs then dies and respawns fresh.
     75 URLs per cycle, 15s cooldown between cycles.
     """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("Playwright is required:")
-        print("  pip install playwright")
-        print("  python -m playwright install chromium")
-        sys.exit(1)
-
     with open(urls_file) as f:
-        urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        urls = [line.strip() for line in f
+                if line.strip() and not line.startswith("#")]
 
     if limit:
         urls = urls[:limit]
 
-    # Load checkpoint
     scraped_ids, products = _load_checkpoint()
 
-    # Filter out already-scraped
-    remaining = [u for u in urls if _extract_product_id(u) not in scraped_ids]
-
-    total = len(urls)
-    already = total - len(remaining)
-    urls_per_cycle = BROWSERS * URLS_PER_BROWSER  # 75
-
-    print(f"  {total} total URLs, {already} already scraped, {len(remaining)} remaining")
-    print(f"  Strategy: {BROWSERS} browsers × {URLS_PER_BROWSER} URLs = "
-          f"{urls_per_cycle}/cycle, {COOLDOWN}s cooldown")
-    print(f"  Estimated: {len(remaining) // urls_per_cycle + 1} cycles, "
-          f"~{(len(remaining) // urls_per_cycle + 1) * 3:.0f} minutes\n")
-
     start = time.time()
-    counter = [already]  # mutable counter for threads
-    counter_lock = threading.Lock()
-    results_lock = threading.Lock()
-
-    with sync_playwright() as pw:
-        # Process in cycles of 75 URLs
-        for cycle_start in range(0, len(remaining), urls_per_cycle):
-            cycle_urls = remaining[cycle_start:cycle_start + urls_per_cycle]
-            cycle_num = cycle_start // urls_per_cycle + 1
-            total_cycles = len(remaining) // urls_per_cycle + 1
-
-            print(f"\n  ── Cycle {cycle_num}/{total_cycles}: "
-                  f"{len(cycle_urls)} URLs across {BROWSERS} browsers ──")
-
-            # Split URLs across browsers
-            chunks = []
-            for i in range(BROWSERS):
-                chunk = cycle_urls[i * URLS_PER_BROWSER:(i + 1) * URLS_PER_BROWSER]
-                if chunk:
-                    chunks.append(chunk)
-
-            # Launch browsers in parallel threads
-            threads = []
-            for i, chunk in enumerate(chunks):
-                t = threading.Thread(
-                    target=_browser_worker,
-                    args=(pw, i + 1, chunk, products, results_lock,
-                          scraped_ids, total, counter, counter_lock),
-                )
-                threads.append(t)
-                t.start()
-
-            # Wait for all browsers to finish
-            for t in threads:
-                t.join()
-
-            # Checkpoint after each cycle
-            _save_checkpoint(scraped_ids, products)
-            print(f"  Checkpoint saved: {len(products)} products")
-
-            # Cooldown between cycles (skip after last)
-            if cycle_start + urls_per_cycle < len(remaining):
-                print(f"  Cooling down {COOLDOWN}s before next cycle...")
-                time.sleep(COOLDOWN)
-
+    products = asyncio.run(_run_scraper(urls, scraped_ids, products))
     elapsed = time.time() - start
 
     # Write CSV
     if products:
         with open(output_csv, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES, extrasaction="ignore")
+            writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES,
+                                     extrasaction="ignore")
             writer.writeheader()
             for prod in products:
                 writer.writerow(prod)
@@ -590,10 +560,9 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None):
             for p in products if p.get("variations")
         )
 
-        # Save failed URLs
         successful_ids = {p.get("id") for p in products if p.get("id")}
-        failed = [u for u in urls if _extract_product_id(u) not in successful_ids]
-
+        failed = [u for u in urls
+                  if _extract_product_id(u) not in successful_ids]
         failed_file = output_csv.replace(".csv", "_failed.txt")
         if failed:
             with open(failed_file, "w") as f:
@@ -603,7 +572,7 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None):
         print(f"\n  {'='*55}")
         print(f"  Scraped:       {len(products)} products")
         print(f"  Failed:        {len(failed)} URLs → {failed_file}")
-        print(f"  With variants: {var_products} products ({total_vars} total variants)")
+        print(f"  With variants: {var_products} ({total_vars} total variants)")
         print(f"  Time:          {elapsed:.0f}s ({elapsed/60:.1f} min)")
         print(f"  Speed:         {len(products)/max(elapsed,1)*60:.0f} products/min")
         print(f"  Output:        {output_csv}")
@@ -615,6 +584,6 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None):
         with open("failed_urls.txt", "w") as f:
             for u in urls:
                 f.write(u + "\n")
-        print(f"  All {len(urls)} URLs saved to failed_urls.txt")
+        print(f"  All {len(urls)} URLs → failed_urls.txt")
 
     return products
