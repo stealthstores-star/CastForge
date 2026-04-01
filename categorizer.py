@@ -259,11 +259,10 @@ _TITLE_TYPE_SUFFIX = {
     "anime-characters": "Resin Figure",
     "fantasy-warriors": "Resin Figure",
     "scifi-figures": "Resin Figure",
-    "uncategorized": "Resin Figure",
 }
 
 
-def clean_title(title, category_handle="uncategorized"):
+def clean_title(title, category_handle="terrain-props"):
     """
     Remove AliExpress spam, title-case, and limit to 60 chars.
     Format: descriptive name + scale + Resin Figure/Kit/Bust.
@@ -385,10 +384,51 @@ def categorize(title, description=""):
     best_score = scores[best]
 
     if best_score < 2:
-        return "uncategorized", best_score, None
+        # Smart fallback based on scale — never return "uncategorized"
+        return _fallback_category(title)
 
     parent = PARENT_COLLECTIONS.get(best)
     return best, best_score, parent
+
+
+def _fallback_category(title):
+    """Assign a sensible category when keyword scoring fails."""
+    t = title.lower()
+
+    # Bust scales (75mm, 90mm, 100mm, 200mm, 1/10, 1/9, etc.)
+    if re.search(r"\b(75|90|100|150|200)\s*mm\b", t) or re.search(r"\b1[:/][6-9]\b|\b1[:/]10\b", t):
+        if "bust" in t or "portrait" in t or "head" in t or "torso" in t:
+            return "busts-portraits", 1, "anime-fantasy-figures"
+        return "fantasy-warriors", 1, "anime-fantasy-figures"
+
+    # Figure scales that suggest individual characters
+    if re.search(r"\b(54|28|32)\s*mm\b", t):
+        return "fantasy-warriors", 1, "anime-fantasy-figures"
+
+    # Military model scales
+    if re.search(r"\b1[:/]35\b", t):
+        return "wargaming-infantry", 1, "wargaming-tabletop"
+    if re.search(r"\b1[:/](72|48|76)\b", t):
+        return "scale-military-vehicles", 1, "scale-model-kits"
+
+    # Small diorama scales
+    if re.search(r"\b1[:/](64|87|100|144)\b", t):
+        return "terrain-props", 1, "diorama-terrain"
+
+    # Keyword hints
+    if any(w in t for w in ["bust", "portrait", "head sculpt"]):
+        return "busts-portraits", 1, "anime-fantasy-figures"
+    if any(w in t for w in ["figure", "warrior", "knight", "soldier", "statue"]):
+        return "fantasy-warriors", 1, "anime-fantasy-figures"
+    if any(w in t for w in ["tank", "vehicle", "artillery", "military"]):
+        return "scale-military-vehicles", 1, "scale-model-kits"
+    if any(w in t for w in ["anime", "manga", "waifu"]):
+        return "anime-characters", 1, "anime-fantasy-figures"
+    if any(w in t for w in ["terrain", "scenery", "ruin", "building"]):
+        return "terrain-scenery", 1, "diorama-terrain"
+
+    # Final fallback
+    return "terrain-props", 1, "diorama-terrain"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -414,7 +454,6 @@ CATEGORY_DISPLAY_NAMES = {
     "terrain-buildings-ruins": "Buildings & Ruins",
     "terrain-natural": "Natural Elements",
     "terrain-props": "Props & Accessories",
-    "uncategorized": "Collectible",
 }
 
 PARENT_DISPLAY_NAMES = {
@@ -486,9 +525,9 @@ def _describe_subject(title, category_handle):
 
 def generate_description(title, category_handle, scale):
     """Generate rich 3-section HTML product description (<200 words)."""
-    cat_name = CATEGORY_DISPLAY_NAMES.get(category_handle, "Collectible")
+    cat_name = CATEGORY_DISPLAY_NAMES.get(category_handle, "Props & Accessories")
     parent = PARENT_COLLECTIONS.get(category_handle)
-    product_type = PARENT_DISPLAY_NAMES.get(parent, "Collectible") if parent else "Collectible"
+    product_type = PARENT_DISPLAY_NAMES.get(parent, "Diorama & Terrain") if parent else "Diorama & Terrain"
 
     opener = _describe_subject(title, category_handle)
 

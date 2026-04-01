@@ -242,7 +242,7 @@ def process_products(products):
         sell_usd, compare_usd = calculate_price(price_gbp, shipping_gbp)
 
         body_html = categorizer.generate_description(title, handle, scale)
-        parent_name = categorizer.PARENT_DISPLAY_NAMES.get(parent, "Collectible") if parent else "Collectible"
+        parent_name = categorizer.PARENT_DISPLAY_NAMES.get(parent, "Diorama & Terrain") if parent else "Diorama & Terrain"
 
         # Use full-size first image if available
         image_url = p.get("image_url", "")
