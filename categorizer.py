@@ -185,6 +185,21 @@ CATEGORIES = {
                       "knight", "soldier", "75mm", "90mm", "200mm", "54mm",
                       "1/10", "1/35"],
     },
+
+    # ── Accessories ──
+    "accessories": {
+        "keywords": [
+            "brush", "brushes", "paint", "paints", "primer", "glue",
+            "airbrush", "tool", "tools", "display case", "turntable",
+            "wet palette", "magnifier", "lamp", "tweezers", "hobby knife",
+            "cutting mat", "pin vise", "sandpaper", "putty", "filler",
+            "thinner", "varnish", "sealer", "sculpting", "milliput",
+            "green stuff", "basing", "flock", "grass", "static grass",
+            "pigment", "wash", "ink",
+        ],
+        "negative": ["bust", "warrior", "knight",
+                      "soldier", "tank", "dragon", "vehicle", "infantry"],
+    },
 }
 
 # Parent collection mapping
@@ -207,6 +222,7 @@ PARENT_COLLECTIONS = {
     "terrain-buildings-ruins": "diorama-terrain",
     "terrain-natural": "diorama-terrain",
     "terrain-props": "diorama-terrain",
+    "accessories": "accessories",
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -285,6 +301,7 @@ _TITLE_TYPE_SUFFIX = {
     "anime-characters": "Resin Figure",
     "fantasy-warriors": "Resin Figure",
     "scifi-figures": "Resin Figure",
+    "accessories": "Hobby Supply",
 }
 
 # AI title cache
@@ -604,7 +621,9 @@ _AI_PROMPT = (
     "Heroes & Characters, Army Bundles, Military Vehicles, Aircraft, "
     "Ships & Naval, Cars & Motorcycles, Anime Characters, Fantasy Warriors, "
     "Sci-Fi Figures, Busts & Portraits, Bases & Plinths, Scenery Pieces, "
-    "Buildings & Ruins, Natural Elements, Props & Accessories. "
+    "Buildings & Ruins, Natural Elements, Props & Accessories, Accessories. "
+    "Use Accessories for modelling tools, supplies, paints, brushes, "
+    "airbrush parts, display cases, and hobby supplies (not resin figures). "
     "Product title: {title}. "
     "Respond with ONLY the category name, nothing else."
 )
@@ -815,12 +834,14 @@ CATEGORY_DISPLAY_NAMES = {
     "terrain-buildings-ruins": "Buildings & Ruins",
     "terrain-natural": "Natural Elements",
     "terrain-props": "Props & Accessories",
+    "accessories": "Accessories",
 }
 
 PARENT_DISPLAY_NAMES = {
     "wargaming-tabletop": "Wargaming & Tabletop",
     "scale-model-kits": "Scale Model Kits",
     "anime-fantasy-figures": "Anime & Fantasy Figures",
+    "accessories": "Accessories",
     "diorama-terrain": "Diorama & Terrain",
 }
 
