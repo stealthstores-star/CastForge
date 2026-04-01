@@ -57,15 +57,19 @@ CSV_FIELDNAMES = [
 
 
 def _fix_ali_image_url(src):
-    """Fix AliExpress image URL: correct CDN, strip thumbnail suffix, full-size."""
+    """Fix AliExpress image URL: correct CDN, strip thumbnail/avif suffix, full-size."""
     url = src
     # Convert aliexpress-media CDN to alicdn
     url = re.sub(r"https?://ae-pic-a1\.aliexpress-media\.com/kf/",
                  "https://ae01.alicdn.com/kf/", url)
-    # Strip thumbnail suffix: .jpg_350x350.jpg → .jpg
-    url = re.sub(r"(\.\w{3,4})_\d+x\d+\.\w+$", r"\1", url)
-    # Also strip bare _NNNxNNN suffix (no second extension)
-    url = re.sub(r"_\d+x\d+$", "", url)
+    # Strip everything after the base image extension:
+    # .jpg_960x960q75.jpg_.avif → .jpg
+    # .jpg_350x350.jpg → .jpg
+    # .png_480x480.png → .png
+    # .jpeg_120x120.jpeg_.webp → .jpeg
+    url = re.sub(r"(\.\w{3,4})_[^/]+$", r"\1", url)
+    # Strip bare _NNNxNNN suffix
+    url = re.sub(r"_\d+x\d+\w*$", "", url)
     # Ensure https
     if url.startswith("//"):
         url = f"https:{url}"
@@ -123,7 +127,7 @@ def _clear_checkpoint():
 # ASYNC PAGE SCRAPER
 # ═══════════════════════════════════════════════════════════════
 
-async def _scrape_page_async(context, url):
+async def _scrape_page_async(context, url, debug=False):
     """Scrape one AliExpress product page (async Playwright)."""
     product_id = _extract_product_id(url)
     if not product_id:
@@ -149,86 +153,160 @@ async def _scrape_page_async(context, url):
         }
 
         html = await page.content()
+        if debug:
+            print(f"\n{'='*60}")
+            print(f"[DEBUG] URL: {url}")
+            print(f"[DEBUG] Page length: {len(html)} chars")
+            print(f"[DEBUG] Page title: {(await page.title())[:80]}")
 
-        # Try embedded JSON first (fast)
-        json_product = _extract_from_embedded_json(html, url, product_id)
+        # ── Embedded JSON extraction ──
+        json_product = _extract_from_embedded_json(html, url, product_id, debug=debug)
         if json_product and json_product.get("product_title"):
-            # If JSON got title but no images, fall through to DOM scraping
             if json_product.get("product_images"):
+                if debug:
+                    print(f"[DEBUG] JSON got title + images → returning")
                 return json_product
-            # Keep the JSON data but continue to DOM for images
             product = json_product
+            if debug:
+                print(f"[DEBUG] JSON got title but NO images → falling through to DOM")
 
-        # DOM fallback
-        for sel in ["h1[data-pl='product-title']", "h1.product-title-text", "h1"]:
-            el = await page.query_selector(sel)
-            if el:
-                text = (await el.inner_text()).strip()
-                if len(text) > 5:
-                    product["product_title"] = text
+        # ── DOM: Title ──
+        if not product.get("product_title"):
+            for sel in ["h1[data-pl='product-title']", "h1.product-title-text",
+                         "[class*='title--wrap'] h1", "h1"]:
+                el = await page.query_selector(sel)
+                if el:
+                    text = (await el.inner_text()).strip()
+                    if debug:
+                        print(f"[DEBUG] Title '{sel}': '{text[:60]}'")
+                    if len(text) > 5:
+                        product["product_title"] = text
+                        break
+                elif debug:
+                    print(f"[DEBUG] Title '{sel}': NOT FOUND")
+
+        # ── DOM: Price ──
+        if not product.get("product_price"):
+            for sel in ["[class*='price--current'] span",
+                         "[class*='es--wrap--erdmPRe'] span",
+                         "[class*='uniform-banner-box'] span[class*='es--wrap']",
+                         "[class*='Price'] [class*='current'] span",
+                         "[class*='Price_price__'] span",
+                         "[class*='product-price-value']"]:
+                el = await page.query_selector(sel)
+                if el:
+                    text = (await el.inner_text()).strip()
+                    if debug:
+                        print(f"[DEBUG] Price '{sel}': '{text}'")
+                    if text and re.search(r"[\d.]+", text):
+                        product["product_price"] = text
+                        break
+                elif debug:
+                    print(f"[DEBUG] Price '{sel}': NOT FOUND")
+
+            # Last resort: any element with price-like class
+            if not product.get("product_price"):
+                for sel in ["[class*='price']", "[class*='Price']"]:
+                    el = await page.query_selector(sel)
+                    if el:
+                        all_text = (await el.inner_text()).strip()
+                        if debug:
+                            print(f"[DEBUG] Price fallback '{sel}': '{all_text[:80]}'")
+                        m = re.search(r"[\£\$€]\s*([\d.]+)", all_text)
+                        if m:
+                            product["product_price"] = m.group()
+                            break
+
+        # ── DOM: Images ──
+        if not product.get("product_images"):
+            images = []
+            for sel in ["img[class*='slider--img']",
+                         "img[class*='magnifier--image']",
+                         "[class*='slider--wrap'] img",
+                         ".images-view-item img",
+                         "[class*='magnifier'] img",
+                         "img[class*='pdp-img']",
+                         "[class*='image-view'] img"]:
+                img_els = await page.query_selector_all(sel)
+                if debug:
+                    print(f"[DEBUG] Image '{sel}': {len(img_els)} elements")
+                if img_els:
+                    for img_el in img_els:
+                        for attr in ["src", "data-src"]:
+                            src = (await img_el.get_attribute(attr)) or ""
+                            if src and len(src) > 20:
+                                if debug:
+                                    print(f"  [DEBUG] {attr}: {src[:100]}")
+                                full = _fix_ali_image_url(src)
+                                if not full.startswith("http"):
+                                    full = f"https:{full}"
+                                if full not in images:
+                                    images.append(full)
+                    if images:
+                        break
+
+            # Fallback: scan ALL img tags for alicdn/aliexpress URLs
+            if not images:
+                all_imgs = await page.query_selector_all("img")
+                if debug:
+                    print(f"[DEBUG] Scanning all {len(all_imgs)} <img> tags")
+                for img_el in all_imgs[:40]:
+                    for attr in ["src", "data-src", "srcset"]:
+                        val = (await img_el.get_attribute(attr)) or ""
+                        if val and ("alicdn" in val or "aliexpress" in val):
+                            for part in val.split(","):
+                                url_part = part.strip().split(" ")[0]
+                                if url_part and len(url_part) > 20:
+                                    full = _fix_ali_image_url(url_part)
+                                    if not full.startswith("http"):
+                                        full = f"https:{full}"
+                                    if full not in images:
+                                        images.append(full)
+                                        if debug:
+                                            print(f"  [DEBUG] fallback {attr}: {full[:80]}")
+
+            if images:
+                product["product_image"] = images[0]
+                product["product_images"] = "|".join(images)
+            if debug:
+                print(f"[DEBUG] Total images found: {len(images)}")
+
+        # ── DOM: Shipping ──
+        if product.get("shipping") == "0":
+            for sel in ["[class*='dynamic-shipping'] span[class*='bold']",
+                         "[class*='shipping'] [class*='bold']",
+                         "[class*='shipping-value']",
+                         "[class*='dynamic-shipping-line']"]:
+                el = await page.query_selector(sel)
+                if el:
+                    text = (await el.inner_text()).strip()
+                    if debug:
+                        print(f"[DEBUG] Shipping '{sel}': '{text[:60]}'")
+                    if "free" in text.lower():
+                        product["shipping"] = "0"
+                    else:
+                        m = re.search(r"[\£\$€]?([\d.]+)", text)
+                        if m:
+                            product["shipping"] = m.group(1)
                     break
 
-        for sel in ["[class*='Price'] span.es--wrap--erdmPRe",
-                     "[class*='price--current'] span",
-                     "[class*='Price_price__'] span",
-                     "[class*='product-price-value']"]:
-            el = await page.query_selector(sel)
-            if el:
-                product["product_price"] = (await el.inner_text()).strip()
-                break
-
-        for sel in ["[class*='Price_originalPrice__']",
-                     "[class*='price--original'] span"]:
-            el = await page.query_selector(sel)
-            if el:
-                product["product_original_price"] = (await el.inner_text()).strip()
-                break
-
-        images = []
-        for sel in ["img[class*='slider--img']", ".images-view-item img",
-                     "[class*='magnifier'] img", "img[class*='pdp-img']"]:
-            img_els = await page.query_selector_all(sel)
-            if img_els:
-                for img_el in img_els:
-                    src = await img_el.get_attribute("src") or ""
-                    if src and ("alicdn" in src or "ae01" in src or "aliexpress" in src):
-                        full = _fix_ali_image_url(src)
-                        if not full.startswith("http"):
-                            full = f"https:{full}"
-                        if full not in images:
-                            images.append(full)
-                break
-        if images and not product.get("product_images"):
-            product["product_image"] = images[0]
-            product["product_images"] = "|".join(images)
-
-        for sel in ["[class*='dynamic-shipping'] span[class*='bold']",
-                     "[class*='shipping-value']"]:
-            el = await page.query_selector(sel)
-            if el:
-                text = (await el.inner_text()).strip()
-                if "free" in text.lower():
-                    product["shipping"] = "0"
-                else:
-                    m = re.search(r"[\£\$€]?([\d.]+)", text)
-                    if m:
-                        product["shipping"] = m.group(1)
-                break
-
-        for sel in ["[class*='store-name'] a", "a[class*='store--name']"]:
+        # ── DOM: Store + Sales ──
+        for sel in ["[class*='store-name'] a", "a[class*='store--name']",
+                     "[class*='shop-name'] a"]:
             el = await page.query_selector(sel)
             if el:
                 product["store_name"] = (await el.inner_text()).strip()
                 break
 
-        for sel in ["[class*='reviewer--sold']", "span[class*='count--trade']"]:
+        for sel in ["[class*='reviewer--sold']", "span[class*='count--trade']",
+                     "[class*='trade-count']"]:
             el = await page.query_selector(sel)
             if el:
                 product["total_sales"] = (await el.inner_text()).strip()
                 product["trade_info"] = product["total_sales"]
                 break
 
-        # DOM variations
+        # ── DOM: Variations ──
         variations = await _scrape_variations_dom(page)
         if variations:
             product["variations"] = json.dumps(variations, ensure_ascii=False)
@@ -236,9 +314,26 @@ async def _scrape_page_async(context, url):
             if var_imgs:
                 product["variation_images"] = json.dumps(var_imgs, ensure_ascii=False)
 
+        if debug:
+            print(f"\n[DEBUG] FINAL RESULT:")
+            print(f"  title:      {product['product_title'][:60]}")
+            print(f"  price:      {product['product_price']}")
+            print(f"  shipping:   {product['shipping']}")
+            print(f"  images:     {len(product['product_images'].split('|')) if product['product_images'] else 0}")
+            if product['product_images']:
+                for i, img in enumerate(product['product_images'].split('|')[:3]):
+                    print(f"    [{i+1}] {img[:80]}")
+            print(f"  store:      {product['store_name']}")
+            print(f"  variations: {len(json.loads(product['variations'])) if product['variations'] else 0}")
+            print(f"{'='*60}\n")
+
         return product if product.get("product_title") else None
 
-    except Exception:
+    except Exception as e:
+        if debug:
+            import traceback
+            print(f"[DEBUG] EXCEPTION: {e}")
+            traceback.print_exc()
         return None
     finally:
         await page.close()
@@ -285,7 +380,7 @@ async def _scrape_variations_dom(page):
 # JSON EXTRACTION (sync — operates on strings, no Playwright)
 # ═══════════════════════════════════════════════════════════════
 
-def _extract_from_embedded_json(html, url, product_id):
+def _extract_from_embedded_json(html, url, product_id, debug=False):
     product = {
         "id": product_id, "product_title": "", "product_price": "",
         "product_original_price": "", "product_discount": "",
@@ -297,25 +392,43 @@ def _extract_from_embedded_json(html, url, product_id):
         "variations": "", "variation_images": "",
     }
 
+    # Strategy 1: __INIT_DATA__
     m = re.search(r'window\.__INIT_DATA__\s*=\s*(\{.+?\})\s*;?\s*</script>', html, re.DOTALL)
     if m:
+        if debug:
+            print(f"[DEBUG] Found __INIT_DATA__ ({len(m.group(1))} chars)")
         try:
             data = json.loads(m.group(1))
+            if debug:
+                print(f"[DEBUG] JSON parsed OK, top keys: {list(data.keys())[:5]}")
             _deep_extract(data, product)
+            if debug:
+                print(f"[DEBUG] After deep_extract: title='{product['product_title'][:40]}' "
+                      f"price='{product['product_price']}' "
+                      f"images={len(product['product_images'].split('|')) if product['product_images'] else 0}")
             if product.get("product_title"):
                 return product
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except (json.JSONDecodeError, KeyError) as e:
+            if debug:
+                print(f"[DEBUG] JSON parse error: {e}")
+    elif debug:
+        print(f"[DEBUG] No __INIT_DATA__ found")
 
+    # Strategy 2: actionModule
     m = re.search(r'data:\s*(\{"actionModule".+?\})\s*[,;}\n]', html, re.DOTALL)
     if m:
+        if debug:
+            print(f"[DEBUG] Found actionModule data")
         try:
             data = json.loads(m.group(1))
             _extract_from_run_params(data, product)
             if product.get("product_title"):
                 return product
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except (json.JSONDecodeError, KeyError) as e:
+            if debug:
+                print(f"[DEBUG] actionModule parse error: {e}")
+    elif debug:
+        print(f"[DEBUG] No actionModule found")
 
     return None
 
@@ -430,7 +543,7 @@ def _extract_variations_json(obj, product):
 # ═══════════════════════════════════════════════════════════════
 
 async def _context_worker(browser, worker_id, url_chunk, scraped_ids,
-                           progress):
+                           progress, debug=False):
     """
     One browser context that scrapes its chunk of URLs.
     Returns list of scraped products.
@@ -453,7 +566,7 @@ async def _context_worker(browser, worker_id, url_chunk, scraped_ids,
             continue
 
         try:
-            product = await _scrape_page_async(context, url)
+            product = await _scrape_page_async(context, url, debug=debug)
             if product and product.get("product_title"):
                 local_products.append(product)
                 scraped_ids.add(pid)
@@ -477,7 +590,7 @@ async def _context_worker(browser, worker_id, url_chunk, scraped_ids,
 # ORCHESTRATOR
 # ═══════════════════════════════════════════════════════════════
 
-async def _run_scraper(urls, scraped_ids, products):
+async def _run_scraper(urls, scraped_ids, products, debug=False):
     """Main async scraper loop with rotating contexts."""
     from playwright.async_api import async_playwright
 
@@ -518,7 +631,7 @@ async def _run_scraper(urls, scraped_ids, products):
 
             # Run all contexts concurrently with asyncio.gather
             tasks = [
-                _context_worker(browser, i + 1, chunk, scraped_ids, progress)
+                _context_worker(browser, i + 1, chunk, scraped_ids, progress, debug=debug)
                 for i, chunk in enumerate(chunks)
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -548,7 +661,7 @@ async def _run_scraper(urls, scraped_ids, products):
 # PUBLIC API
 # ═══════════════════════════════════════════════════════════════
 
-def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None):
+def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None, debug=False):
     """
     Scrape AliExpress URLs using 3 parallel browser contexts.
     Each context processes 25 URLs then dies and respawns fresh.
@@ -564,7 +677,7 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None):
     scraped_ids, products = _load_checkpoint()
 
     start = time.time()
-    products = asyncio.run(_run_scraper(urls, scraped_ids, products))
+    products = asyncio.run(_run_scraper(urls, scraped_ids, products, debug=debug))
     elapsed = time.time() - start
 
     # Write CSV

@@ -659,7 +659,7 @@ def cmd_process_images(csv_path, fast=False):
     image_processor.process_batch(products, fast=fast, api_key=api_key)
 
 
-def cmd_scrape(urls_file, limit=None):
+def cmd_scrape(urls_file, limit=None, debug=False):
     """Scrape AliExpress product URLs to CSV."""
     print("\n══════════════════════════════════════")
     print("  CastForge AliExpress Scraper")
@@ -669,7 +669,7 @@ def cmd_scrape(urls_file, limit=None):
     output = urls_file.replace(".txt", "_scraped.csv")
     if output == urls_file:
         output = "scraped_products.csv"
-    scrape_urls(urls_file, output, limit=limit)
+    scrape_urls(urls_file, output, limit=limit, debug=debug)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -704,6 +704,7 @@ if __name__ == "__main__":
     command = sys.argv[1]
     args = sys.argv[2:]
     fast_mode = "--fast" in args
+    debug_mode = "--debug" in args
     file_args = [a for a in args if not a.startswith("--")]
 
     # Parse --limit N
@@ -733,7 +734,7 @@ if __name__ == "__main__":
     elif command == "stats":
         cmd_stats(file_args[0])
     elif command == "scrape":
-        cmd_scrape(file_args[0], limit=limit_val)
+        cmd_scrape(file_args[0], limit=limit_val, debug=debug_mode)
     elif command == "audit":
         cmd_audit()
     else:
