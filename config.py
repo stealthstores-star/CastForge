@@ -17,3 +17,21 @@ SCAN_IMAGES = True               # Set False to skip image scanning (faster but 
 MAX_IMAGE_SCANS_PER_RUN = 500    # Rate limit for Claude API calls per run
 IMAGE_SCAN_BATCH_SIZE = 10       # Process images in batches
 IMAGE_SCAN_DELAY = 1.0           # Seconds between batches
+
+# ── Pricing ──────────────────────────────────────────────────
+# Pricing formula (all inputs in GBP):
+#   total_cost = product_price + shipping
+#   Price A = (total_cost + 7.50) / 0.95
+#   Price B = total_cost / 0.60
+#   selling_price_gbp = max(Price A, Price B)
+#   selling_price_usd = selling_price_gbp * GBP_TO_USD
+#   Round to nearest .99
+#   compare_at_price = selling_price_usd * COMPARE_AT_MULTIPLIER, rounded to .99
+GBP_TO_USD = 1.30
+COMPARE_AT_MULTIPLIER = 1.35
+MIN_PRICE_USD = 9.99
+ROUND_TO_99 = True
+
+# ── Upload Settings ──────────────────────────────────────────
+RATE_LIMIT_DELAY = 0.5           # Seconds between API calls
+BATCH_SIZE = 50

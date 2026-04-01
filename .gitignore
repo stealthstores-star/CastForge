@@ -8,3 +8,10 @@ warnings_products.csv
 clean_products.csv
 audit_results.json
 image_scan_cache.json
+upload_log.json
+
+# Generated exports
+*_shopify_import.csv
+shopify_import.csv
+*_scraped.csv
+scraped_products.csv
