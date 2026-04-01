@@ -55,6 +55,23 @@ CSV_FIELDNAMES = [
     "variations", "variation_images",
 ]
 
+
+def _fix_ali_image_url(src):
+    """Fix AliExpress image URL: correct CDN, strip thumbnail suffix, full-size."""
+    url = src
+    # Convert aliexpress-media CDN to alicdn
+    url = re.sub(r"https?://ae-pic-a1\.aliexpress-media\.com/kf/",
+                 "https://ae01.alicdn.com/kf/", url)
+    # Strip thumbnail suffix: .jpg_350x350.jpg → .jpg
+    url = re.sub(r"(\.\w{3,4})_\d+x\d+\.\w+$", r"\1", url)
+    # Also strip bare _NNNxNNN suffix (no second extension)
+    url = re.sub(r"_\d+x\d+$", "", url)
+    # Ensure https
+    if url.startswith("//"):
+        url = f"https:{url}"
+    return url
+
+
 STEALTH_JS = """
 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
@@ -171,7 +188,7 @@ async def _scrape_page_async(context, url):
                 for img_el in img_els:
                     src = await img_el.get_attribute("src") or ""
                     if src and ("alicdn" in src or "ae01" in src):
-                        full = re.sub(r"_\d+x\d+\.\w+$", ".jpg", src)
+                        full = _fix_ali_image_url(src)
                         if not full.startswith("http"):
                             full = f"https:{full}"
                         if full not in images:
@@ -322,6 +339,7 @@ def _deep_extract(obj, product):
             for img in obj["imagePathList"]:
                 if isinstance(img, str) and img:
                     u = img if img.startswith("http") else f"https:{img}"
+                    u = _fix_ali_image_url(u)
                     imgs.append(u)
             if imgs and not product["product_images"]:
                 product["product_image"] = imgs[0]
@@ -361,7 +379,7 @@ def _extract_from_run_params(data, product):
     img_mod = data.get("imageModule", {})
     imgs = img_mod.get("imagePathList", [])
     if imgs:
-        full = [i if i.startswith("http") else f"https:{i}" for i in imgs]
+        full = [_fix_ali_image_url(i if i.startswith("http") else f"https:{i}") for i in imgs]
         product["product_image"] = full[0]
         product["product_images"] = "|".join(full)
 
@@ -393,7 +411,7 @@ def _extract_variations_json(obj, product):
             }
             img = val.get("skuPropertyImagePath", "")
             if img:
-                var["image"] = img if img.startswith("http") else f"https:{img}"
+                var["image"] = _fix_ali_image_url(img if img.startswith("http") else f"https:{img}")
             if var["name"]:
                 variations.append(var)
     if variations:

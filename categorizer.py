@@ -424,6 +424,7 @@ def ai_generate_titles_batch(products, api_key):
     )
 
     generated = 0
+    errors = 0
     for i in range(0, len(needs_ai), 10):
         batch = needs_ai[i:i + 10]
 
@@ -431,17 +432,12 @@ def ai_generate_titles_batch(products, api_key):
             raw = p.get("_raw_title", "")
             image_url = p.get("image_url", "")
 
-            # Build message content
-            content = []
-            if image_url:
-                content.append({
-                    "type": "image",
-                    "source": {"type": "url", "url": image_url},
-                })
-            content.append({
+            # Build message — text only (image URLs from AliExpress
+            # often fail when Claude API tries to fetch them)
+            content = [{
                 "type": "text",
                 "text": f"{prompt}\n\nOriginal title: {raw}",
-            })
+            }]
 
             try:
                 resp = req.post(
@@ -461,15 +457,24 @@ def ai_generate_titles_batch(products, api_key):
 
                 if resp.status_code == 200:
                     new_title = resp.json()["content"][0]["text"].strip()
-                    # Sanitize: remove quotes, ensure reasonable length
                     new_title = new_title.strip('"\'')
                     if len(new_title) > 5 and len(new_title) <= 60:
                         cache[raw] = new_title
                         p["title"] = new_title
                         generated += 1
+                    else:
+                        errors += 1
+                        if errors <= 3:
+                            print(f"    Bad AI response ({len(new_title)} chars): {new_title[:80]}")
+                else:
+                    errors += 1
+                    if errors <= 3:
+                        print(f"    API error {resp.status_code}: {resp.text[:150]}")
 
-            except Exception:
-                pass
+            except Exception as e:
+                errors += 1
+                if errors <= 3:
+                    print(f"    Exception: {type(e).__name__}: {str(e)[:100]}")
 
         _save_title_cache(cache)
         done = min(i + 10, len(needs_ai))
