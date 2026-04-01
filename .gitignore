@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+
+# Generated compliance reports and CSVs
+castforge_compliance_report.txt
+blocked_products.csv
+warnings_products.csv
+clean_products.csv
+audit_results.json
+image_scan_cache.json
