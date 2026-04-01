@@ -18,7 +18,6 @@ scraped_products.csv
 
 # Image processing
 processed_images/
-downloaded_images/
 image_process_cache.json
 image_text_cache.json
 scrape_checkpoint.json

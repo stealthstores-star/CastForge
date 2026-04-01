@@ -333,95 +333,64 @@ def process_products(products):
         name = categorizer.CATEGORY_DISPLAY_NAMES.get(h, h)
         print(f"  {name:<35} {category_counts[h]:>5}")
 
+    # Fix image URLs for Shopify compatibility
+    fix_product_image_urls(export_products)
+
     return export_products, blocked, dupes_removed
 
 
 # ═══════════════════════════════════════════════════════════════
-# IMAGE DOWNLOADER (AliExpress blocks hotlinking)
+# IMAGE URL FIXER
 # ═══════════════════════════════════════════════════════════════
 
-IMAGES_DIR = "downloaded_images"
-
-
-def download_product_images(products):
+def _fix_image_url(url):
     """
-    Download all product images locally. AliExpress blocks Shopify
-    from loading images via hotlink, so we need local copies.
-    Updates image_url and images fields to local paths.
+    Fix AliExpress image URL for Shopify compatibility:
+    1. Convert ae-pic-a1.aliexpress-media.com → ae01.alicdn.com
+    2. Strip thumbnail suffix (_350x350.jpg, _480x480.jpg)
+    3. Ensure full-size .jpg URL
     """
-    os.makedirs(IMAGES_DIR, exist_ok=True)
+    if not url:
+        return url
 
-    total_images = 0
-    downloaded = 0
-    skipped = 0
-    failed = 0
+    # Fix CDN domain: aliexpress-media → alicdn
+    url = re.sub(
+        r"https?://ae-pic-a1\.aliexpress-media\.com/kf/",
+        "https://ae01.alicdn.com/kf/",
+        url,
+    )
 
-    for pi, product in enumerate(products):
-        # Download main image
-        main_url = product.get("image_url", "")
-        if main_url:
-            local_path = _download_single_image(main_url, pi, 0)
-            if local_path:
-                product["image_url"] = local_path
-                downloaded += 1
-            else:
-                failed += 1
-            total_images += 1
+    # Strip thumbnail size suffix: .jpg_350x350.jpg → .jpg
+    url = re.sub(r"(\.\w{3,4})_\d+x\d+\.\w+$", r"\1", url)
 
-        # Download additional images
+    # Ensure https
+    if url.startswith("//"):
+        url = f"https:{url}"
+
+    return url
+
+
+def fix_product_image_urls(products):
+    """Fix all image URLs in a list of products."""
+    fixed = 0
+    for product in products:
+        # Fix main image
+        old = product.get("image_url", "")
+        if old:
+            new = _fix_image_url(old)
+            if new != old:
+                product["image_url"] = new
+                fixed += 1
+
+        # Fix additional images
         images_raw = product.get("images", "")
         if images_raw:
             urls = [u.strip() for u in images_raw.split("|") if u.strip()]
-            local_paths = []
-            for ii, url in enumerate(urls):
-                local_path = _download_single_image(url, pi, ii + 1)
-                if local_path:
-                    local_paths.append(local_path)
-                    downloaded += 1
-                else:
-                    failed += 1
-                total_images += 1
-            product["images"] = "|".join(local_paths)
+            fixed_urls = [_fix_image_url(u) for u in urls]
+            product["images"] = "|".join(fixed_urls)
 
-        if (pi + 1) % 50 == 0 or (pi + 1) == len(products):
-            print(f"  [{pi+1}/{len(products)}] {downloaded} downloaded, "
-                  f"{failed} failed")
-
-    print(f"  Images: {downloaded} downloaded, {failed} failed, "
-          f"{skipped} skipped → {IMAGES_DIR}/")
-
-
-def _download_single_image(url, product_idx, image_idx):
-    """Download a single image, return local path or None."""
-    if not url or not url.startswith("http"):
-        return None
-
-    # Generate stable filename from URL hash
-    url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
-    ext = ".jpg"
-    if ".png" in url.lower():
-        ext = ".png"
-    elif ".jpeg" in url.lower():
-        ext = ".jpeg"
-    local_path = os.path.join(IMAGES_DIR, f"{product_idx:04d}_{image_idx}_{url_hash}{ext}")
-
-    # Skip if already downloaded
-    if os.path.exists(local_path):
-        return local_path
-
-    try:
-        resp = requests.get(url, timeout=15, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.aliexpress.com/",
-        })
-        if resp.status_code == 200 and len(resp.content) > 1000:
-            with open(local_path, "wb") as f:
-                f.write(resp.content)
-            return local_path
-    except Exception:
-        pass
-
-    return None
+    if fixed:
+        print(f"  Fixed {fixed} image URLs (CDN domain + full-size)")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -621,20 +590,16 @@ def cmd_export(csv_path, fast=False):
         print("\nNo products passed compliance.")
         return
 
-    # Download images (AliExpress blocks hotlinking)
-    if not fast:
-        print(f"\nStep 3: Downloading images...")
-        download_product_images(export_products)
-    else:
-        print(f"\n  --fast: skipping image download (Shopify may not load AliExpress URLs)")
+    # Fix image URLs for Shopify compatibility
+    print(f"\nStep 3: Fixing image URLs...")
+    fix_product_image_urls(export_products)
 
     # Export
     output_path = csv_path.replace(".csv", "_shopify_import.csv")
     if output_path == csv_path:
         output_path = "shopify_import.csv"
 
-    step = "4" if not fast else "3"
-    print(f"\nStep {step}: Exporting Shopify CSV...")
+    print(f"\nStep 4: Exporting Shopify CSV...")
     export_shopify_csv(export_products, output_path)
 
     print(f"\n  {'='*50}")
