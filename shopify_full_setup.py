@@ -12,17 +12,41 @@ import sys
 
 # ── Configuration ──────────────────────────────────────────────
 SHOPIFY_STORE = os.environ.get("SHOPIFY_STORE", "v614bh-2z.myshopify.com")
-SHOPIFY_ACCESS_TOKEN = os.environ.get("SHOPIFY_ACCESS_TOKEN", "")
+SHOPIFY_CLIENT_ID = os.environ.get("SHOPIFY_CLIENT_ID", "")
+SHOPIFY_CLIENT_SECRET = os.environ.get("SHOPIFY_CLIENT_SECRET", "")
 API_VERSION = "2024-10"
-
-if not SHOPIFY_ACCESS_TOKEN:
-    print("❌ SHOPIFY_ACCESS_TOKEN environment variable is required.")
-    print("   Export your Admin API access token (starts with shpat_):")
-    print("   export SHOPIFY_ACCESS_TOKEN='shpat_your_token_here'")
-    sys.exit(1)
 
 BASE_URL = f"https://{SHOPIFY_STORE}/admin/api/{API_VERSION}"
 GRAPHQL_URL = f"https://{SHOPIFY_STORE}/admin/api/{API_VERSION}/graphql.json"
+
+
+def obtain_access_token():
+    """Exchange client credentials for an access token."""
+    if not SHOPIFY_CLIENT_ID or not SHOPIFY_CLIENT_SECRET:
+        print("❌ SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET environment variables are required.")
+        print("   export SHOPIFY_CLIENT_ID='your_client_id'")
+        print("   export SHOPIFY_CLIENT_SECRET='shpss_your_secret'")
+        sys.exit(1)
+
+    print("Exchanging client credentials for access token...")
+    token_url = f"https://{SHOPIFY_STORE}/admin/oauth/access_token"
+    resp = requests.post(token_url, json={
+        "client_id": SHOPIFY_CLIENT_ID,
+        "client_secret": SHOPIFY_CLIENT_SECRET,
+        "grant_type": "client_credentials",
+    })
+    if resp.status_code != 200:
+        print(f"❌ Token exchange failed: {resp.status_code} {resp.text[:300]}")
+        sys.exit(1)
+
+    data = resp.json()
+    token = data["access_token"]
+    expires_in = data.get("expires_in", "unknown")
+    print(f"✅ Access token obtained (expires in {expires_in}s)")
+    return token
+
+
+SHOPIFY_ACCESS_TOKEN = obtain_access_token()
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -186,7 +210,7 @@ SMART_COLLECTIONS = [
     {
         "handle": "sale",
         "title": "Sale",
-        "rules": [{"column": "compare_at_price", "relation": "greater_than", "condition": "0"}],
+        "rules": [{"column": "tag", "relation": "equals", "condition": "sale"}],
         "sort_order": "best-selling",
     },
     {
