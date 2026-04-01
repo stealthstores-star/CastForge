@@ -24,4 +24,5 @@ scrape_checkpoint.json
 ai_category_cache.json
 ai_title_cache.json
 brand_image_cache.json
+ali_session.json
 *_failed.txt

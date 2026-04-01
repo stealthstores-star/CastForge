@@ -39,6 +39,7 @@ MAX_DELAY = 6.0
 COOLDOWN = 15
 
 CHECKPOINT_FILE = Path("scrape_checkpoint.json")
+SESSION_FILE = Path("ali_session.json")
 
 USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
@@ -128,6 +129,67 @@ def _save_checkpoint(scraped_ids, products):
 def _clear_checkpoint():
     if CHECKPOINT_FILE.exists():
         CHECKPOINT_FILE.unlink()
+
+
+# ═══════════════════════════════════════════════════════════════
+# LOGIN SESSION
+# ═══════════════════════════════════════════════════════════════
+
+def _has_session():
+    return SESSION_FILE.exists()
+
+
+async def _ensure_login(pw):
+    """
+    Check for saved login session. If none exists, open a visible browser
+    for the user to log in manually, then save the session.
+    Returns the storage_state path string.
+    """
+    if _has_session():
+        print(f"  Login session loaded from {SESSION_FILE}")
+        return str(SESSION_FILE)
+
+    print("  ╔════════════════════════════════════════════╗")
+    print("  ║  LOG IN TO ALIEXPRESS NOW                  ║")
+    print("  ║  A browser window will open.               ║")
+    print("  ║  Log in, then come back here.              ║")
+    print("  ║  The scraper will continue automatically.  ║")
+    print("  ╚════════════════════════════════════════════╝\n")
+
+    browser = await pw.chromium.launch(
+        headless=False,
+        args=["--disable-blink-features=AutomationControlled",
+              "--no-sandbox"],
+    )
+    context = await browser.new_context(
+        user_agent=random.choice(USER_AGENTS),
+        viewport={"width": 1280, "height": 900},
+        locale="en-US",
+    )
+    page = await context.new_page()
+    await page.add_init_script(STEALTH_JS)
+    await page.goto("https://login.aliexpress.com/", wait_until="domcontentloaded")
+
+    # Wait for user to complete login — poll URL until it's no longer a login page
+    print("  Waiting for login... (complete login in the browser window)")
+    while True:
+        await asyncio.sleep(2)
+        current_url = page.url
+        if "login" not in current_url.lower() and "aliexpress.com" in current_url:
+            break
+
+    # Small delay for cookies to settle
+    await asyncio.sleep(3)
+
+    # Save session
+    await context.storage_state(path=str(SESSION_FILE))
+    print(f"  Login session saved to {SESSION_FILE}")
+
+    await page.close()
+    await context.close()
+    await browser.close()
+
+    return str(SESSION_FILE)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -575,7 +637,8 @@ def _extract_variations_json(obj, product):
 
 async def _context_worker(browser, worker_id, url_chunk, scraped_ids,
                            progress, debug=False,
-                           min_delay=MIN_DELAY, max_delay=MAX_DELAY):
+                           min_delay=MIN_DELAY, max_delay=MAX_DELAY,
+                           session_path=None):
     """
     One browser context that scrapes its chunk of URLs.
     Returns list of scraped products.
@@ -585,9 +648,11 @@ async def _context_worker(browser, worker_id, url_chunk, scraped_ids,
     tz = random.choice(["America/New_York", "Europe/London",
                          "America/Chicago", "America/Los_Angeles"])
 
-    context = await browser.new_context(
-        user_agent=ua, viewport=vp, locale="en-US", timezone_id=tz,
-    )
+    ctx_kwargs = dict(user_agent=ua, viewport=vp, locale="en-US", timezone_id=tz)
+    if session_path:
+        ctx_kwargs["storage_state"] = session_path
+
+    context = await browser.new_context(**ctx_kwargs)
 
     local_products = []
 
@@ -649,6 +714,9 @@ async def _run_scraper(urls, scraped_ids, products, debug=False,
     scrape_start = time.time()
 
     async with async_playwright() as pw:
+        # Ensure login session exists
+        session_path = await _ensure_login(pw)
+
         browser = await pw.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled",
@@ -682,7 +750,8 @@ async def _run_scraper(urls, scraped_ids, products, debug=False,
             tasks = [
                 _context_worker(browser, i + 1, chunk, scraped_ids, progress,
                                 debug=debug, min_delay=min_delay or MIN_DELAY,
-                                max_delay=max_delay or MAX_DELAY)
+                                max_delay=max_delay or MAX_DELAY,
+                                session_path=session_path)
                 for i, chunk in enumerate(chunks)
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
