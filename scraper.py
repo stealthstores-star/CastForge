@@ -220,13 +220,12 @@ async def _scrape_page_async(context, url, debug=False):
                             break
 
         # ── DOM: Images ──
-        # Grab ALL img tags with alicdn/aliexpress URLs, deduplicate by
-        # the cleaned URL hash (different size suffixes = same image)
+        # Product images are .jpg files from alicdn.com/kf/S*.jpg
+        # Filter out icons (.png, .gif), dimension-suffixed URLs, UI elements
         if not product.get("product_images"):
             images = []
             seen_hashes = set()
 
-            # Collect from ALL img elements on the page
             all_imgs = await page.query_selector_all("img")
             if debug:
                 print(f"[DEBUG] Total <img> tags on page: {len(all_imgs)}")
@@ -234,38 +233,38 @@ async def _scrape_page_async(context, url, debug=False):
             for img_el in all_imgs:
                 for attr in ["src", "data-src"]:
                     val = (await img_el.get_attribute(attr)) or ""
-                    if not val or len(val) < 30:
-                        continue
-                    if "alicdn" not in val and "aliexpress" not in val:
+                    if not val:
                         continue
 
                     full = _fix_ali_image_url(val)
                     if not full.startswith("http"):
                         full = f"https:{full}"
 
-                    # Deduplicate by the CDN hash (the S... part)
+                    # ONLY keep: alicdn.com/kf/ URLs ending in .jpg/.jpeg
+                    if "alicdn.com/kf/" not in full:
+                        continue
+                    if not re.search(r"\.(jpg|jpeg)$", full, re.IGNORECASE):
+                        continue
+                    # REJECT: dimension patterns like /27x27/ or /48x48/
+                    if re.search(r"/\d+x\d+", full):
+                        continue
+
+                    # Deduplicate by CDN hash
                     m = re.search(r"/kf/([^/.]+)", full)
                     img_hash = m.group(1) if m else full
                     if img_hash in seen_hashes:
                         continue
                     seen_hashes.add(img_hash)
 
-                    # Skip tiny icons, logos, avatars
-                    if "/icon" in full or "/avatar" in full or "/flag" in full:
-                        continue
-                    # Skip non-product images (store banners etc)
-                    if "store" in full.lower() and "product" not in full.lower():
-                        continue
-
                     images.append(full)
                     if debug:
-                        print(f"  [DEBUG] img {attr}: {full[:80]}")
+                        print(f"  [DEBUG] KEEP: {full[:80]}")
 
             if images:
                 product["product_image"] = images[0]
                 product["product_images"] = "|".join(images)
             if debug:
-                print(f"[DEBUG] Total unique images: {len(images)}")
+                print(f"[DEBUG] Product images: {len(images)}")
 
         # ── DOM: Shipping ──
         # Search broadly for "free shipping" text in shipping/delivery elements
