@@ -212,83 +212,83 @@ async def _scrape_page_async(context, url, debug=False):
                         all_text = (await el.inner_text()).strip()
                         if debug:
                             print(f"[DEBUG] Price fallback '{sel}': '{all_text[:80]}'")
-                        m = re.search(r"[\£\$€]\s*([\d.]+)", all_text)
+                        # Handle both regular £ and full-width ￡ (U+FFE1)
+                        m = re.search(r"[\£\$€\uffe1]\s*([\d.]+)", all_text)
                         if m:
                             product["product_price"] = m.group()
                             break
+                            break
 
         # ── DOM: Images ──
+        # Grab ALL img tags with alicdn/aliexpress URLs, deduplicate by
+        # the cleaned URL hash (different size suffixes = same image)
         if not product.get("product_images"):
             images = []
-            for sel in ["img[class*='slider--img']",
-                         "img[class*='magnifier--image']",
-                         "[class*='slider--wrap'] img",
-                         ".images-view-item img",
-                         "[class*='magnifier'] img",
-                         "img[class*='pdp-img']",
-                         "[class*='image-view'] img"]:
-                img_els = await page.query_selector_all(sel)
-                if debug:
-                    print(f"[DEBUG] Image '{sel}': {len(img_els)} elements")
-                if img_els:
-                    for img_el in img_els:
-                        for attr in ["src", "data-src"]:
-                            src = (await img_el.get_attribute(attr)) or ""
-                            if src and len(src) > 20:
-                                if debug:
-                                    print(f"  [DEBUG] {attr}: {src[:100]}")
-                                full = _fix_ali_image_url(src)
-                                if not full.startswith("http"):
-                                    full = f"https:{full}"
-                                if full not in images:
-                                    images.append(full)
-                    if images:
-                        break
+            seen_hashes = set()
 
-            # Fallback: scan ALL img tags for alicdn/aliexpress URLs
-            if not images:
-                all_imgs = await page.query_selector_all("img")
-                if debug:
-                    print(f"[DEBUG] Scanning all {len(all_imgs)} <img> tags")
-                for img_el in all_imgs[:40]:
-                    for attr in ["src", "data-src", "srcset"]:
-                        val = (await img_el.get_attribute(attr)) or ""
-                        if val and ("alicdn" in val or "aliexpress" in val):
-                            for part in val.split(","):
-                                url_part = part.strip().split(" ")[0]
-                                if url_part and len(url_part) > 20:
-                                    full = _fix_ali_image_url(url_part)
-                                    if not full.startswith("http"):
-                                        full = f"https:{full}"
-                                    if full not in images:
-                                        images.append(full)
-                                        if debug:
-                                            print(f"  [DEBUG] fallback {attr}: {full[:80]}")
+            # Collect from ALL img elements on the page
+            all_imgs = await page.query_selector_all("img")
+            if debug:
+                print(f"[DEBUG] Total <img> tags on page: {len(all_imgs)}")
+
+            for img_el in all_imgs:
+                for attr in ["src", "data-src"]:
+                    val = (await img_el.get_attribute(attr)) or ""
+                    if not val or len(val) < 30:
+                        continue
+                    if "alicdn" not in val and "aliexpress" not in val:
+                        continue
+
+                    full = _fix_ali_image_url(val)
+                    if not full.startswith("http"):
+                        full = f"https:{full}"
+
+                    # Deduplicate by the CDN hash (the S... part)
+                    m = re.search(r"/kf/([^/.]+)", full)
+                    img_hash = m.group(1) if m else full
+                    if img_hash in seen_hashes:
+                        continue
+                    seen_hashes.add(img_hash)
+
+                    # Skip tiny icons, logos, avatars
+                    if "/icon" in full or "/avatar" in full or "/flag" in full:
+                        continue
+                    # Skip non-product images (store banners etc)
+                    if "store" in full.lower() and "product" not in full.lower():
+                        continue
+
+                    images.append(full)
+                    if debug:
+                        print(f"  [DEBUG] img {attr}: {full[:80]}")
 
             if images:
                 product["product_image"] = images[0]
                 product["product_images"] = "|".join(images)
             if debug:
-                print(f"[DEBUG] Total images found: {len(images)}")
+                print(f"[DEBUG] Total unique images: {len(images)}")
 
         # ── DOM: Shipping ──
-        if product.get("shipping") == "0":
-            for sel in ["[class*='dynamic-shipping'] span[class*='bold']",
-                         "[class*='shipping'] [class*='bold']",
-                         "[class*='shipping-value']",
-                         "[class*='dynamic-shipping-line']"]:
-                el = await page.query_selector(sel)
-                if el:
-                    text = (await el.inner_text()).strip()
-                    if debug:
-                        print(f"[DEBUG] Shipping '{sel}': '{text[:60]}'")
-                    if "free" in text.lower():
-                        product["shipping"] = "0"
-                    else:
-                        m = re.search(r"[\£\$€]?([\d.]+)", text)
-                        if m:
-                            product["shipping"] = m.group(1)
+        # Search broadly for "free shipping" text in shipping/delivery elements
+        ship_found = False
+        for sel in ["[class*='shipping']", "[class*='delivery']",
+                     "[class*='dynamic-shipping']"]:
+            els = await page.query_selector_all(sel)
+            for el in els:
+                text = (await el.inner_text()).strip().lower()
+                if debug:
+                    print(f"[DEBUG] Shipping '{sel}': '{text[:80]}'")
+                if "free shipping" in text or "free delivery" in text:
+                    product["shipping"] = "0"
+                    ship_found = True
                     break
+                # Check for a shipping cost
+                m = re.search(r"[\£\$€\uffe1]\s*([\d.]+)", text)
+                if m and "shipping" in text:
+                    product["shipping"] = m.group(1)
+                    ship_found = True
+                    break
+            if ship_found:
+                break
 
         # ── DOM: Store + Sales ──
         for sel in ["[class*='store-name'] a", "a[class*='store--name']",

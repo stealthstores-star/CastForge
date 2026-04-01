@@ -114,11 +114,20 @@ def load_csv(path):
 # ═══════════════════════════════════════════════════════════════
 
 def _parse_price(raw):
-    """Parse a price string like '£3.12', '$5.99', or '£3.12 - £8.99' into float."""
+    """Parse price from various formats: £3.12, ￡3.61, US $5.99, ￡3.61 50% off￡7.22."""
     if not raw:
         return 0.0
     s = str(raw)
-    # Extract the first number (handles ranges like "£3.12 - £8.99")
+    # Normalise full-width pound ￡ (U+FFE1) to regular £
+    s = s.replace("\uffe1", "£")
+    # Look for first price after a currency symbol
+    m = re.search(r"[£$€]\s*(\d+\.?\d*)", s)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    # Fallback: first bare number
     m = re.search(r"(\d+\.?\d*)", s)
     if m:
         try:
