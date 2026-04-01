@@ -88,6 +88,8 @@ def load_csv(path):
                 "images": row.get(col_images, "") if col_images else "",
                 "source_url": row.get(col_url, "") if col_url else "",
                 "raw_shipping": row.get(col_shipping, "0") if col_shipping else "0",
+                "variations": row.get("variations", ""),
+                "variation_images": row.get("variation_images", ""),
             }
             if product["title"]:
                 products.append(product)
