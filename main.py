@@ -259,6 +259,17 @@ def process_products(products):
     for p in uploadable:
         # Use the original untouched title for categorization and AI
         raw_title = p.get("_original_title", p["title"])
+
+        # DEBUG: first 3 products trace
+        if len(export_products) < 3:
+            print(f"    TRACE product {len(export_products)+1}:")
+            print(f"      _original_title: '{p.get('_original_title', 'MISSING')[:60]}'")
+            print(f"      title: '{p.get('title', 'MISSING')[:60]}'")
+            print(f"      raw_price: '{p.get('raw_price', 'MISSING')}'")
+            print(f"      raw_shipping: '{p.get('raw_shipping', 'MISSING')}'")
+            print(f"      image_url: '{p.get('image_url', 'MISSING')[:60]}'")
+            print(f"      images: {len(p.get('images', '').split('|')) if p.get('images') else 0} images")
+
         handle, score, parent = categorizer.categorize(raw_title)
         scale = categorizer.detect_scale(raw_title)
 

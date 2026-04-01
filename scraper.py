@@ -138,6 +138,14 @@ async def _scrape_page_async(context, url, debug=False):
 
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+
+        # Wait for price element to render (AliExpress loads prices async)
+        try:
+            await page.wait_for_selector("[class*='price'], [class*='Price']",
+                                          timeout=8000)
+        except Exception:
+            pass  # Continue even if price doesn't appear
+
         await page.wait_for_timeout(int(random.uniform(MIN_DELAY, MAX_DELAY) * 1000))
 
         product = {

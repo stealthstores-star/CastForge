@@ -175,10 +175,12 @@ CATEGORIES = {
         "keywords": [
             "prop", "accessory", "weapon rack", "treasure chest",
             "throne", "altar", "portal", "tombstone", "grave", "cart",
-            "diorama", "scene", "scenes", "garage", "repair", "workshop",
-            "accessories", "decoration", "display",
+            "garage", "repair", "workshop",
+            "1/64 diorama", "diorama set", "scene prop",
         ],
-        "negative": ["bust", "infantry", "vehicle"],
+        "negative": ["bust", "infantry", "vehicle", "figure", "warrior",
+                      "knight", "soldier", "75mm", "90mm", "200mm", "54mm",
+                      "1/10", "1/35"],
     },
 }
 
@@ -414,6 +416,13 @@ def ai_generate_titles_batch(products, api_key):
     for p in products:
         raw = p.get("_raw_title", "")
         cleaned = p.get("title", "")
+
+        # DEBUG: show first 3 that need AI
+        if len(needs_ai) < 3 and raw and title_needs_ai(cleaned, raw):
+            print(f"    AI TITLE DEBUG product {len(needs_ai)+1}:")
+            print(f"      _raw_title: '{raw[:80]}'")
+            print(f"      title (cleaned): '{cleaned[:60]}'")
+
         if raw and title_needs_ai(cleaned, raw) and raw not in cache:
             needs_ai.append(p)
         elif raw in cache:
