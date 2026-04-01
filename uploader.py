@@ -128,10 +128,28 @@ class ShopifyUploader:
             }
         }
 
-        # Add image
+        # Add images
+        all_images = []
         img_url = product.get("image_url")
-        if img_url:
-            payload["product"]["images"] = [{"src": img_url}]
+        if img_url and img_url.startswith("http"):
+            all_images.append({"src": img_url})
+
+        # Additional images from pipe-separated list
+        images_raw = product.get("images", "")
+        if images_raw:
+            for extra in images_raw.split("|"):
+                extra = extra.strip()
+                if extra and extra.startswith("http") and extra != img_url:
+                    all_images.append({"src": extra})
+
+        if all_images:
+            payload["product"]["images"] = all_images
+
+        # Debug: show image info for first 3 products
+        if self.results["success"] + self.results["failed"] < 3:
+            img_count = len(payload["product"].get("images", []))
+            first_src = payload["product"].get("images", [{}])[0].get("src", "")[:60] if img_count else "NONE"
+            print(f"    Images: {img_count} | src: {first_src}")
 
         resp = self._api_call("POST", f"{self.base_url}/products.json", payload)
 

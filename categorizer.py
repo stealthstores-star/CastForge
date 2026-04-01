@@ -414,12 +414,21 @@ def ai_generate_titles_batch(products, api_key):
     print(f"  AI title generation for {len(needs_ai)} products (batches of 10)...")
 
     prompt = (
-        "Based on this product title and image, write a short, descriptive "
-        "product name (under 50 chars) for a resin model store. Describe what "
-        "the figure/model actually depicts. Do not include brand names, catalog "
-        "numbers, or words like colorless, self-assembled, or DIY. "
-        "Example good titles: Medieval Knight Commander 75mm, "
-        "WWII German Panzer Crew 1/35, Dragon Warrior Fantasy Bust 1/10. "
+        "Based on this product title, write a descriptive name for a resin "
+        "model. Include: what the figure depicts (e.g. Roman soldier, female "
+        "warrior, WW2 officer, dragon, pirate), the pose or action if obvious, "
+        "and the scale from the original title. Keep under 50 chars. "
+        "The title must help a buyer understand exactly what the model looks like. "
+        "You MUST include the scale (1/35, 75mm, 1/24, etc.) from the original title. "
+        "If no scale is found, omit it entirely. "
+        "Do NOT include words like resin, model, kit, figure, DIY, self-assembled, colorless. "
+        "Do NOT include brand names or catalog numbers. "
+        "Examples: Roman Centurion Battle Pose 75mm, "
+        "WW2 German Officer Standing 1/35, "
+        "Female Warrior with Sword 90mm, "
+        "Medieval Knight on Horse 54mm, "
+        "Viking Berserker with Axe 1/10, "
+        "Dragon Perched on Skull 200mm. "
         "Respond with ONLY the title, nothing else."
     )
 
@@ -458,7 +467,17 @@ def ai_generate_titles_batch(products, api_key):
                 if resp.status_code == 200:
                     new_title = resp.json()["content"][0]["text"].strip()
                     new_title = new_title.strip('"\'')
-                    if len(new_title) > 5 and len(new_title) <= 60:
+
+                    # Ensure scale is included from original title
+                    scale = detect_scale(raw)
+                    if scale and scale not in new_title:
+                        new_title = f"{new_title} {scale}"
+
+                    # Truncate if over 60
+                    if len(new_title) > 60:
+                        new_title = new_title[:60].rsplit(" ", 1)[0]
+
+                    if len(new_title) > 5:
                         cache[raw] = new_title
                         p["title"] = new_title
                         generated += 1
