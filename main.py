@@ -148,23 +148,19 @@ def calculate_price(product_price_gbp, shipping_gbp):
 # ═══════════════════════════════════════════════════════════════
 
 def _normalise_for_dedup(title):
-    """Reduce a title to a canonical form for duplicate detection."""
-    t = title.lower()
-    # Strip scale, numbers, common filler
-    t = re.sub(r"\b1[:/]\d{1,3}\b", "", t)
-    t = re.sub(r"\b\d{2,3}\s*mm\b", "", t)
-    t = re.sub(r"\b(resin|model|kit|diorama|miniature|figure|miniatura|"
-               r"minifigures?|minifigura|props?|diy|craft|toys?|collectib\w*|"
-               r"scenes?|garage|handmade|painted|sand|table|micro|landscape|"
-               r"display|collection|decoration|creative|photography|"
-               r"accessories|accessory|unpainted|unassembled)\b", "", t)
-    t = re.sub(r"[^a-z]", "", t)  # letters only
+    """Reduce a title to a canonical form for duplicate detection.
+    Keep scale and meaningful descriptors — only strip AliExpress spam."""
+    t = title.lower().strip()
+    # Only strip the most generic filler, NOT descriptive words
+    t = re.sub(r"\b(resin|model|kit|diy|craft|toys?|collectib\w*|"
+               r"handmade|unpainted|unassembled|colorless|self-assembled|"
+               r"self assembled)\b", "", t)
+    t = re.sub(r"[^a-z0-9]", "", t)  # letters + digits
     return t
 
 
 def _image_fingerprint(url):
     """Extract a stable fingerprint from an image URL (AliExpress CDN hash)."""
-    # AliExpress URLs contain a unique hash like S1525b82106694501b6c2731009ed5b5bj
     m = re.search(r"/([A-Za-z0-9]{30,})\.", url)
     if m:
         return m.group(1).lower()
@@ -173,13 +169,13 @@ def _image_fingerprint(url):
 
 def deduplicate(products):
     """
-    Remove duplicate products. Two products are duplicates if:
-      1. Their normalised titles match, OR
-      2. Their main image URL fingerprints match
+    Remove duplicate products. A product is a duplicate only if BOTH:
+      1. Its normalised title matches another product, AND
+      2. Its primary image CDN hash matches that same product.
+    Two products with different images are NEVER duplicates.
     Returns (unique_products, duplicate_count).
     """
-    seen_titles = {}
-    seen_images = {}
+    seen = {}  # key: (norm_title, img_fingerprint)
     unique = []
     dupes = 0
 
@@ -187,22 +183,16 @@ def deduplicate(products):
         title = p.get("title", "")
         norm = _normalise_for_dedup(title)
         img = p.get("image_url", "")
-        img_fp = _image_fingerprint(img) if img else None
+        img_fp = _image_fingerprint(img) if img else ""
 
-        # Check title duplicate
-        if norm and norm in seen_titles:
+        dedup_key = (norm, img_fp)
+
+        if norm and img_fp and dedup_key in seen:
             dupes += 1
             continue
 
-        # Check image duplicate
-        if img_fp and img_fp in seen_images:
-            dupes += 1
-            continue
-
-        if norm:
-            seen_titles[norm] = True
-        if img_fp:
-            seen_images[img_fp] = True
+        if norm and img_fp:
+            seen[dedup_key] = title
         unique.append(p)
 
     if dupes:
