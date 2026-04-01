@@ -237,10 +237,18 @@ JUNK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Catalog number patterns: A-757, Td-3622, Hong-06, Bee-15, Gou-09, etc.
+# Catalog number patterns:
+# A-757, Td-3622, Hong-06, Bee-15  (Letter(s)-dash-digits)
+# Jk12, Td4567                     (Upper+lower+digits, no dash)
+# GW-15, TD-123                    (Uppercase-dash-digits)
+# Excludes: WW2, WW1, F16, P51, T34, M16 (military designations)
+_MILITARY_DESIGNATIONS = {"WW1", "WW2", "F16", "P51", "T34", "M16", "B17",
+                           "ME109", "BF109", "FW190", "SU76", "IS2", "KV1"}
 CATALOG_CODE_PATTERN = re.compile(
-    r"\b[A-Z][a-z]*-\d{1,5}\b"    # A-757, Td-3622, Hong-06, Bee-15
-    r"|\b[A-Z]{2,4}-\d{1,5}\b",   # TD-123, GK-456
+    r"\b[A-Z][a-z]\d{2,5}\b"       # Jk12, Td4567 (upper+lower+digits)
+    r"|\b[A-Z][a-z]+-\d{1,5}\b"    # Td-3622, Hong-06, Bee-15
+    r"|\b[A-Z]-\d{2,5}\b"          # A-757, A-914 (single letter-dash-digits)
+    r"|\b[A-Z]{2,4}-\d{2,5}\b",    # GW-15, TD-4567 (multi upper-dash-digits)
     re.IGNORECASE,
 )
 
@@ -294,8 +302,12 @@ def clean_title(title, category_handle="terrain-props"):
     t = JUNK_PATTERN.sub("", title)
     t = DISCOUNT_PATTERN.sub("", t)
 
-    # Strip catalog codes (A-757, Td-3622, Hong-06, etc.)
-    t = CATALOG_CODE_PATTERN.sub("", t)
+    # Strip catalog codes (A-757, Td-3622, Hong-06, Jk12, etc.)
+    # but preserve military designations (F16, T34, WW2, etc.)
+    def _strip_catalog(m):
+        code = m.group().upper()
+        return m.group() if code in _MILITARY_DESIGNATIONS else ""
+    t = CATALOG_CODE_PATTERN.sub(_strip_catalog, t)
 
     # Remove orphaned punctuation and double spaces
     t = re.sub(r"^\s*[,\-–—]\s*", "", t)
@@ -653,6 +665,8 @@ def ai_categorize_batch(products, api_key):
                 handle = cache[title]
             else:
                 handle = _call_claude_categorize(title, api_key)
+                # Validate: catch absurd mismatches
+                handle = _validate_ai_category(handle, title)
                 cache[title] = handle
                 categorized += 1
 
@@ -719,6 +733,49 @@ def _call_claude_categorize(title, api_key):
 
     # If API fails, fall back to Props & Accessories
     return "terrain-props"
+
+
+def _validate_ai_category(handle, title):
+    """
+    Check if the AI-assigned category makes sense for the title.
+    Returns the handle if valid, or the keyword categorizer's best guess.
+    """
+    t = title.lower()
+
+    # Define absurd mismatches: category + title keywords that contradict
+    _CONTRADICTIONS = {
+        "scale-ships-naval": ["girl", "woman", "female", "student", "school",
+                               "warrior", "knight", "soldier", "dragon",
+                               "bust", "anime", "fantasy", "medieval"],
+        "scale-aircraft": ["girl", "woman", "female", "student", "school",
+                            "warrior", "knight", "bust", "dragon", "fantasy"],
+        "scale-cars-motorcycles": ["girl", "woman", "female", "student",
+                                    "warrior", "knight", "soldier", "bust",
+                                    "dragon", "fantasy", "medieval"],
+        "wargaming-vehicles-mechs": ["girl", "woman", "female", "student",
+                                      "school", "bust", "anime", "dress"],
+        "terrain-natural": ["girl", "woman", "female", "warrior", "knight",
+                             "soldier", "bust", "anime", "figure"],
+        "terrain-buildings-ruins": ["girl", "woman", "female", "warrior",
+                                     "figure", "bust", "anime"],
+    }
+
+    contradictions = _CONTRADICTIONS.get(handle, [])
+    if any(word in t for word in contradictions):
+        # AI got it wrong — use keyword categorizer's best guess
+        best_handle, best_score, best_parent = categorize(title)
+        if best_score >= 2:
+            return best_handle
+        # Keyword categorizer also failed — guess from title
+        if any(w in t for w in ["bust", "portrait", "head"]):
+            return "busts-portraits"
+        if any(w in t for w in ["girl", "woman", "female", "anime", "school"]):
+            return "anime-characters"
+        if any(w in t for w in ["warrior", "knight", "soldier", "figure"]):
+            return "fantasy-warriors"
+        return "fantasy-warriors"  # safer default than ships/aircraft
+
+    return handle
 
 
 # ═══════════════════════════════════════════════════════════════

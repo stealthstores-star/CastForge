@@ -220,8 +220,8 @@ async def _scrape_page_async(context, url, debug=False):
                             break
 
         # ── DOM: Images ──
-        # Product images are .jpg files from alicdn.com/kf/S*.jpg
-        # Filter out icons (.png, .gif), dimension-suffixed URLs, UI elements
+        # Product images are .jpg from alicdn.com/kf/S*.jpg (always start with S)
+        # Reject: icons, store logos, dimension-suffixed paths, non-jpg
         if not product.get("product_images"):
             images = []
             seen_hashes = set()
@@ -240,17 +240,18 @@ async def _scrape_page_async(context, url, debug=False):
                     if not full.startswith("http"):
                         full = f"https:{full}"
 
-                    # ONLY keep: alicdn.com/kf/ URLs ending in .jpg/.jpeg
-                    if "alicdn.com/kf/" not in full:
+                    # MUST be alicdn.com/kf/S (product images always start with S)
+                    if not re.search(r"alicdn\.com/kf/S", full):
                         continue
+                    # MUST end in .jpg or .jpeg
                     if not re.search(r"\.(jpg|jpeg)$", full, re.IGNORECASE):
                         continue
-                    # REJECT: dimension patterns like /27x27/ or /48x48/
+                    # REJECT dimension patterns in path like /27x27/ or /48x48/
                     if re.search(r"/\d+x\d+", full):
                         continue
 
-                    # Deduplicate by CDN hash
-                    m = re.search(r"/kf/([^/.]+)", full)
+                    # Deduplicate by filename hash (the S... part)
+                    m = re.search(r"/kf/(S[^/.]+)", full)
                     img_hash = m.group(1) if m else full
                     if img_hash in seen_hashes:
                         continue
