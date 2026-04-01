@@ -238,10 +238,12 @@ def process_products(products):
     sku_counter = 1
 
     for p in uploadable:
-        title = categorizer.clean_title(p["title"])
-        handle, score, parent = categorizer.categorize(title)
+        # Categorize on raw title first, then clean with category context
+        raw_title = p["title"]
+        handle, score, parent = categorizer.categorize(raw_title)
+        title = categorizer.clean_title(raw_title, handle)
         category_counts[handle] = category_counts.get(handle, 0) + 1
-        scale = categorizer.detect_scale(p.get("title", title))
+        scale = categorizer.detect_scale(raw_title)
 
         price_gbp = _parse_price(p.get("raw_price", "0"))
         shipping_gbp = _parse_price(p.get("raw_shipping", "0"))
@@ -351,8 +353,8 @@ def cmd_stats(csv_path):
     uncategorized = []
 
     for p in products:
-        clean_t = categorizer.clean_title(p["title"])
-        handle, score, parent = categorizer.categorize(clean_t)
+        handle, score, parent = categorizer.categorize(p["title"])
+        clean_t = categorizer.clean_title(p["title"], handle)
         counts[handle] = counts.get(handle, 0) + 1
         if handle == "uncategorized":
             uncategorized.append(clean_t)
@@ -504,123 +506,19 @@ def cmd_export(csv_path, fast=False):
     print(f"\n  Import via: Shopify Admin → Products → Import → {output_path}")
 
 
-def cmd_process_images(csv_path):
-    """Download and process product images with rembg background removal."""
+def cmd_process_images(csv_path, fast=False):
+    """Download and process product images (hero + gallery)."""
     print("\n══════════════════════════════════════")
-    print("  CastForge Image Processor")
+    print(f"  CastForge Image Processor ({'FAST' if fast else 'FULL'})")
     print("══════════════════════════════════════\n")
 
-    try:
-        from rembg import remove as rembg_remove
-        from PIL import Image, ImageDraw, ImageFilter
-    except ImportError:
-        print("Image processing requires rembg and Pillow:")
-        print("  pip install rembg onnxruntime Pillow")
-        sys.exit(1)
-
+    import image_processor
     products = load_csv(csv_path)
-
-    output_dir = "processed_images"
-    os.makedirs(output_dir, exist_ok=True)
-
-    BG_COLOR = (13, 13, 13)
-    CANVAS_SIZE = (1200, 1200)
-    total = len(products)
-    success = 0
-    failed = 0
-
-    for i, p in enumerate(products):
-        image_url = p.get("image_url", "")
-        images_raw = p.get("images", "")
-        if images_raw:
-            first_full = images_raw.split("|")[0].strip()
-            if first_full:
-                image_url = first_full
-
-        if not image_url:
-            failed += 1
-            continue
-
-        title_slug = re.sub(r"[^a-z0-9]", "-", p.get("title", "img")[:40].lower()).strip("-")
-        output_path = os.path.join(output_dir, f"{i+1:04d}_{title_slug}.jpg")
-
-        if os.path.exists(output_path):
-            success += 1
-            continue
-
-        try:
-            # Download
-            resp = requests.get(image_url, timeout=15, headers={"Referer": "https://www.aliexpress.com/"})
-            if resp.status_code != 200:
-                failed += 1
-                continue
-
-            import io
-            original = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-
-            # Remove background
-            try:
-                no_bg = rembg_remove(original)
-            except Exception:
-                no_bg = original
-
-            # Create dark studio canvas
-            canvas = Image.new("RGB", CANVAS_SIZE, BG_COLOR)
-
-            # Add subtle radial gradient
-            gradient = Image.new("L", CANVAS_SIZE, 0)
-            draw = ImageDraw.Draw(gradient)
-            cx, cy = CANVAS_SIZE[0] // 2, CANVAS_SIZE[1] // 2
-            for r in range(min(CANVAS_SIZE) // 2, 0, -1):
-                brightness = int(30 * (1 - r / (min(CANVAS_SIZE) // 2)))
-                draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=brightness)
-            gradient = gradient.filter(ImageFilter.GaussianBlur(80))
-
-            # Composite gradient onto canvas
-            grad_rgb = Image.merge("RGB", [gradient, gradient, gradient])
-            from PIL import ImageChops
-            canvas = ImageChops.add(canvas, grad_rgb)
-
-            # Scale product to 75% of canvas, slight upward offset
-            product_img = no_bg
-            max_dim = int(CANVAS_SIZE[0] * 0.75)
-            product_img.thumbnail((max_dim, max_dim), Image.LANCZOS)
-            pw, ph = product_img.size
-            x = (CANVAS_SIZE[0] - pw) // 2
-            y = (CANVAS_SIZE[1] - ph) // 2 - 30  # slight upward offset
-
-            # Add drop shadow
-            shadow = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
-            shadow.paste(product_img, (x + 5, y + 8))
-            shadow_blur = shadow.filter(ImageFilter.GaussianBlur(15))
-            shadow_rgb = Image.new("RGB", CANVAS_SIZE, BG_COLOR)
-            shadow_rgb.paste(shadow_blur, mask=shadow_blur.split()[3])
-            canvas = Image.composite(
-                canvas,
-                shadow_rgb,
-                Image.new("L", CANVAS_SIZE, 200),
-            )
-
-            # Paste product
-            canvas.paste(product_img, (x, y), product_img if product_img.mode == "RGBA" else None)
-
-            # Save
-            canvas.save(output_path, "JPEG", quality=92)
-            success += 1
-
-        except Exception as e:
-            failed += 1
-            if failed <= 5:
-                print(f"    Failed: {p.get('title', '?')[:40]} — {str(e)[:60]}")
-
-        if (i + 1) % 20 == 0 or (i + 1) == total:
-            print(f"  [{i+1}/{total}] Processed — {success} OK, {failed} failed")
-
-    print(f"\n  Done: {success} images processed, {failed} failed")
-    print(f"  Output: {output_dir}/")
+    api_key = config.ANTHROPIC_API_KEY if config.ANTHROPIC_API_KEY != "sk-ant-xxx" else None
+    image_processor.process_batch(products, fast=fast, api_key=api_key)
 
 
-def cmd_scrape(urls_file):
+def cmd_scrape(urls_file, limit=None):
     """Scrape AliExpress product URLs to CSV."""
     print("\n══════════════════════════════════════")
     print("  CastForge AliExpress Scraper")
@@ -630,7 +528,7 @@ def cmd_scrape(urls_file):
     output = urls_file.replace(".txt", "_scraped.csv")
     if output == urls_file:
         output = "scraped_products.csv"
-    scrape_urls(urls_file, output)
+    scrape_urls(urls_file, output, limit=limit)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -667,6 +565,15 @@ if __name__ == "__main__":
     fast_mode = "--fast" in args
     file_args = [a for a in args if not a.startswith("--")]
 
+    # Parse --limit N
+    limit_val = None
+    for i, a in enumerate(args):
+        if a == "--limit" and i + 1 < len(args):
+            try:
+                limit_val = int(args[i + 1])
+            except ValueError:
+                pass
+
     if command in COMMANDS_WITH_FILE and not file_args:
         print(f"Error: {command} requires an input file")
         print(USAGE)
@@ -681,11 +588,11 @@ if __name__ == "__main__":
     elif command == "export":
         cmd_export(file_args[0], fast=fast_mode)
     elif command == "process-images":
-        cmd_process_images(file_args[0])
+        cmd_process_images(file_args[0], fast=fast_mode)
     elif command == "stats":
         cmd_stats(file_args[0])
     elif command == "scrape":
-        cmd_scrape(file_args[0])
+        cmd_scrape(file_args[0], limit=limit_val)
     elif command == "audit":
         cmd_audit()
     else:

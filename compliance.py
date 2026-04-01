@@ -536,6 +536,126 @@ def scan_images_batch(image_urls, api_key=None):
 
 
 # ═══════════════════════════════════════════════════════════════
+# IMAGE TEXT FILTERING (non-English text detection)
+# ═══════════════════════════════════════════════════════════════
+
+IMAGE_TEXT_CACHE_FILE = Path("image_text_cache.json")
+
+IMAGE_TEXT_PROMPT = """Look at this product image carefully. Does it contain any visible text in Chinese, Japanese, Korean, or other non-English languages? This includes:
+- Characters on packaging, labels, or watermarks
+- Text overlays or banners
+- Brand names in non-English scripts
+
+Respond in JSON ONLY:
+{"has_non_english_text": true/false, "details": "brief description of what text you see"}
+
+If there is NO non-English text visible, respond: {"has_non_english_text": false, "details": "no non-English text detected"}"""
+
+
+def _load_text_cache():
+    if IMAGE_TEXT_CACHE_FILE.exists():
+        return json.loads(IMAGE_TEXT_CACHE_FILE.read_text())
+    return {}
+
+
+def _save_text_cache(cache):
+    IMAGE_TEXT_CACHE_FILE.write_text(json.dumps(cache, indent=2))
+
+
+def scan_image_for_text(image_url, api_key=None):
+    """
+    Check if an image contains non-English (CJK) text using Claude Vision.
+    Returns (has_non_english_text: bool, details: str).
+    """
+    api_key = api_key or config.ANTHROPIC_API_KEY
+    if not api_key or api_key == "sk-ant-xxx":
+        return False, "skipped — no API key"
+
+    cache = _load_text_cache()
+    if image_url in cache:
+        c = cache[image_url]
+        return c["has_non_english_text"], c["details"]
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 200,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "source": {"type": "url", "url": image_url}},
+                            {"type": "text", "text": IMAGE_TEXT_PROMPT},
+                        ],
+                    }
+                ],
+            },
+            timeout=30,
+        )
+
+        if resp.status_code != 200:
+            return False, f"API error {resp.status_code}"
+
+        text = resp.json()["content"][0]["text"].strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+
+        result = json.loads(text)
+        has_text = result.get("has_non_english_text", False)
+        details = result.get("details", "")
+
+        cache[image_url] = {"has_non_english_text": has_text, "details": details}
+        _save_text_cache(cache)
+
+        return has_text, details
+
+    except Exception as e:
+        return False, f"scan error: {str(e)[:60]}"
+
+
+def filter_product_images(product, api_key=None):
+    """
+    Check the main image for non-English text. If found, try the second image.
+    Updates product['image_url'] in place.
+    Returns (action, details) — action is 'ok', 'swapped', or 'review'.
+    """
+    api_key = api_key or config.ANTHROPIC_API_KEY
+    if not api_key or api_key == "sk-ant-xxx":
+        return "ok", "skipped — no API key"
+
+    main_img = product.get("image_url", "")
+    if not main_img:
+        return "ok", "no image"
+
+    # Check main image
+    has_text, details = scan_image_for_text(main_img, api_key)
+    if not has_text:
+        return "ok", "clean"
+
+    # Main image has non-English text — try alternatives
+    images_raw = product.get("images", "")
+    if images_raw:
+        alt_images = [img.strip() for img in images_raw.split("|") if img.strip()]
+        # Try images beyond the first (which is usually same as main)
+        for alt_img in alt_images[1:]:
+            alt_has_text, alt_details = scan_image_for_text(alt_img, api_key)
+            if not alt_has_text:
+                product["image_url"] = alt_img
+                return "swapped", f"Main had CJK text ({details}), swapped to alt image"
+
+    # No clean alternative found
+    return "review", f"All images have non-English text: {details}"
+
+
+# ═══════════════════════════════════════════════════════════════
 # COMPLIANCE REPORT
 # ═══════════════════════════════════════════════════════════════
 

@@ -1,7 +1,7 @@
 """
 CastForge AliExpress URL Scraper
 Scrapes product data from AliExpress product pages using Playwright.
-Outputs a CSV compatible with the CastForge pipeline.
+Extracts variations as Shopify variants on the same product.
 
 Usage:
     python main.py scrape urls.txt
@@ -14,10 +14,11 @@ import sys
 import time
 
 
-def scrape_urls(urls_file, output_csv="scraped_products.csv"):
+def scrape_urls(urls_file, output_csv="scraped_products.csv", limit=None):
     """
     Read a text file of AliExpress URLs (one per line) and scrape each.
     Outputs a CSV with columns matching the pipeline format.
+    Products with variations get variation data in JSON columns.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -28,9 +29,11 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv"):
         print("  playwright install chromium")
         sys.exit(1)
 
-    # Read URLs
     with open(urls_file) as f:
         urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+
+    if limit:
+        urls = urls[:limit]
 
     print(f"  Found {len(urls)} URLs to scrape\n")
     products = []
@@ -52,19 +55,19 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv"):
                 product = _scrape_single(context, url)
                 if product:
                     products.append(product)
-                    print(f"    ✓ {product['product_title'][:60]}")
+                    var_count = len(json.loads(product.get("variations", "[]") or "[]"))
+                    var_info = f" ({var_count} variants)" if var_count > 0 else ""
+                    print(f"    OK {product['product_title'][:55]}{var_info}")
                 else:
-                    print(f"    ✗ Failed to extract data")
+                    print(f"    SKIP - no data extracted")
             except Exception as e:
-                print(f"    ✗ Error: {str(e)[:100]}")
+                print(f"    FAIL - {str(e)[:100]}")
 
-            # Rate limiting
             if i < len(urls) - 1:
                 time.sleep(2)
 
         browser.close()
 
-    # Write CSV
     if products:
         fieldnames = [
             "id", "product_title", "product_price", "product_original_price",
@@ -77,8 +80,8 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv"):
         with open(output_csv, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
-            for p in products:
-                writer.writerow(p)
+            for prod in products:
+                writer.writerow(prod)
 
         print(f"\n  Saved {len(products)} products → {output_csv}")
     else:
@@ -88,12 +91,12 @@ def scrape_urls(urls_file, output_csv="scraped_products.csv"):
 
 
 def _scrape_single(context, url):
-    """Scrape a single AliExpress product page."""
+    """Scrape a single AliExpress product page including variations."""
     page = context.new_page()
 
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(3000)  # Let JS render
+        page.wait_for_timeout(3000)
 
         product = {
             "id": "",
@@ -120,7 +123,7 @@ def _scrape_single(context, url):
             "variation_images": "",
         }
 
-        # Extract product ID from URL
+        # Product ID
         m = re.search(r"/item/(\d+)", url)
         if m:
             product["id"] = m.group(1)
@@ -132,15 +135,14 @@ def _scrape_single(context, url):
         if title_el:
             product["product_title"] = title_el.inner_text().strip()
 
-        # Price — try multiple selectors
+        # Price
         price_el = page.query_selector("[class*='Price_price__'] span")
         if not price_el:
             price_el = page.query_selector("[class*='product-price-value']")
         if not price_el:
             price_el = page.query_selector(".uniform-banner-box-price")
         if price_el:
-            raw_price = price_el.inner_text().strip()
-            product["product_price"] = raw_price
+            product["product_price"] = price_el.inner_text().strip()
 
         # Original price
         orig_el = page.query_selector("[class*='Price_originalPrice__']")
@@ -160,7 +162,6 @@ def _scrape_single(context, url):
         for img_el in img_els:
             src = img_el.get_attribute("src") or ""
             if src and "alicdn" in src:
-                # Get full-size image
                 full_src = re.sub(r"_\d+x\d+\.\w+$", ".jpg", src)
                 if full_src not in images:
                     images.append(full_src)
@@ -198,6 +199,18 @@ def _scrape_single(context, url):
             product["total_sales"] = sales_el.inner_text().strip()
             product["trade_info"] = product["total_sales"]
 
+        # ── Variations ──
+        variations = _extract_variations(page)
+        if variations:
+            product["variations"] = json.dumps(variations, ensure_ascii=False)
+            # Collect variation images
+            var_imgs = {}
+            for v in variations:
+                if v.get("image"):
+                    var_imgs[v["name"]] = v["image"]
+            if var_imgs:
+                product["variation_images"] = json.dumps(var_imgs, ensure_ascii=False)
+
         if not product["product_title"]:
             return None
 
@@ -205,3 +218,88 @@ def _scrape_single(context, url):
 
     finally:
         page.close()
+
+
+def _extract_variations(page):
+    """
+    Extract variation data from an AliExpress product page.
+    Returns list of dicts: [{name, price, image, option_name, available}, ...]
+    """
+    variations = []
+
+    # Try to find SKU/variation property containers
+    # AliExpress uses various class patterns for variations
+    sku_containers = page.query_selector_all("[class*='sku-item']")
+    if not sku_containers:
+        sku_containers = page.query_selector_all("[class*='skuItem']")
+    if not sku_containers:
+        sku_containers = page.query_selector_all("[class*='product-sku'] [class*='item']")
+
+    if not sku_containers:
+        # Try the property list approach
+        prop_lists = page.query_selector_all("[class*='sku-property-list'] [class*='sku-property-item']")
+        if not prop_lists:
+            prop_lists = page.query_selector_all("[class*='property-list'] [class*='property-item']")
+        sku_containers = prop_lists
+
+    if not sku_containers:
+        return []
+
+    # Detect option name (Style, Size, Color, Type)
+    option_name = "Style"
+    option_label = page.query_selector("[class*='sku-title']")
+    if not option_label:
+        option_label = page.query_selector("[class*='property-title']")
+    if option_label:
+        label_text = option_label.inner_text().strip().rstrip(":")
+        if label_text:
+            option_name = label_text
+
+    for el in sku_containers:
+        var = {"name": "", "price": "", "image": "", "option_name": option_name, "available": True}
+
+        # Variation name — from text content or title attribute
+        title_attr = el.get_attribute("title") or ""
+        text = el.inner_text().strip()
+        var["name"] = title_attr or text or ""
+
+        # Variation image — from img child or data attribute
+        img_el = el.query_selector("img")
+        if img_el:
+            src = img_el.get_attribute("src") or ""
+            if src and "alicdn" in src:
+                var["image"] = re.sub(r"_\d+x\d+\.\w+$", ".jpg", src)
+
+        # Check if disabled/unavailable
+        classes = el.get_attribute("class") or ""
+        if "disabled" in classes or "unavailable" in classes:
+            var["available"] = False
+
+        if var["name"]:
+            variations.append(var)
+
+    # Try to get per-variation prices by clicking each
+    # (AliExpress updates price on variation click)
+    if variations and len(variations) <= 20:
+        for var in variations:
+            if not var["available"]:
+                continue
+            try:
+                # Find and click the variation element
+                for el in sku_containers:
+                    name = el.get_attribute("title") or el.inner_text().strip()
+                    if name == var["name"]:
+                        el.click()
+                        page.wait_for_timeout(500)
+
+                        # Read updated price
+                        price_el = page.query_selector("[class*='Price_price__'] span")
+                        if not price_el:
+                            price_el = page.query_selector("[class*='product-price-value']")
+                        if price_el:
+                            var["price"] = price_el.inner_text().strip()
+                        break
+            except Exception:
+                pass
+
+    return variations

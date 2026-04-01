@@ -190,38 +190,135 @@ PARENT_COLLECTIONS = {
 # TITLE CLEANING
 # ═══════════════════════════════════════════════════════════════
 
+# Longest phrases first so they match before shorter substrings
 ALIEXPRESS_JUNK = [
-    "free shipping", "hot sale", "new arrival", "best quality", "wholesale",
-    "dropship", "aliexpress", "cheap", "high quality", "top quality",
-    "brand new", "factory direct", "limited time", "flash sale", "big sale",
-    "in stock", "fast delivery", "us warehouse", "minifigura",
+    # Multi-word phrases (longest first)
+    "display collection decoration", "collection decoration",
+    "action figure collectib", "creative photography", "creative display",
+    "micro creative", "props creative", "model props",
+    "3d resin printing", "3d printing", "hand painted", "handpainted",
+    "diy craft toys", "diy craft", "garage scenes", "garage scene",
+    "scene matching", "anime figure", "free shipping", "hot sale",
+    "new arrival", "best quality", "high quality", "top quality",
+    "brand new", "factory direct", "limited time", "flash sale",
+    "big sale", "fast delivery", "in stock", "us warehouse",
+    # Single words
+    "wholesale", "dropship", "aliexpress", "cheap",
+    "collectible", "collectib", "miniatura", "minifigura",
+    "minifigures", "minifigure",
 ]
 
+# Sort longest first for greedy matching
+ALIEXPRESS_JUNK.sort(key=len, reverse=True)
+
 JUNK_PATTERN = re.compile(
-    r"\b(?:" + "|".join(re.escape(j) for j in ALIEXPRESS_JUNK) + r")\b",
+    r"\b(?:" + "|".join(re.escape(j) for j in ALIEXPRESS_JUNK) + r")\w*\b",
     re.IGNORECASE,
 )
 
 DISCOUNT_PATTERN = re.compile(r"\d+%\s*off", re.IGNORECASE)
 MULTI_SPACE = re.compile(r"\s{2,}")
 SCALE_PATTERN = re.compile(r"(1[:/]\d{1,3})", re.IGNORECASE)
+SCALE_MM_PATTERN = re.compile(r"(\d{2,3}\s*mm)", re.IGNORECASE)
+
+MAX_TITLE_LENGTH = 60
+
+# Map category → type suffix for short titles
+_TITLE_TYPE_SUFFIX = {
+    "busts-portraits": "Resin Bust",
+    "terrain-bases-plinths": "Resin Terrain Base",
+    "terrain-scenery": "Resin Terrain Piece",
+    "terrain-buildings-ruins": "Resin Terrain Kit",
+    "terrain-natural": "Resin Terrain",
+    "terrain-props": "Resin Figure Set",
+    "wargaming-infantry": "Resin Miniature",
+    "wargaming-vehicles-mechs": "Resin Vehicle Kit",
+    "wargaming-monsters-creatures": "Resin Creature Figure",
+    "wargaming-heroes-characters": "Resin Character Figure",
+    "wargaming-army-bundles": "Resin Army Set",
+    "scale-military-vehicles": "Resin Model Kit",
+    "scale-aircraft": "Resin Model Kit",
+    "scale-ships-naval": "Resin Model Kit",
+    "scale-cars-motorcycles": "Resin Model Kit",
+    "anime-characters": "Resin Figure",
+    "fantasy-warriors": "Resin Figure",
+    "scifi-figures": "Resin Figure",
+    "uncategorized": "Resin Figure",
+}
 
 
-def clean_title(title):
-    """Remove AliExpress spam from a product title and title-case it."""
+def clean_title(title, category_handle="uncategorized"):
+    """
+    Remove AliExpress spam, title-case, and limit to 60 chars.
+    Format: descriptive name + scale + Resin Figure/Kit/Bust.
+    """
     t = JUNK_PATTERN.sub("", title)
     t = DISCOUNT_PATTERN.sub("", t)
-    # Remove orphaned punctuation
+
+    # Remove orphaned punctuation and double spaces
     t = re.sub(r"^\s*[,\-–—]\s*", "", t)
     t = re.sub(r"\s*[,\-–—]\s*$", "", t)
     t = MULTI_SPACE.sub(" ", t).strip()
 
+    # Extract scale before title-casing
+    scale = ""
+    m = SCALE_PATTERN.search(t)
+    if m:
+        scale = m.group(1).replace(":", "/")
+    else:
+        m = SCALE_MM_PATTERN.search(t)
+        if m:
+            scale = m.group(1).strip().lower()
+
     # Title-case but preserve scale notations
-    scales = SCALE_PATTERN.findall(t)
+    scales_found = SCALE_PATTERN.findall(t)
+    mm_found = SCALE_MM_PATTERN.findall(t)
     t = t.title()
-    # Restore scale notations
-    for s in scales:
+    for s in scales_found:
         t = re.sub(re.escape(s.title()), s, t, flags=re.IGNORECASE)
+    for s in mm_found:
+        t = re.sub(re.escape(s.title()), s.lower(), t, flags=re.IGNORECASE)
+
+    # Restore common acronyms
+    _ACRONYMS = {"Bbq": "BBQ", "Wwii": "WWII", "Ww2": "WW2", "Ww1": "WW1",
+                 "Diy": "DIY", "Suv": "SUV", "Usa": "USA", "Led": "LED",
+                 "Sdk": "SDK", "Atv": "ATV", "Sdkfz": "SdKfz"}
+    for wrong, right in _ACRONYMS.items():
+        t = re.sub(r"\b" + re.escape(wrong) + r"\b", right, t)
+
+    # Build a clean title: strip scale and type words from desc,
+    # then re-append scale + type suffix
+    type_suffix = _TITLE_TYPE_SUFFIX.get(category_handle, "Resin Figure")
+
+    # Strip existing scale and generic type words from desc
+    desc = t
+    desc = SCALE_PATTERN.sub("", desc)
+    desc = SCALE_MM_PATTERN.sub("", desc)
+    desc = re.sub(r"\b(?:Resin|Model|Kit|Figure|Figures|Bust|Set|Scale|Diorama|"
+                  r"Miniature|Miniatures|Sand|Table|Scene|Scence|Micro|"
+                  r"Mini|Landscape|Arquitectura|Wt\d*|Pcs?|Handmade|Diy|"
+                  r"Painted|Photography|Tiny|Static|Piece)\b",
+                  "", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\s{2,}", " ", desc).strip()
+    desc = re.sub(r"^\s*[,\-–—]\s*", "", desc).strip()
+    desc = re.sub(r"\s*[,\-–—]\s*$", "", desc).strip()
+
+    # Rebuild: desc + scale + type_suffix
+    parts = [desc]
+    if scale:
+        parts.append(scale)
+    parts.append(type_suffix)
+    t = " ".join(p for p in parts if p)
+
+    # Enforce 60-char limit — truncate desc at word boundary keeping scale+suffix
+    if len(t) > MAX_TITLE_LENGTH:
+        suffix_part = f" {scale} {type_suffix}" if scale else f" {type_suffix}"
+        max_desc_len = MAX_TITLE_LENGTH - len(suffix_part)
+        if max_desc_len > 5:
+            desc = desc[:max_desc_len].rsplit(" ", 1)[0].rstrip(" ,—-–")
+            t = f"{desc}{suffix_part}"
+        else:
+            t = t[:MAX_TITLE_LENGTH].rsplit(" ", 1)[0].rstrip(" ,—-–")
 
     return t
 

@@ -15,3 +15,8 @@ upload_log.json
 shopify_import.csv
 *_scraped.csv
 scraped_products.csv
+
+# Image processing
+processed_images/
+image_process_cache.json
+image_text_cache.json
