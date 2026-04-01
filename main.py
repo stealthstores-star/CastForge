@@ -229,22 +229,18 @@ def process_products(products):
     category_counts = {}
     sku_counter = 1
 
+    # First pass: keyword categorization
+    needs_ai = []  # (index, raw_title) for products with score < 2
+
     for p in uploadable:
-        # Categorize on raw title first, then clean with category context
         raw_title = p["title"]
         handle, score, parent = categorizer.categorize(raw_title)
-        title = categorizer.clean_title(raw_title, handle)
-        category_counts[handle] = category_counts.get(handle, 0) + 1
         scale = categorizer.detect_scale(raw_title)
 
         price_gbp = _parse_price(p.get("raw_price", "0"))
         shipping_gbp = _parse_price(p.get("raw_shipping", "0"))
         sell_usd, compare_usd = calculate_price(price_gbp, shipping_gbp)
 
-        body_html = categorizer.generate_description(title, handle, scale)
-        parent_name = categorizer.PARENT_DISPLAY_NAMES.get(parent, "Diorama & Terrain") if parent else "Diorama & Terrain"
-
-        # Use full-size first image if available
         image_url = p.get("image_url", "")
         images_raw = p.get("images", "")
         if images_raw:
@@ -252,28 +248,66 @@ def process_products(products):
             if first_full:
                 image_url = first_full
 
-        # SEO
-        seo_data = seo_module.generate_seo(title, handle)
-
-        export_products.append({
-            "title": title,
-            "body_html": body_html,
-            "product_type": parent_name,
-            "tags": seo_data["tags"],
+        product_data = {
+            "_raw_title": raw_title,
+            "_score": score,
+            "title": "",  # filled after AI pass
+            "body_html": "",
+            "product_type": "",
+            "tags": [],
             "price": sell_usd,
             "compare_at_price": compare_usd,
             "image_url": image_url,
             "images": images_raw,
             "category_handle": handle,
             "parent_handle": parent,
-            "seo_title": seo_data["seo_title"],
-            "seo_description": seo_data["seo_description"],
-            "handle": seo_data["handle"],
+            "seo_title": "",
+            "seo_description": "",
+            "handle": "",
             "sku": f"CF-{sku_counter:06d}",
             "variations": p.get("variations", ""),
             "variation_images": p.get("variation_images", ""),
-        })
+        }
+        export_products.append(product_data)
+
+        if score < 2:
+            needs_ai.append(product_data)
+
         sku_counter += 1
+
+    # AI categorization pass for low-scoring products
+    api_key = config.ANTHROPIC_API_KEY
+    if needs_ai and api_key and api_key != "sk-ant-xxx":
+        categorizer.ai_categorize_batch(needs_ai, api_key)
+    elif needs_ai:
+        print(f"  {len(needs_ai)} products need AI categorization but no ANTHROPIC_API_KEY set")
+        print(f"  Using fallback: Props & Accessories")
+
+    # Second pass: generate titles, descriptions, SEO with final categories
+    for product_data in export_products:
+        handle = product_data["category_handle"]
+        parent = product_data["parent_handle"]
+        raw_title = product_data["_raw_title"]
+        scale = categorizer.detect_scale(raw_title)
+
+        title = categorizer.clean_title(raw_title, handle)
+        body_html = categorizer.generate_description(title, handle, scale)
+        parent_name = categorizer.PARENT_DISPLAY_NAMES.get(parent, "Diorama & Terrain") if parent else "Diorama & Terrain"
+        seo_data = seo_module.generate_seo(title, handle)
+
+        product_data["title"] = title
+        product_data["body_html"] = body_html
+        product_data["product_type"] = parent_name
+        product_data["tags"] = seo_data["tags"]
+        product_data["seo_title"] = seo_data["seo_title"]
+        product_data["seo_description"] = seo_data["seo_description"]
+        product_data["handle"] = seo_data["handle"]
+
+        category_counts[handle] = category_counts.get(handle, 0) + 1
+
+        # Clean up internal fields
+        del product_data["_raw_title"]
+        del product_data["_score"]
 
     # Category breakdown
     print(f"\n  {'Category':<35} {'Count':>5}")

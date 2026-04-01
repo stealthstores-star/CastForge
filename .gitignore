@@ -21,3 +21,5 @@ processed_images/
 image_process_cache.json
 image_text_cache.json
 scrape_checkpoint.json
+ai_category_cache.json
+*_failed.txt

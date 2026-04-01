@@ -3,7 +3,9 @@ CastForge Product Categorizer
 Keyword-scoring engine that assigns products to the correct collection.
 """
 
+import json
 import re
+from pathlib import Path
 
 # ═══════════════════════════════════════════════════════════════
 # CATEGORY TAXONOMY — handle → (keywords, negative_keywords)
@@ -384,51 +386,173 @@ def categorize(title, description=""):
     best_score = scores[best]
 
     if best_score < 2:
-        # Smart fallback based on scale — never return "uncategorized"
-        return _fallback_category(title)
+        # Use Claude AI for accurate categorization
+        return _ai_categorize(title)
 
     parent = PARENT_COLLECTIONS.get(best)
     return best, best_score, parent
 
 
-def _fallback_category(title):
-    """Assign a sensible category when keyword scoring fails."""
-    t = title.lower()
+# ═══════════════════════════════════════════════════════════════
+# AI CATEGORIZATION (for products that score < 2 on keywords)
+# ═══════════════════════════════════════════════════════════════
 
-    # Bust scales (75mm, 90mm, 100mm, 200mm, 1/10, 1/9, etc.)
-    if re.search(r"\b(75|90|100|150|200)\s*mm\b", t) or re.search(r"\b1[:/][6-9]\b|\b1[:/]10\b", t):
-        if "bust" in t or "portrait" in t or "head" in t or "torso" in t:
-            return "busts-portraits", 1, "anime-fantasy-figures"
-        return "fantasy-warriors", 1, "anime-fantasy-figures"
+_AI_CACHE_FILE = Path("ai_category_cache.json")
 
-    # Figure scales that suggest individual characters
-    if re.search(r"\b(54|28|32)\s*mm\b", t):
-        return "fantasy-warriors", 1, "anime-fantasy-figures"
+_NAME_TO_HANDLE = None  # lazy init after CATEGORY_DISPLAY_NAMES is defined
 
-    # Military model scales
-    if re.search(r"\b1[:/]35\b", t):
-        return "wargaming-infantry", 1, "wargaming-tabletop"
-    if re.search(r"\b1[:/](72|48|76)\b", t):
-        return "scale-military-vehicles", 1, "scale-model-kits"
 
-    # Small diorama scales
-    if re.search(r"\b1[:/](64|87|100|144)\b", t):
-        return "terrain-props", 1, "diorama-terrain"
+def _get_name_to_handle():
+    global _NAME_TO_HANDLE
+    if _NAME_TO_HANDLE is None:
+        _NAME_TO_HANDLE = {v: k for k, v in CATEGORY_DISPLAY_NAMES.items()}
+    return _NAME_TO_HANDLE
 
-    # Keyword hints
-    if any(w in t for w in ["bust", "portrait", "head sculpt"]):
-        return "busts-portraits", 1, "anime-fantasy-figures"
-    if any(w in t for w in ["figure", "warrior", "knight", "soldier", "statue"]):
-        return "fantasy-warriors", 1, "anime-fantasy-figures"
-    if any(w in t for w in ["tank", "vehicle", "artillery", "military"]):
-        return "scale-military-vehicles", 1, "scale-model-kits"
-    if any(w in t for w in ["anime", "manga", "waifu"]):
-        return "anime-characters", 1, "anime-fantasy-figures"
-    if any(w in t for w in ["terrain", "scenery", "ruin", "building"]):
-        return "terrain-scenery", 1, "diorama-terrain"
+_AI_PROMPT = (
+    "Categorize this resin model into exactly one of these categories: "
+    "Infantry & Troops, Vehicles & Mechs, Monsters & Creatures, "
+    "Heroes & Characters, Army Bundles, Military Vehicles, Aircraft, "
+    "Ships & Naval, Cars & Motorcycles, Anime Characters, Fantasy Warriors, "
+    "Sci-Fi Figures, Busts & Portraits, Bases & Plinths, Scenery Pieces, "
+    "Buildings & Ruins, Natural Elements, Props & Accessories. "
+    "Product title: {title}. "
+    "Respond with ONLY the category name, nothing else."
+)
 
-    # Final fallback
-    return "terrain-props", 1, "diorama-terrain"
+
+def _load_ai_cache():
+    if _AI_CACHE_FILE.exists():
+        return json.loads(_AI_CACHE_FILE.read_text())
+    return {}
+
+
+def _save_ai_cache(cache):
+    _AI_CACHE_FILE.write_text(json.dumps(cache, indent=2))
+
+
+def _ai_categorize(title):
+    """Categorize a single product using Claude API, with cache."""
+    cache = _load_ai_cache()
+    if title in cache:
+        handle = cache[title]
+        parent = PARENT_COLLECTIONS.get(handle, "diorama-terrain")
+        return handle, 1, parent
+
+    # Queue for batch processing — return placeholder that will be
+    # resolved by ai_categorize_batch
+    return "terrain-props", 0, "diorama-terrain"
+
+
+def ai_categorize_batch(products, api_key):
+    """
+    Batch-categorize products that scored < 2 using Claude API.
+    Call this from the pipeline AFTER initial categorize() pass.
+    Processes 10 at a time, caches results.
+    """
+    import requests as req
+
+    cache = _load_ai_cache()
+    uncategorized = []
+    cached_hits = 0
+
+    for p in products:
+        title = p.get("_raw_title", p.get("title", ""))
+        if title in cache:
+            # Apply cached AI category immediately
+            handle = cache[title]
+            parent = PARENT_COLLECTIONS.get(handle, "diorama-terrain")
+            p["category_handle"] = handle
+            p["parent_handle"] = parent
+            p["product_type"] = PARENT_DISPLAY_NAMES.get(parent, "Diorama & Terrain")
+            cached_hits += 1
+        else:
+            uncategorized.append((p, title))
+
+    if cached_hits:
+        print(f"  AI cache: applied {cached_hits} cached categories")
+
+    if not uncategorized:
+        return
+
+    print(f"  AI categorizing {len(uncategorized)} products (batches of 10)...")
+
+    batch_size = 10
+    categorized = 0
+
+    for i in range(0, len(uncategorized), batch_size):
+        batch = uncategorized[i:i + batch_size]
+
+        for product, title in batch:
+            if title in cache:
+                handle = cache[title]
+            else:
+                handle = _call_claude_categorize(title, api_key)
+                cache[title] = handle
+                categorized += 1
+
+            parent = PARENT_COLLECTIONS.get(handle, "diorama-terrain")
+            product["category_handle"] = handle
+            product["parent_handle"] = parent
+
+            # Update product_type display name
+            parent_name = PARENT_DISPLAY_NAMES.get(parent, "Diorama & Terrain")
+            product["product_type"] = parent_name
+
+        _save_ai_cache(cache)
+
+        done = min(i + batch_size, len(uncategorized))
+        print(f"    [{done}/{len(uncategorized)}] categorized")
+
+        # Small delay between batches
+        if i + batch_size < len(uncategorized):
+            import time
+            time.sleep(0.5)
+
+    print(f"  AI categorized {categorized} products ({len(cache)} cached total)")
+
+
+def _call_claude_categorize(title, api_key):
+    """Call Claude API to categorize a single product title."""
+    import requests as req
+
+    try:
+        resp = req.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 30,
+                "messages": [{
+                    "role": "user",
+                    "content": _AI_PROMPT.format(title=title),
+                }],
+            },
+            timeout=10,
+        )
+
+        if resp.status_code == 200:
+            answer = resp.json()["content"][0]["text"].strip()
+            # Map display name back to handle
+            name_map = _get_name_to_handle()
+            handle = name_map.get(answer)
+            if handle:
+                return handle
+
+            # Fuzzy match — find closest category name
+            answer_lower = answer.lower()
+            for name, h in name_map.items():
+                if name.lower() in answer_lower or answer_lower in name.lower():
+                    return h
+
+    except Exception:
+        pass
+
+    # If API fails, fall back to Props & Accessories
+    return "terrain-props"
 
 
 # ═══════════════════════════════════════════════════════════════
