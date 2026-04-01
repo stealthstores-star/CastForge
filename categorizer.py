@@ -420,13 +420,6 @@ def ai_generate_titles_batch(products, api_key):
     for p in products:
         raw = p.get("_raw_title", "")
         cleaned = p.get("title", "")
-
-        # DEBUG: show first 3 that need AI
-        if len(needs_ai) < 3 and raw and title_needs_ai(cleaned, raw):
-            print(f"    AI TITLE DEBUG product {len(needs_ai)+1}:")
-            print(f"      _raw_title: '{raw[:80]}'")
-            print(f"      title (cleaned): '{cleaned[:60]}'")
-
         if raw and title_needs_ai(cleaned, raw) and raw not in cache:
             needs_ai.append(p)
         elif raw in cache:
@@ -493,10 +486,13 @@ def ai_generate_titles_batch(products, api_key):
                     new_title = resp.json()["content"][0]["text"].strip()
                     new_title = new_title.strip('"\'')
 
-                    # Ensure scale is included from original title
-                    scale = detect_scale(raw)
-                    if scale and scale not in new_title:
-                        new_title = f"{new_title} {scale}"
+                    # Ensure scale is included — but only if AI didn't already add one
+                    has_scale = (re.search(r"\b\d{2,3}\s*mm\b", new_title, re.IGNORECASE)
+                                 or re.search(r"\b1[:/]\d{1,3}\b", new_title))
+                    if not has_scale:
+                        scale = detect_scale(raw)
+                        if scale:
+                            new_title = f"{new_title} {scale}"
 
                     # Truncate if over 60
                     if len(new_title) > 60:

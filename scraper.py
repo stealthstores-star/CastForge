@@ -257,10 +257,14 @@ async def _scrape_page_async(context, url, debug=False):
                     # REJECT dimension patterns in path like /27x27/ or /48x48/
                     if re.search(r"/\d+x\d+", full):
                         continue
+                    # REJECT short filenames (logos tend to be short, product photos long)
+                    fname_match = re.search(r"/kf/(.+)$", full)
+                    if fname_match and len(fname_match.group(1)) < 20:
+                        continue
 
-                    # Deduplicate by filename hash (the S... part)
+                    # Deduplicate by first 30 chars of filename hash
                     m = re.search(r"/kf/(S[^/.]+)", full)
-                    img_hash = m.group(1) if m else full
+                    img_hash = m.group(1)[:30] if m else full
                     if img_hash in seen_hashes:
                         continue
                     seen_hashes.add(img_hash)
