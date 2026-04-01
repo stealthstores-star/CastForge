@@ -215,6 +215,7 @@ ALIEXPRESS_JUNK = [
     # Multi-word phrases (longest first)
     "colorless and self-assembling", "colorless and self-assembled",
     "display collection decoration", "collection decoration",
+    "figure model kit", "character model", "model kit figure",
     "action figure collectib", "creative photography", "creative display",
     "micro creative", "props creative", "model props",
     "3d resin printing", "3d printing", "hand painted", "handpainted",
@@ -225,11 +226,12 @@ ALIEXPRESS_JUNK = [
     "big sale", "fast delivery", "in stock", "in-stock", "us warehouse",
     "the height of man", "kits beauty", "kits toy",
     "self-assembling", "self-assembled", "self assembled",
+    "die-cast", "die cast",
     "s toy",
     # Single words
     "wholesale", "dropship", "aliexpress", "cheap", "colorless",
     "collectible", "collectib", "miniatura", "minifigura",
-    "minifigures", "minifigure",
+    "minifigures", "minifigure", "assembly", "spot", "status",
 ]
 
 ALIEXPRESS_JUNK.sort(key=len, reverse=True)
@@ -352,7 +354,9 @@ def clean_title(title, category_handle="terrain-props"):
     desc = re.sub(r"\b(?:Resin|Model|Kits?|Figure|Figures|Bust|Set|Scale|Diorama|"
                   r"Miniature|Miniatures|Sand|Table|Scene|Scence|Micro|"
                   r"Mini|Landscape|Arquitectura|Wt\d*|Pcs?|Handmade|Diy|"
-                  r"Painted|Photography|Tiny|Static|Piece|Beauty|Toy)\b",
+                  r"Painted|Photography|Tiny|Static|Piece|Beauty|Toy|"
+                  r"Assembly|Character|Portrait|Standing|Status|Spot|"
+                  r"Die-?Cast)\b",
                   "", desc, flags=re.IGNORECASE)
     desc = re.sub(r"\s{2,}", " ", desc).strip()
     desc = re.sub(r"^\s*[,\-–—]\s*", "", desc).strip()
@@ -435,22 +439,22 @@ def ai_generate_titles_batch(products, api_key):
     print(f"  AI title generation for {len(needs_ai)} products (batches of 10)...")
 
     prompt = (
-        "Based on this product title, write a descriptive name for a resin "
-        "model. Include: what the figure depicts (e.g. Roman soldier, female "
-        "warrior, WW2 officer, dragon, pirate), the pose or action if obvious, "
-        "and the scale from the original title. Keep under 50 chars. "
-        "The title must help a buyer understand exactly what the model looks like. "
-        "You MUST include the scale (1/35, 75mm, 1/24, etc.) from the original title. "
-        "If no scale is found, omit it entirely. "
-        "Do NOT include words like resin, model, kit, figure, DIY, self-assembled, colorless. "
-        "Do NOT include brand names or catalog numbers. "
-        "Examples: Roman Centurion Battle Pose 75mm, "
-        "WW2 German Officer Standing 1/35, "
-        "Female Warrior with Sword 90mm, "
-        "Medieval Knight on Horse 54mm, "
-        "Viking Berserker with Axe 1/10, "
+        "You are naming products for a premium resin miniature store. "
+        "Based on this AliExpress title, write a compelling product name "
+        "that a hobbyist would search for. Be SPECIFIC about what the figure "
+        "depicts — if it's a knight say what kind of knight, if it's a soldier "
+        "say what era and role, if it's a fantasy creature describe it. "
+        "Include the scale. Under 50 characters. "
+        "Do NOT use generic words like standing, figure, portrait, character, "
+        "model, assembly, resin, kit, DIY, colorless, self-assembled. "
+        "Examples of GOOD titles: "
+        "Viking Berserker with Axe 75mm, "
+        "WW2 German Panzer Commander 1/35, "
+        "Japanese Schoolgirl Anime 1/35, "
+        "Dwarf King on Throne 54mm, "
+        "Roman Legionnaire Charging 1/10 Bust, "
         "Dragon Perched on Skull 200mm. "
-        "Respond with ONLY the title, nothing else."
+        "Respond with ONLY the product name, nothing else."
     )
 
     generated = 0
@@ -645,8 +649,10 @@ def ai_categorize_batch(products, api_key):
     for p in products:
         title = p.get("_raw_title", p.get("title", ""))
         if title in cache:
-            # Apply cached AI category immediately
-            handle = cache[title]
+            # Apply cached AI category — but validate it first
+            handle = _validate_ai_category(cache[title], title)
+            if handle != cache[title]:
+                cache[title] = handle  # update cache with corrected value
             parent = PARENT_COLLECTIONS.get(handle, "diorama-terrain")
             p["category_handle"] = handle
             p["parent_handle"] = parent
