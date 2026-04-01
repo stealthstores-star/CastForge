@@ -81,8 +81,10 @@ def load_csv(path):
         print(f"    shipping → {col_shipping or '(not found)'}")
 
         for row in reader:
+            raw_title = row.get(col_title, "").strip()
             product = {
-                "title": row.get(col_title, "").strip(),
+                "title": raw_title,
+                "_original_title": raw_title,  # preserved untouched through pipeline
                 "raw_price": row.get(col_price, "0") if col_price else "0",
                 "image_url": row.get(col_image, "") if col_image else "",
                 "images": row.get(col_images, "") if col_images else "",
@@ -112,14 +114,18 @@ def load_csv(path):
 # ═══════════════════════════════════════════════════════════════
 
 def _parse_price(raw):
-    """Parse a price string like '£3.12' or '3.12' into float."""
+    """Parse a price string like '£3.12', '$5.99', or '£3.12 - £8.99' into float."""
     if not raw:
         return 0.0
-    cleaned = re.sub(r"[^\d.]", "", str(raw))
-    try:
-        return float(cleaned)
-    except ValueError:
-        return 0.0
+    s = str(raw)
+    # Extract the first number (handles ranges like "£3.12 - £8.99")
+    m = re.search(r"(\d+\.?\d*)", s)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            return 0.0
+    return 0.0
 
 
 def _round_to_99(price):
@@ -242,7 +248,8 @@ def process_products(products):
     needs_ai = []  # (index, raw_title) for products with score < 2
 
     for p in uploadable:
-        raw_title = p["title"]
+        # Use the original untouched title for categorization and AI
+        raw_title = p.get("_original_title", p["title"])
         handle, score, parent = categorizer.categorize(raw_title)
         scale = categorizer.detect_scale(raw_title)
 
@@ -250,12 +257,30 @@ def process_products(products):
         shipping_gbp = _parse_price(p.get("raw_shipping", "0"))
         sell_usd, compare_usd = calculate_price(price_gbp, shipping_gbp)
 
+        # Images: use pipe-separated list, fall back to main image
         image_url = p.get("image_url", "")
         images_raw = p.get("images", "")
         if images_raw:
             first_full = images_raw.split("|")[0].strip()
             if first_full:
                 image_url = first_full
+        elif not image_url:
+            # Check if compliance spread lost the image fields
+            image_url = p.get("product_image", "")
+            images_raw = p.get("product_images", "")
+
+        # Debug: first 3 products
+        if len(export_products) < 3:
+            total_cost = price_gbp + shipping_gbp
+            pa = (total_cost + 7.50) / 0.95
+            pb = total_cost / 0.60
+            print(f"    Product {len(export_products)+1}: "
+                  f"price=£{price_gbp:.2f} ship=£{shipping_gbp:.2f} "
+                  f"A=£{pa:.2f} B=£{pb:.2f} → ${sell_usd:.2f} | "
+                  f"img={bool(image_url)} "
+                  f"extras={len(images_raw.split('|')) if images_raw else 0} | "
+                  f"raw_price=\"{p.get('raw_price', '')[:20]}\"")
+
 
         product_data = {
             "_raw_title": raw_title,
@@ -333,6 +358,7 @@ def process_products(products):
     # Clean up internal fields
     for product_data in export_products:
         product_data.pop("_raw_title", None)
+        product_data.pop("_original_title", None)
         product_data.pop("_score", None)
 
     # Category breakdown
