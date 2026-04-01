@@ -211,6 +211,7 @@ PARENT_COLLECTIONS = {
 # Longest phrases first so they match before shorter substrings
 ALIEXPRESS_JUNK = [
     # Multi-word phrases (longest first)
+    "colorless and self-assembling", "colorless and self-assembled",
     "display collection decoration", "collection decoration",
     "action figure collectib", "creative photography", "creative display",
     "micro creative", "props creative", "model props",
@@ -219,18 +220,27 @@ ALIEXPRESS_JUNK = [
     "scene matching", "anime figure", "free shipping", "hot sale",
     "new arrival", "best quality", "high quality", "top quality",
     "brand new", "factory direct", "limited time", "flash sale",
-    "big sale", "fast delivery", "in stock", "us warehouse",
+    "big sale", "fast delivery", "in stock", "in-stock", "us warehouse",
+    "the height of man", "kits beauty", "kits toy",
+    "self-assembling", "self-assembled", "self assembled",
+    "s toy",
     # Single words
-    "wholesale", "dropship", "aliexpress", "cheap",
+    "wholesale", "dropship", "aliexpress", "cheap", "colorless",
     "collectible", "collectib", "miniatura", "minifigura",
     "minifigures", "minifigure",
 ]
 
-# Sort longest first for greedy matching
 ALIEXPRESS_JUNK.sort(key=len, reverse=True)
 
 JUNK_PATTERN = re.compile(
     r"\b(?:" + "|".join(re.escape(j) for j in ALIEXPRESS_JUNK) + r")\w*\b",
+    re.IGNORECASE,
+)
+
+# Catalog number patterns: A-757, Td-3622, Hong-06, Bee-15, Gou-09, etc.
+CATALOG_CODE_PATTERN = re.compile(
+    r"\b[A-Z][a-z]*-\d{1,5}\b"    # A-757, Td-3622, Hong-06, Bee-15
+    r"|\b[A-Z]{2,4}-\d{1,5}\b",   # TD-123, GK-456
     re.IGNORECASE,
 )
 
@@ -241,7 +251,6 @@ SCALE_MM_PATTERN = re.compile(r"(\d{2,3}\s*mm)", re.IGNORECASE)
 
 MAX_TITLE_LENGTH = 60
 
-# Map category → type suffix for short titles
 _TITLE_TYPE_SUFFIX = {
     "busts-portraits": "Resin Bust",
     "terrain-bases-plinths": "Resin Terrain Base",
@@ -263,6 +272,19 @@ _TITLE_TYPE_SUFFIX = {
     "scifi-figures": "Resin Figure",
 }
 
+# AI title cache
+_AI_TITLE_CACHE_FILE = Path("ai_title_cache.json")
+
+
+def _load_title_cache():
+    if _AI_TITLE_CACHE_FILE.exists():
+        return json.loads(_AI_TITLE_CACHE_FILE.read_text())
+    return {}
+
+
+def _save_title_cache(cache):
+    _AI_TITLE_CACHE_FILE.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
+
 
 def clean_title(title, category_handle="terrain-props"):
     """
@@ -271,6 +293,9 @@ def clean_title(title, category_handle="terrain-props"):
     """
     t = JUNK_PATTERN.sub("", title)
     t = DISCOUNT_PATTERN.sub("", t)
+
+    # Strip catalog codes (A-757, Td-3622, Hong-06, etc.)
+    t = CATALOG_CODE_PATTERN.sub("", t)
 
     # Remove orphaned punctuation and double spaces
     t = re.sub(r"^\s*[,\-–—]\s*", "", t)
@@ -307,14 +332,13 @@ def clean_title(title, category_handle="terrain-props"):
     # then re-append scale + type suffix
     type_suffix = _TITLE_TYPE_SUFFIX.get(category_handle, "Resin Figure")
 
-    # Strip existing scale and generic type words from desc
     desc = t
     desc = SCALE_PATTERN.sub("", desc)
     desc = SCALE_MM_PATTERN.sub("", desc)
-    desc = re.sub(r"\b(?:Resin|Model|Kit|Figure|Figures|Bust|Set|Scale|Diorama|"
+    desc = re.sub(r"\b(?:Resin|Model|Kits?|Figure|Figures|Bust|Set|Scale|Diorama|"
                   r"Miniature|Miniatures|Sand|Table|Scene|Scence|Micro|"
                   r"Mini|Landscape|Arquitectura|Wt\d*|Pcs?|Handmade|Diy|"
-                  r"Painted|Photography|Tiny|Static|Piece)\b",
+                  r"Painted|Photography|Tiny|Static|Piece|Beauty|Toy)\b",
                   "", desc, flags=re.IGNORECASE)
     desc = re.sub(r"\s{2,}", " ", desc).strip()
     desc = re.sub(r"^\s*[,\-–—]\s*", "", desc).strip()
@@ -327,7 +351,7 @@ def clean_title(title, category_handle="terrain-props"):
     parts.append(type_suffix)
     t = " ".join(p for p in parts if p)
 
-    # Enforce 60-char limit — truncate desc at word boundary keeping scale+suffix
+    # Enforce 60-char limit
     if len(t) > MAX_TITLE_LENGTH:
         suffix_part = f" {scale} {type_suffix}" if scale else f" {type_suffix}"
         max_desc_len = MAX_TITLE_LENGTH - len(suffix_part)
@@ -338,6 +362,124 @@ def clean_title(title, category_handle="terrain-props"):
             t = t[:MAX_TITLE_LENGTH].rsplit(" ", 1)[0].rstrip(" ,—-–")
 
     return t
+
+
+def title_needs_ai(cleaned_title, raw_title):
+    """Check if a cleaned title is garbage and needs AI rewriting."""
+    # Strip the type suffix to check just the descriptive part
+    desc = cleaned_title
+    for suffix in _TITLE_TYPE_SUFFIX.values():
+        if desc.endswith(suffix):
+            desc = desc[:-(len(suffix))].strip()
+            break
+
+    # Remove scale from desc for length check
+    desc_no_scale = SCALE_PATTERN.sub("", desc)
+    desc_no_scale = SCALE_MM_PATTERN.sub("", desc_no_scale).strip()
+
+    # Too short after cleaning = garbage
+    if len(desc_no_scale) < 20:
+        return True
+
+    # Still has catalog codes
+    if CATALOG_CODE_PATTERN.search(cleaned_title):
+        return True
+
+    return False
+
+
+def ai_generate_titles_batch(products, api_key):
+    """
+    Batch-generate descriptive titles for products with garbage cleaned titles.
+    Uses Claude with vision (title + image) for accuracy.
+    Caches results in ai_title_cache.json.
+    """
+    import requests as req
+
+    cache = _load_title_cache()
+    needs_ai = []
+
+    for p in products:
+        raw = p.get("_raw_title", "")
+        cleaned = p.get("title", "")
+        if raw and title_needs_ai(cleaned, raw) and raw not in cache:
+            needs_ai.append(p)
+        elif raw in cache:
+            # Apply cached title
+            p["title"] = cache[raw]
+
+    if not needs_ai:
+        return
+
+    print(f"  AI title generation for {len(needs_ai)} products (batches of 10)...")
+
+    prompt = (
+        "Based on this product title and image, write a short, descriptive "
+        "product name (under 50 chars) for a resin model store. Describe what "
+        "the figure/model actually depicts. Do not include brand names, catalog "
+        "numbers, or words like colorless, self-assembled, or DIY. "
+        "Example good titles: Medieval Knight Commander 75mm, "
+        "WWII German Panzer Crew 1/35, Dragon Warrior Fantasy Bust 1/10. "
+        "Respond with ONLY the title, nothing else."
+    )
+
+    generated = 0
+    for i in range(0, len(needs_ai), 10):
+        batch = needs_ai[i:i + 10]
+
+        for p in batch:
+            raw = p.get("_raw_title", "")
+            image_url = p.get("image_url", "")
+
+            # Build message content
+            content = []
+            if image_url:
+                content.append({
+                    "type": "image",
+                    "source": {"type": "url", "url": image_url},
+                })
+            content.append({
+                "type": "text",
+                "text": f"{prompt}\n\nOriginal title: {raw}",
+            })
+
+            try:
+                resp = req.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": 60,
+                        "messages": [{"role": "user", "content": content}],
+                    },
+                    timeout=15,
+                )
+
+                if resp.status_code == 200:
+                    new_title = resp.json()["content"][0]["text"].strip()
+                    # Sanitize: remove quotes, ensure reasonable length
+                    new_title = new_title.strip('"\'')
+                    if len(new_title) > 5 and len(new_title) <= 60:
+                        cache[raw] = new_title
+                        p["title"] = new_title
+                        generated += 1
+
+            except Exception:
+                pass
+
+        _save_title_cache(cache)
+        done = min(i + 10, len(needs_ai))
+        print(f"    [{done}/{len(needs_ai)}] generated")
+
+        if i + 10 < len(needs_ai):
+            import time
+            time.sleep(0.5)
+
+    print(f"  AI generated {generated} titles ({len(cache)} cached total)")
 
 
 # ═══════════════════════════════════════════════════════════════
