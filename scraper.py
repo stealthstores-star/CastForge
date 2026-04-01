@@ -153,7 +153,11 @@ async def _scrape_page_async(context, url):
         # Try embedded JSON first (fast)
         json_product = _extract_from_embedded_json(html, url, product_id)
         if json_product and json_product.get("product_title"):
-            return json_product
+            # If JSON got title but no images, fall through to DOM scraping
+            if json_product.get("product_images"):
+                return json_product
+            # Keep the JSON data but continue to DOM for images
+            product = json_product
 
         # DOM fallback
         for sel in ["h1[data-pl='product-title']", "h1.product-title-text", "h1"]:
@@ -187,14 +191,14 @@ async def _scrape_page_async(context, url):
             if img_els:
                 for img_el in img_els:
                     src = await img_el.get_attribute("src") or ""
-                    if src and ("alicdn" in src or "ae01" in src):
+                    if src and ("alicdn" in src or "ae01" in src or "aliexpress" in src):
                         full = _fix_ali_image_url(src)
                         if not full.startswith("http"):
                             full = f"https:{full}"
                         if full not in images:
                             images.append(full)
                 break
-        if images:
+        if images and not product.get("product_images"):
             product["product_image"] = images[0]
             product["product_images"] = "|".join(images)
 

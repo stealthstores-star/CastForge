@@ -94,6 +94,15 @@ def load_csv(path):
             if product["title"]:
                 products.append(product)
 
+    # Debug: show image data for first product
+    if products:
+        p0 = products[0]
+        img = p0.get("image_url", "")
+        imgs = p0.get("images", "")
+        print(f"  First product images:")
+        print(f"    image_url: {img[:80] if img else 'EMPTY'}")
+        print(f"    images: {imgs[:80] if imgs else 'EMPTY'}")
+
     print(f"  Loaded {len(products)} products from {path}\n")
     return products
 
