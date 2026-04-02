@@ -812,27 +812,29 @@ async def _run_title_fixer(needs_fix, products):
                   "--no-sandbox", "--disable-dev-shm-usage"],
         )
 
+        progress = {"done": 0, "fixed": 0, "failed": 0,
+                    "total": len(needs_fix), "start": start_time}
+
         titles_since_restart = 0
 
         for cycle_start in range(0, len(needs_fix), CONTEXTS * BATCH_PER_CONTEXT):
             cycle = needs_fix[cycle_start:cycle_start + CONTEXTS * BATCH_PER_CONTEXT]
 
-            # Split across contexts
             chunks = []
             for ci in range(CONTEXTS):
                 chunk = cycle[ci * BATCH_PER_CONTEXT:(ci + 1) * BATCH_PER_CONTEXT]
                 if chunk:
                     chunks.append(chunk)
 
-            # Run all contexts concurrently
             tasks = [
-                _title_worker(browser, ci + 1, chunk, products, session_path)
+                _title_worker(browser, ci + 1, chunk, products, session_path,
+                              progress)
                 for ci, chunk in enumerate(chunks)
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             cycle_fixed = sum(r for r in results if isinstance(r, int))
-            fixed_total += cycle_fixed
+            fixed_total = progress["fixed"]
             titles_since_restart += cycle_fixed
 
             # Save checkpoint every cycle
@@ -860,7 +862,8 @@ async def _run_title_fixer(needs_fix, products):
     return fixed_total
 
 
-async def _title_worker(browser, worker_id, items, products, session_path):
+async def _title_worker(browser, worker_id, items, products, session_path,
+                         progress):
     """One context that extracts h1 titles from a list of (index, url) pairs."""
     import random
     from scraper import STEALTH_JS, USER_AGENTS
@@ -882,7 +885,6 @@ async def _title_worker(browser, worker_id, items, products, session_path):
             await page.add_init_script(STEALTH_JS)
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
 
-            # Wait for h1 specifically — that's all we need
             try:
                 await page.wait_for_selector("h1", timeout=5000)
             except Exception:
@@ -890,7 +892,6 @@ async def _title_worker(browser, worker_id, items, products, session_path):
 
             title = ""
 
-            # Try selectors in order
             for sel in ['h1[data-pl="product-title"]', "h1.product-title-text",
                          "h1", '[class*="title--wrap"] h1']:
                 el = await page.query_selector(sel)
@@ -900,7 +901,6 @@ async def _title_worker(browser, worker_id, items, products, session_path):
                         title = text
                         break
 
-            # og:title fallback
             if not title:
                 og = await page.query_selector('meta[property="og:title"]')
                 if og:
@@ -909,7 +909,6 @@ async def _title_worker(browser, worker_id, items, products, session_path):
                     if text and len(text) > 5 and "aliexpress" not in text.lower():
                         title = text
 
-            # <title> tag fallback
             if not title:
                 import re
                 page_title = (await page.title()).strip()
@@ -921,10 +920,28 @@ async def _title_worker(browser, worker_id, items, products, session_path):
             if title:
                 products[idx]["product_title"] = title
                 fixed += 1
+                progress["fixed"] += 1
+
+                # Print on first fix
+                if progress["fixed"] == 1:
+                    print(f"  First title fixed: \"{title[:60]}\"")
+            else:
+                progress["failed"] += 1
+
+            progress["done"] += 1
+            # Print every 50
+            if progress["done"] % 50 == 0:
+                elapsed = time.time() - progress["start"]
+                rate = progress["done"] / max(elapsed, 1) * 60
+                print(f"  [{progress['done']}/{progress['total']}] "
+                      f"Fixed {progress['fixed']}, Failed {progress['failed']} "
+                      f"— {rate:.0f}/min")
 
             await page.close()
 
         except Exception:
+            progress["done"] += 1
+            progress["failed"] += 1
             try:
                 await page.close()
             except Exception:
