@@ -346,10 +346,10 @@ def process_products(products):
 
         category_counts[handle] = category_counts.get(handle, 0) + 1
 
-    # AI title generation for products with garbage cleaned titles
-    if api_key and api_key != "sk-ant-xxx":
-        categorizer.ai_generate_titles_batch(export_products, api_key)
-        # Regenerate SEO for any products that got AI titles
+    # AI title generation (disabled — too slow and unreliable)
+    _ai_key = config.ANTHROPIC_API_KEY
+    if _ai_key and _ai_key != "sk-ant-xxx":
+        categorizer.ai_generate_titles_batch(export_products, _ai_key)
         for product_data in export_products:
             if "_raw_title" in product_data:
                 handle = product_data["category_handle"]
@@ -377,6 +377,9 @@ def process_products(products):
 
     # Fix image URLs for Shopify compatibility
     fix_product_image_urls(export_products)
+
+    # Write needs_review.csv if any products couldn't be categorized
+    categorizer.write_needs_review()
 
     return export_products, blocked, dupes_removed
 
@@ -920,12 +923,27 @@ async def _title_worker(browser, worker_id, items, products, session_path,
                 if page_title and len(page_title) > 5 and "aliexpress" not in page_title.lower():
                     title = page_title
 
+            # Validate: reject captcha pages, junk, and too-short titles
+            junk_phrases = ["captcha", "interception", "access denied",
+                             "please verify", "just a moment", "security check",
+                             "robot check", "404", "not found", "page not found"]
+            if title and any(j in title.lower() for j in junk_phrases):
+                title = ""  # reject
+            if title and len(title) < 10:
+                title = ""  # too short to be a real title
+            if title and "aliexpress" in title.lower():
+                title = ""  # still has aliexpress in it
+
+            # Strip " - AliExpress 26" suffix
+            if title:
+                title = re.sub(r"\s*-\s*AliExpress\s*\d*\s*$", "", title,
+                               flags=re.IGNORECASE).strip()
+
             if title:
                 products[idx]["product_title"] = title
                 fixed += 1
                 progress["fixed"] += 1
 
-                # Print on first fix
                 if progress["fixed"] == 1:
                     print(f"  First title fixed: \"{title[:60]}\"")
             else:

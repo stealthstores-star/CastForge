@@ -653,157 +653,236 @@ def detect_scale(title):
 
 
 # ═══════════════════════════════════════════════════════════════
-# CATEGORIZATION
+# CATEGORIZATION — word-boundary matching, priority order
 # ═══════════════════════════════════════════════════════════════
+
+# File for products that match no category
+_NEEDS_REVIEW = []
+
+
+def _wb(words, text):
+    """Check if ANY word matches with \\b word boundaries (case-insensitive)."""
+    return any(re.search(r"\b" + re.escape(w) + r"\b", text, re.IGNORECASE) for w in words)
+
+
+def _strip_ali_suffix(title):
+    """Strip ' - AliExpress 26', ' - AliExpress', etc. from end of title."""
+    return re.sub(r"\s*-\s*AliExpress\s*\d*\s*$", "", title, flags=re.IGNORECASE).strip()
+
 
 def categorize(title, description=""):
     """
-    Pure keyword categorization — NO API calls. 200+ keywords.
-    Uses word-boundary regex matching (not substring) to avoid
-    false positives like 'elf' matching 'self-assembled'.
+    Priority-ordered keyword categorization with \\b word boundaries.
+    First match wins. No API calls. ~200 keywords.
     """
+    # Strip AliExpress suffix before categorizing
+    title = _strip_ali_suffix(title)
     t = f"{title} {description}".lower()
 
-    def _has(words):
-        """Check if any word matches with word boundaries."""
-        return any(re.search(r"\b" + re.escape(w) + r"\b", t) for w in words)
+    # ── P1: ACCESSORIES (tools/supplies/parts) ──
+    if _wb(["brush", "airbrush", "glue", "primer", "cutting mat", "work pad",
+            "silicone mat", "silicone pad", "magnifying", "tool set", "hobby tool",
+            "tweezers", "heads set", "weapon accessory", "modification kit",
+            "modification part", "display stand", "action figure stand",
+            "paint set", "hobby knife", "wet palette", "spray booth",
+            "paint rack", "pin vise", "milliput", "green stuff",
+            "airbrush needle", "airbrush compressor", "turntable"], t):
+        if not _wb(list(FIGURE_KEYWORDS - {"figure"}), t):  # "figure stand" is OK
+            return "accessories", 10, "accessories"
 
-    # ── Priority checks (unambiguous matches with word boundaries) ──
-
-    # Infantry FIRST (most common — WW2/military soldiers)
-    infantry_words = ["ww2", "wwii", "ww1", "wwi", "world war", "vietnam",
-                       "korea", "soviet", "german soldier", "american soldier",
-                       "british soldier", "french soldier", "infantry",
-                       "sniper", "officer", "marine", "paratrooper",
-                       "commando", "navy seal", "special forces", "ranger",
-                       "grenadier", "medic", "artilleryman", "surrendering",
-                       "modern soldier", "modern military"]
-    if _has(infantry_words):
-        return "wargaming-infantry", 10, "wargaming-tabletop"
-
-    # Military vehicles
-    mv_words = ["tank", "panzer", "sherman", "tiger", "t-34", "halftrack",
-                 "artillery", "sdkfz", "howitzer", "armored car", "apc",
-                 "ifv", "stug", "panther", "leopard", "abrams", "mortar",
-                 "cannon", "jeep", "military truck", "afv"]
-    if _has(mv_words) and not _has(["bust", "portrait"]):
-        return "scale-military-vehicles", 10, "scale-model-kits"
-
-    # Ships
-    ship_words = ["ship", "boat", "submarine", "destroyer", "battleship",
-                   "u-boat", "naval", "frigate", "cruiser", "carrier",
-                   "corvette", "warship", "bismarck", "yamato", "admiral",
-                   "sailor", "navy"]
-    if _has(ship_words) and not _has(["soldier", "warrior", "knight"]):
-        return "scale-ships-naval", 10, "scale-model-kits"
-
-    # Aircraft
-    air_words = ["aircraft", "plane", "airplane", "spitfire",
-                  "bomber", "helicopter", "messerschmitt", "zero fighter",
-                  "corsair", "hurricane", "lancaster", "jet fighter",
-                  "apache helicopter", "aviation"]
-    if _has(air_words):
-        return "scale-aircraft", 10, "scale-model-kits"
-
-    # Fantasy (word-boundary safe — "elf" won't match "self")
-    fantasy_words = ["dragon", "elf", "orc", "dwarf", "goblin", "wizard",
-                      "witch", "undead", "skeleton", "zombie", "vampire",
-                      "werewolf", "demon", "daemon", "warhammer", "necromancer",
-                      "sorcerer", "dark fantasy", "dark elf", "troll", "ogre",
-                      "minotaur", "hydra", "griffin", "phoenix", "fairy",
-                      "wyvern", "wyrm", "cthulhu", "eldritch"]
-    if _has(fantasy_words):
-        return "fantasy-warriors", 10, "anime-fantasy-figures"
-
-    # Anime
-    anime_words = ["anime", "manga", "schoolgirl", "school girl", "waifu",
-                    "chibi", "cosplay", "maid costume", "kawaii", "otaku",
-                    "bishoujo", "japanese school"]
-    if _has(anime_words):
-        return "anime-characters", 10, "anime-fantasy-figures"
-
-    # Busts
-    bust_words = ["bust", "portrait bust", "half body", "head sculpt"]
-    bust_scales = ["1/10", "1/9", "1/8", "200mm", "150mm", "100mm"]
-    if _has(bust_words) and (_has(bust_scales) or _has(["bust"])):
-        return "busts-portraits", 10, "anime-fantasy-figures"
-
-    # Mechs
-    mech_words = ["mech", "mecha", "gundam", "robot", "android", "cyborg",
-                   "battletech", "titan walker"]
-    if _has(mech_words):
-        return "wargaming-vehicles-mechs", 10, "wargaming-tabletop"
-
-    # Cars
-    car_words = ["car model", "race car", "rally car", "f1 car", "formula",
-                  "motorcycle", "motorbike", "muscle car", "classic car",
-                  "sports car", "hot rod", "drag car", "supercar", "cafe racer"]
-    if _has(car_words):
-        return "scale-cars-motorcycles", 10, "scale-model-kits"
-
-    # Buildings / terrain
-    build_words = ["building", "ruin", "ruins", "church", "castle", "bridge",
-                    "bunker", "trench", "terrain", "diorama base", "tower",
-                    "temple", "house", "fortress", "watchtower", "gate",
-                    "arch", "column", "fountain", "barricade", "wall", "fence"]
-    if _has(build_words) and not _has(["soldier", "warrior", "figure", "bust"]):
-        return "terrain-buildings-ruins", 10, "diorama-terrain"
-
-    # Accessories (strict — ONLY supplies, never figures)
-    acc_words = ["brush", "paint set", "airbrush", "glue", "primer",
-                  "cutting mat", "work pad", "silicone mat", "silicone pad",
-                  "hobby knife", "hobby tool", "hobby lamp", "wet palette",
-                  "magnifying", "tweezers", "turntable", "display case",
-                  "pin vise", "sandpaper", "putty", "milliput", "green stuff",
-                  "spray booth", "paint rack", "flock mix", "static grass",
-                  "airbrush needle", "airbrush compressor"]
-    if _has(acc_words) and not any(re.search(r"\b" + re.escape(w) + r"\b", t) for w in FIGURE_KEYWORDS):
+    # 1/6 scale items are action figure accessories
+    if re.search(r"\b1[:/]6\b", t) and _wb(["action figure", "action"], t):
         return "accessories", 10, "accessories"
 
-    # Monsters/creatures
-    monster_words = ["monster", "creature", "beast", "alien", "predator",
-                      "xenomorph", "chimera", "cerberus", "kraken", "giant spider"]
-    if _has(monster_words):
-        return "wargaming-monsters-creatures", 10, "wargaming-tabletop"
+    # ── P2: BUSTS ──
+    if _wb(["bust"], t):
+        return "busts-portraits", 10, "anime-fantasy-figures"
 
-    # Sci-fi
-    scifi_words = ["sci-fi", "cyberpunk", "space marine", "power armor",
-                    "post-apocalyptic", "science fiction", "starship trooper"]
-    if _has(scifi_words):
-        return "scifi-figures", 10, "anime-fantasy-figures"
-
-    # Named/famous characters → heroes
-    famous = ["napoleon", "spartacus", "alexander the great", "caesar",
-              "cleopatra", "joan of arc", "selene", "aragorn", "legolas",
-              "conan", "leonidas", "saladin", "genghis", "attila",
-              "king arthur", "robin hood", "zorro", "dracula"]
-    if _has(famous):
-        return "wargaming-heroes-characters", 10, "wargaming-tabletop"
-
-    # Generic warriors (knight/samurai/viking without a famous name)
-    warrior_words = ["knight", "samurai", "viking", "gladiator", "crusader",
-                      "templar", "spartan", "centurion", "pirate", "cowboy",
-                      "barbarian", "berserker", "warrior", "archer",
-                      "swordsman", "ronin", "paladin", "assassin", "amazon",
-                      "valkyrie", "musketeer", "legionary", "roman",
-                      "medieval", "ancient", "gunslinger"]
-    if _has(warrior_words):
-        return "wargaming-heroes-characters", 10, "wargaming-tabletop"
-
-    # Army bundles
-    if _has(["set of", "squad", "platoon", "bundle", "pack"]):
+    # ── P3: ARMY BUNDLES ──
+    if re.search(r"\d+\s*(figures|people|pack|man|person)\b", t, re.IGNORECASE):
+        return "wargaming-army-bundles", 10, "wargaming-tabletop"
+    if _wb(["big set", "squad", "platoon"], t):
         return "wargaming-army-bundles", 10, "wargaming-tabletop"
 
-    # Busts — wider check (any 75mm+ without other category match)
-    if _has(["75mm", "90mm", "200mm", "150mm", "100mm", "1/10"]):
-        return "busts-portraits", 5, "anime-fantasy-figures"
+    # ── P4: FANTASY WARRIORS ──
+    if _wb(["dragon", "dwarf", "goblin", "wizard", "witch", "undead", "skeleton",
+            "zombie", "vampire", "werewolf", "demon", "daemon", "necromancer",
+            "sorcerer", "warhammer", "kingdom death", "avatars of war",
+            "elf", "orc", "fantasy", "troll", "ogre", "minotaur", "hydra",
+            "griffin", "phoenix", "fairy", "wyvern", "wyrm", "cthulhu",
+            "eldritch", "dark elf"], t):
+        return "fantasy-warriors", 10, "anime-fantasy-figures"
 
-    # If it has "soldier", "crew", "pilot", "troops" → infantry
-    if _has(["soldier", "crew", "pilot", "gunner", "troops", "military"]):
-        return "wargaming-infantry", 5, "wargaming-tabletop"
+    # ── P5: ANIME CHARACTERS ──
+    if _wb(["anime", "manga", "schoolgirl", "school girl", "waifu", "chibi",
+            "cosplay", "kawaii", "otaku", "bishoujo"], t):
+        return "anime-characters", 10, "anime-fantasy-figures"
 
-    # Default: heroes-characters (most unnamed figures are warriors/characters)
-    return "wargaming-heroes-characters", 1, "wargaming-tabletop"
+    # ── P6: SHIPS & NAVAL ──
+    # "ship" but NOT "shipping"
+    has_ship = bool(re.search(r"\bships?\b", t, re.IGNORECASE))
+    has_shipping = bool(re.search(r"\bshipping\b|\bfree ship\b", t, re.IGNORECASE))
+    if _wb(["submarine", "u-boat", "battleship", "destroyer", "frigate",
+            "cruiser", "corvette", "aircraft carrier", "warship",
+            "navy", "naval", "boat"], t):
+        return "scale-ships-naval", 10, "scale-model-kits"
+    if has_ship and not has_shipping:
+        return "scale-ships-naval", 10, "scale-model-kits"
+    if re.search(r"\b1[:/](350|700)\b", t):
+        return "scale-ships-naval", 10, "scale-model-kits"
+
+    # ── P7: AIRCRAFT ──
+    if _wb(["aircraft", "bomber", "spitfire", "messerschmitt", "focke",
+            "hurricane", "lancaster", "corsair", "hellcat", "typhoon",
+            "helicopter", "luftwaffe", "pilot", "raf", "b-17", "b-24",
+            "bf-109", "fw-190", "p-51"], t):
+        return "scale-aircraft", 10, "scale-model-kits"
+    if re.search(r"\b1[:/]48\b", t) and not _wb(["soldier", "figure", "infantry"], t):
+        return "scale-aircraft", 10, "scale-model-kits"
+
+    # ── P8: MILITARY VEHICLES (the vehicle itself, NOT crew) ──
+    tank_words = ["panzer", "sherman", "tiger", "halftrack", "sdkfz",
+                   "artillery", "howitzer", "mortar", "cannon", "amx",
+                   "kv-1", "kv1", "t-34", "t-55", "t-72", "leopard",
+                   "abrams", "bradley", "stug", "jagdpanther", "jagdtiger",
+                   "panther", "flak", "panzerfaust", "armored", "armoured"]
+    person_words = ["soldier", "crew", "driver", "commander", "officer",
+                     "resting", "sitting", "winter", "ace", "girl",
+                     "grenadier", "panzergrenadier"]
+    if _wb(tank_words, t) and not _wb(person_words, t):
+        return "scale-military-vehicles", 10, "scale-model-kits"
+    if _wb(["tank"], t) and not _wb(person_words, t):
+        return "scale-military-vehicles", 10, "scale-model-kits"
+
+    # "tank crew" / "panzer crew" / "tank soldier" → infantry
+    if _wb(["tank"], t) and _wb(person_words, t):
+        return "wargaming-infantry", 10, "wargaming-tabletop"
+
+    # ── P9: BUILDINGS & RUINS ──
+    if _wb(["church", "castle", "ruin", "ruins", "bunker", "trench",
+            "bridge", "gate", "tower", "fortress", "fort", "barricade",
+            "wall section", "building", "terrain", "diorama base",
+            "wharf", "cargo pile", "scene layout", "scene props"], t):
+        if not _wb(["soldier", "warrior", "figure", "crew", "officer"], t):
+            return "terrain-buildings-ruins", 10, "diorama-terrain"
+
+    # ── P10: CARS & MOTORCYCLES ──
+    if _wb(["motorcycle", "motorbike", "racing car", "hot rod", "diecast",
+            "die cast", "die-cast", "cafe racer"], t):
+        return "scale-cars-motorcycles", 10, "scale-model-kits"
+    if _wb(["tamiya", "hobbyboss", "trumpeter"], t) and not _wb(["soldier", "figure", "infantry"], t):
+        return "scale-cars-motorcycles", 10, "scale-model-kits"
+
+    # ── P11: SCI-FI FIGURES ──
+    if _wb(["robot", "mech", "mecha", "cyberpunk", "sci-fi", "science fiction",
+            "space marine", "cyborg", "gundam", "android"], t):
+        return "scifi-figures", 10, "anime-fantasy-figures"
+
+    # ── P12: MONSTERS & CREATURES ──
+    if _wb(["beast", "alien", "xenomorph", "creature", "monster",
+            "serpent", "kraken", "predator"], t):
+        return "wargaming-monsters-creatures", 10, "wargaming-tabletop"
+
+    # ── P13: HEROES & CHARACTERS (named/notable + warrior archetypes) ──
+    famous = ["napoleon", "alexander", "caesar", "achilles", "leonidas",
+              "spartacus", "hannibal", "cleopatra", "joan of arc", "athena",
+              "braveheart", "louis xiv", "sun king", "zhukov", "guderian",
+              "macarthur", "custer", "rommel", "ramses", "pharaoh",
+              "wittmann", "otto carius", "blackbeard", "hector", "attila",
+              "genghis", "saladin", "richard the lionheart", "william wallace",
+              "el cid", "geronimo", "sitting bull", "crazy horse",
+              "patton", "montgomery", "eisenhower", "conan", "aragorn",
+              "legolas", "dracula", "zorro", "robin hood", "king arthur"]
+    if _wb(famous, t):
+        return "wargaming-heroes-characters", 10, "wargaming-tabletop"
+
+    warrior_archetypes = ["knight", "samurai", "viking", "pirate", "gladiator",
+                           "crusader", "templar", "hospitaller", "teutonic",
+                           "spartan", "centurion", "barbarian", "berserker",
+                           "cowboy", "musketeer", "hussar", "legionnaire",
+                           "ninja", "ronin", "shogun", "aztec", "rajput",
+                           "king", "queen", "prince", "princess", "emperor",
+                           "empress", "duke", "lord", "marshal", "colonel"]
+    if _wb(warrior_archetypes, t):
+        return "wargaming-heroes-characters", 10, "wargaming-tabletop"
+
+    # ── P14: INFANTRY & TROOPS (generic military — biggest category) ──
+    if _wb(["soldier", "soldiers", "infantry", "officer", "sniper",
+            "paratrooper", "airborne", "marine", "marines", "commando",
+            "special force", "grenadier", "machine gun", "mg42", "mg34",
+            "gunner", "rifleman", "wounded", "medic", "nurse", "civilian",
+            "crew", "panzergrenadier", "fallschirmjager"], t):
+        return "wargaming-infantry", 10, "wargaming-tabletop"
+
+    if _wb(["wwii", "ww2", "ww1", "world war", "civil war", "vietnam",
+            "korea", "cold war", "modern military"], t):
+        return "wargaming-infantry", 10, "wargaming-tabletop"
+
+    battles = ["kursk", "normandy", "stalingrad", "ardennes", "peleliu",
+               "kharkov", "bulge", "bastogne", "iwo jima", "okinawa",
+               "dunkirk", "el alamein", "tobruk", "barbarossa", "d-day",
+               "overlord", "midway", "gettysburg", "waterloo", "trafalgar",
+               "somme", "verdun", "ypres"]
+    if _wb(battles, t):
+        return "wargaming-infantry", 10, "wargaming-tabletop"
+
+    mil_units = ["army", "division", "regiment", "battalion", "brigade",
+                  "ss", "waffen", "wehrmacht", "totenkopf"]
+    if _wb(mil_units, t) and _wb(["1/35", "soldier", "figure", "resin"], t):
+        return "wargaming-infantry", 10, "wargaming-tabletop"
+
+    nationalities = ["soviet", "german", "russian", "american", "british",
+                      "french", "japanese", "chinese", "italian", "polish",
+                      "canadian", "australian"]
+    if _wb(nationalities, t) and re.search(r"\b1[:/]35\b", t):
+        return "wargaming-infantry", 10, "wargaming-tabletop"
+
+    # ── P15: SCALE-BASED GUESS + REVIEW QUEUE ──
+    # Suggest based on scale but flag for review
+    suggestion = "wargaming-heroes-characters"
+    reason = "no keyword match"
+    if re.search(r"\b1[:/]35\b", t):
+        suggestion = "wargaming-infantry"
+        reason = "1/35 scale suggests military figure"
+    elif re.search(r"\b(54|75|90)\s*mm\b", t, re.IGNORECASE):
+        suggestion = "wargaming-heroes-characters"
+        reason = "bust/figure scale"
+    elif re.search(r"\b(200|150|100)\s*mm\b", t, re.IGNORECASE):
+        suggestion = "busts-portraits"
+        reason = "large scale suggests bust"
+    elif re.search(r"\b1[:/]48\b", t):
+        suggestion = "scale-aircraft"
+        reason = "1/48 scale suggests aircraft"
+    elif re.search(r"\b1[:/](350|700)\b", t):
+        suggestion = "scale-ships-naval"
+        reason = "naval scale"
+    elif re.search(r"\b1[:/](24|43|64|87)\b", t):
+        suggestion = "scale-cars-motorcycles"
+        reason = "vehicle scale"
+
+    # Add to review queue
+    _NEEDS_REVIEW.append({
+        "title": title[:100],
+        "suggested": suggestion,
+        "reason": reason,
+    })
+
+    parent = PARENT_COLLECTIONS.get(suggestion, "wargaming-tabletop")
+    return suggestion, 0, parent
+
+
+def write_needs_review():
+    """Write needs_review.csv if any products need manual review."""
+    if not _NEEDS_REVIEW:
+        return 0
+    import csv
+    with open("needs_review.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["title", "suggested", "reason"])
+        w.writeheader()
+        w.writerows(_NEEDS_REVIEW)
+    count = len(_NEEDS_REVIEW)
+    print(f"  {count} products need manual review → needs_review.csv")
+    return count
 
 
 # ═══════════════════════════════════════════════════════════════
