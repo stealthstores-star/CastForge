@@ -323,7 +323,7 @@ MULTI_SPACE = re.compile(r"\s{2,}")
 SCALE_PATTERN = re.compile(r"(1[:/]\d{1,3})", re.IGNORECASE)
 SCALE_MM_PATTERN = re.compile(r"(\d{2,3}\s*mm)", re.IGNORECASE)
 
-MAX_TITLE_LENGTH = 60
+MAX_TITLE_LENGTH = 80
 
 _TITLE_TYPE_SUFFIX = {
     "busts-portraits": "Resin Bust",
@@ -503,6 +503,76 @@ def title_needs_ai(cleaned_title, raw_title):
     return False
 
 
+_VISION_TITLE_PROMPT = (
+    "Look at this resin miniature/figure product image. Identify:\n"
+    "1. What is the subject? (e.g. medieval knight, WWII soldier, dragon, female warrior)\n"
+    "2. What era/period? (e.g. WWII, Medieval, Ancient Roman, Fantasy, Sci-Fi)\n"
+    "3. What nationality if military? (e.g. German, Soviet, American)\n"
+    "4. What role? (e.g. sniper, cavalry, infantry, commander)\n"
+    "5. Is it a bust, full figure, vehicle, or diorama?\n"
+    "6. What scale does it appear to be based on detail level?\n\n"
+    "Write a product title following this format: "
+    "[Subject] [Era] [Nationality] [Role] [Scale] Resin [Type]\n"
+    "Maximum 80 characters. No filler words.\n"
+    "Write ONLY the title, nothing else."
+)
+
+
+def _vision_title_fallback(image_url, api_key):
+    """Use Claude Vision to generate a title from the product image."""
+    import requests as req
+    import base64 as b64
+
+    try:
+        # Download image
+        img_resp = req.get(image_url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0", "Referer": "https://www.aliexpress.com/"
+        })
+        if img_resp.status_code != 200 or len(img_resp.content) < 1000:
+            return None
+
+        img_b64 = b64.b64encode(img_resp.content).decode()
+        media_type = "image/jpeg"
+        if image_url.lower().endswith(".png"):
+            media_type = "image/png"
+
+        resp = req.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 100,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {
+                            "type": "base64", "media_type": media_type,
+                            "data": img_b64,
+                        }},
+                        {"type": "text", "text": _VISION_TITLE_PROMPT},
+                    ],
+                }],
+            },
+            timeout=20,
+        )
+
+        if resp.status_code == 200:
+            title = resp.json()["content"][0]["text"].strip().strip('"\'')
+            if title and len(title) > 5 and title.upper() != "SKIP":
+                if len(title) > 80:
+                    title = title[:80].rsplit(" ", 1)[0]
+                return title
+
+    except Exception:
+        pass
+
+    return None
+
+
 def ai_generate_titles_batch(products, api_key):
     """
     Batch-generate descriptive titles for products with garbage cleaned titles.
@@ -529,30 +599,37 @@ def ai_generate_titles_batch(products, api_key):
     print(f"  AI title generation for {len(needs_ai)} products (batches of 10)...")
 
     prompt = (
-        "Write a product name for a resin miniature store.\n\n"
+        "You are a product title writer for CastForge, a premium resin miniature store.\n\n"
+        "Turn this raw AliExpress title into a professional, SEO-optimized title.\n\n"
         "RULES:\n"
-        "1. ALWAYS include the SCALE from the original title (1/35, 54mm, 75mm, 90mm, 1/10 etc.)\n"
-        "2. Describe WHAT the figure/model IS — soldier, knight, tank crew, dragon, etc.\n"
-        "3. Include era/nationality if military (WWII German, Medieval, Modern US)\n"
-        "4. Format: [Subject Description] [Scale] Resin [Figure/Miniature/Bust]\n"
-        "5. NEVER use generic titles without describing what it is\n"
-        "6. MAX 60 characters total\n"
-        "7. Strip brand names, catalog numbers, 'unpainted', 'unassembled', 'DIY'\n\n"
-        "GOOD: 'WWII German Sniper 1/35 Resin Figure'\n"
-        "GOOD: 'Medieval Knight Templar 54mm Resin Character'\n"
-        "GOOD: 'Viking Warrior Bust 1/10 Resin Sculpture'\n"
-        "GOOD: 'Modern US Navy SEAL 1/35 Resin Figure'\n"
-        "GOOD: 'Fire Dragon 75mm Resin Fantasy Figure'\n"
-        "GOOD: 'Silicone Hobby Work Pad'\n\n"
-        "BAD: 'Resin Miniature' (too generic, no description)\n"
-        "BAD: 'Modern U.S. Military Resin Miniature' (missing scale)\n"
-        "BAD: 'Standing Male Character' (too vague)\n\n"
+        "1. IDENTIFY the exact subject. If it's a named historical figure (Napoleon, Henry VIII, "
+        "Spartacus, Rommel), USE THEIR NAME. Use your historical knowledge to identify figures "
+        "from vague descriptions like 'King of England 16th century' = Henry VIII.\n"
+        "2. ALWAYS include the scale from the raw title: 1/35, 1/24, 54mm, 75mm, etc. "
+        "If no scale found, omit it.\n"
+        "3. Include ERA for military: WWII, Napoleonic, Medieval, Ancient Roman, Modern, etc.\n"
+        "4. Include NATIONALITY for military: German, Soviet, American, British, etc.\n"
+        "5. Include ROLE: Sniper, Tank Commander, Cavalry Officer, Knight, Samurai, etc.\n"
+        "6. End with product type: 'Resin Figure', 'Resin Bust', 'Resin Model Kit', etc.\n"
+        "7. For busts say 'Resin Bust'. For multi-figure sets include count: '3-Figure Set'.\n"
+        "8. MAX 80 characters. No filler: Collectible, Unassembled, Unpainted, Sculpture, Statue.\n"
+        "9. Title case.\n\n"
+        "FORMAT: [Subject] [Era] [Nationality] [Role] [Scale] Resin [Type]\n\n"
+        "EXAMPLES:\n"
+        "'1:35 Resin kit Modern U.S. military 295' → 'Modern US Army Soldier 1/35 Resin Figure'\n"
+        "'54mm Resin kit Napoleon era elite infantry flag M54008' → 'Napoleonic French Standard Bearer 54mm Resin Figure'\n"
+        "'1/35 model kit Panzer Crew, Kursk 1943' → 'WWII German Panzer Crew Kursk 1943 1/35 Resin Set'\n"
+        "'Resin kit Let Guevara bust' → 'Che Guevara Portrait Resin Bust'\n"
+        "'54mm Emperor Napoleon crowned' → 'Napoleon Bonaparte Coronation 54mm Resin Figure'\n"
+        "'1/35 Brad Pitt Fury (5 people)' → 'Fury Movie Tank Crew 5-Figure Set 1/35 Resin Figure'\n\n"
+        "If the raw title has NO useful info (just 'Resin Model Figure GK'), return EXACTLY 'SKIP'.\n\n"
         "Raw title: {raw_title}\n\n"
-        "Write ONLY the product name:"
+        "Write ONLY the product title:"
     )
 
     generated = 0
     errors = 0
+    skipped = 0
     for i in range(0, len(needs_ai), 10):
         batch = needs_ai[i:i + 10]
 
@@ -587,6 +664,20 @@ def ai_generate_titles_batch(products, api_key):
                     new_title = resp.json()["content"][0]["text"].strip()
                     new_title = new_title.strip('"\'')
 
+                    # Handle SKIP response — try vision fallback with product image
+                    if new_title.upper() == "SKIP":
+                        image_url = p.get("image_url", "")
+                        if image_url:
+                            vision_title = _vision_title_fallback(image_url, api_key)
+                            if vision_title:
+                                new_title = vision_title
+                            else:
+                                skipped += 1
+                                continue
+                        else:
+                            skipped += 1
+                            continue
+
                     # Ensure scale is included — but only if AI didn't already add one
                     has_scale = (re.search(r"\b\d{2,3}\s*mm\b", new_title, re.IGNORECASE)
                                  or re.search(r"\b1[:/]\d{1,3}\b", new_title))
@@ -595,9 +686,9 @@ def ai_generate_titles_batch(products, api_key):
                         if scale:
                             new_title = f"{new_title} {scale}"
 
-                    # Truncate if over 60
-                    if len(new_title) > 60:
-                        new_title = new_title[:60].rsplit(" ", 1)[0]
+                    # Truncate if over 80
+                    if len(new_title) > 80:
+                        new_title = new_title[:80].rsplit(" ", 1)[0]
 
                     if len(new_title) > 5:
                         cache[raw] = new_title
@@ -625,7 +716,7 @@ def ai_generate_titles_batch(products, api_key):
             import time
             time.sleep(0.5)
 
-    print(f"  AI generated {generated} titles ({len(cache)} cached total)")
+    print(f"  AI generated {generated} titles, {skipped} skipped, {errors} errors ({len(cache)} cached)")
 
 
 # ═══════════════════════════════════════════════════════════════
