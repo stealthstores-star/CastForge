@@ -361,7 +361,7 @@ def _save_title_cache(cache):
     _AI_TITLE_CACHE_FILE.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
 
 
-def clean_title(title, category_handle="wargaming-heroes-characters"):
+def clean_title(title, category_handle="wargaming-infantry"):
     """
     Remove AliExpress spam, title-case, and limit to 60 chars.
     Format: descriptive name + scale + Resin Figure/Kit/Bust.
@@ -681,7 +681,7 @@ def categorize(title, description=""):
 
     # Everything else → needs AI categorization
     # Return placeholder; ai_categorize_batch will override
-    return "wargaming-heroes-characters", 0, "wargaming-tabletop"
+    return "wargaming-infantry", 0, "wargaming-tabletop"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -752,16 +752,15 @@ def _ai_categorize(title):
         parent = PARENT_COLLECTIONS.get(handle, "diorama-terrain")
         return handle, 1, parent
 
-    # Queue for batch processing — return placeholder that will be
-    # resolved by ai_categorize_batch. Heroes & Characters is a safer
-    # default than Props/Accessories for figure products.
-    return "wargaming-heroes-characters", 0, "wargaming-tabletop"
+    # Queue for batch processing — return placeholder
+    return "wargaming-infantry", 0, "wargaming-tabletop"
 
 
 def ai_categorize_batch(products, api_key):
     """
-    AI-first categorization. Sends products in batches of 20 to Claude.
-    Only products with score 0 (not caught by keyword fast-path) need AI.
+    AI-first categorization. Sends 1 product per API call (batch JSON parsing
+    was failing). Only products with score 0 (not caught by keyword fast-path)
+    need AI.
     """
     import requests as req
     import time as _time
@@ -774,7 +773,6 @@ def ai_categorize_batch(products, api_key):
         title = p.get("_raw_title", p.get("title", ""))
         score = p.get("_score", 0)
 
-        # Already categorized by keyword fast-path (score >= 10)
         if score >= 2:
             continue
 
@@ -794,20 +792,43 @@ def ai_categorize_batch(products, api_key):
     if not needs_ai:
         return
 
-    print(f"  AI categorizing {len(needs_ai)} products (batches of 20)...")
+    print(f"  AI categorizing {len(needs_ai)} products (1 per API call)...")
 
-    batch_size = 20
+    _SINGLE_PROMPT = (
+        "Categorize this resin miniature product into exactly one category. "
+        "Reply with ONLY the category handle.\n\n"
+        "Category handles:\n"
+        "infantry-troops (generic soldiers, military personnel, WW1/WW2/modern troops)\n"
+        "military-vehicles (tanks, APCs, artillery)\n"
+        "ships-naval (warships, submarines, sailors)\n"
+        "aircraft (planes, helicopters, pilots)\n"
+        "heroes-characters (ONLY named/notable individuals — Napoleon, Spartacus, movie characters)\n"
+        "fantasy-warriors (dragons, elves, orcs, wizards, undead, dark fantasy)\n"
+        "busts-portraits (bust/head/shoulder sculptures)\n"
+        "monsters-creatures (beasts, aliens, mythical creatures)\n"
+        "sci-fi-figures (robots, cyberpunk, space marines)\n"
+        "anime-characters (anime/manga style)\n"
+        "vehicles-mechs (mechs, gundams, walkers)\n"
+        "cars-motorcycles (civilian vehicles)\n"
+        "buildings-ruins (terrain, buildings, ruins)\n"
+        "natural-elements (trees, rocks, scenery)\n"
+        "props-accessories (standalone weapons, barrels, camp items)\n"
+        "army-bundles (sets of multiple figures)\n"
+        "accessories (ONLY hobby tools/paints/brushes — NEVER figures)\n\n"
+        "RULES: Generic unnamed soldiers → infantry-troops. "
+        "Named characters → heroes-characters. "
+        "Knights/samurai/vikings without a famous name → heroes-characters. "
+        "Any figure/model/miniature → NEVER accessories.\n\n"
+        "Product: {title}\n\n"
+        "Reply with ONLY the handle (e.g. infantry-troops):"
+    )
+
+    VALID_HANDLES = set(PARENT_COLLECTIONS.keys()) | {"accessories"}
     categorized = 0
     errors = 0
+    error_samples = []
 
-    for i in range(0, len(needs_ai), batch_size):
-        batch = needs_ai[i:i + batch_size]
-
-        # Build numbered product list for the prompt
-        products_list = "\n".join(
-            f"{j+1}. {title[:100]}" for j, (_, title) in enumerate(batch)
-        )
-
+    for i, (product, title) in enumerate(needs_ai):
         try:
             resp = req.post(
                 "https://api.anthropic.com/v1/messages",
@@ -818,71 +839,73 @@ def ai_categorize_batch(products, api_key):
                 },
                 json={
                     "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 500,
+                    "max_tokens": 30,
                     "messages": [{
                         "role": "user",
-                        "content": _BATCH_AI_PROMPT.format(products_list=products_list),
+                        "content": _SINGLE_PROMPT.format(title=title[:150]),
                     }],
                 },
-                timeout=30,
+                timeout=15,
             )
 
             if resp.status_code == 200:
-                text = resp.json()["content"][0]["text"].strip()
-                # Parse JSON from response (handle markdown code blocks)
-                if text.startswith("```"):
-                    text = re.sub(r"^```(?:json)?\s*", "", text)
-                    text = re.sub(r"\s*```$", "", text)
-                try:
-                    results = json.loads(text)
-                except json.JSONDecodeError:
-                    # Try to extract JSON from response
-                    m = re.search(r"\{[^}]+\}", text)
-                    if m:
-                        results = json.loads(m.group())
-                    else:
-                        errors += len(batch)
-                        continue
+                answer = resp.json()["content"][0]["text"].strip().lower()
+                # Clean up: remove quotes, dashes at edges
+                answer = answer.strip('"\'.- ')
 
-                # Apply results
-                name_map = _get_name_to_handle()
-                for j, (product, title) in enumerate(batch):
-                    key = str(j + 1)
-                    handle = results.get(key, "wargaming-heroes-characters")
+                # Direct handle match
+                if answer in VALID_HANDLES:
+                    handle = answer
+                else:
+                    # Try fuzzy: check if answer contains a valid handle
+                    handle = "wargaming-infantry"  # default
+                    for vh in VALID_HANDLES:
+                        if vh in answer:
+                            handle = vh
+                            break
+                    # Also try display name mapping
+                    if handle == "wargaming-infantry":
+                        name_map = _get_name_to_handle()
+                        for name, h in name_map.items():
+                            if name.lower() in answer:
+                                handle = h
+                                break
 
-                    # Map display name to handle if needed
-                    if handle not in PARENT_COLLECTIONS and handle not in ["accessories"]:
-                        mapped = name_map.get(handle)
-                        if mapped:
-                            handle = mapped
+                cache[title] = handle
+                parent = PARENT_COLLECTIONS.get(handle, "wargaming-tabletop")
+                product["category_handle"] = handle
+                product["parent_handle"] = parent
+                product["product_type"] = PARENT_DISPLAY_NAMES.get(parent, "Wargaming & Tabletop")
+                categorized += 1
 
-                    # Validate
-                    if handle not in PARENT_COLLECTIONS and handle != "accessories":
-                        handle = "wargaming-heroes-characters"
-
-                    cache[title] = handle
-                    parent = PARENT_COLLECTIONS.get(handle, "wargaming-tabletop")
-                    product["category_handle"] = handle
-                    product["parent_handle"] = parent
-                    product["product_type"] = PARENT_DISPLAY_NAMES.get(parent, "Wargaming & Tabletop")
-                    categorized += 1
-
+            elif resp.status_code == 429:
+                retry = float(resp.headers.get("Retry-After", 5))
+                _time.sleep(retry)
+                # Don't count as error, will miss this one but continue
+                errors += 1
             else:
-                errors += len(batch)
-                if errors <= 3:
-                    print(f"    API error {resp.status_code}: {resp.text[:100]}")
+                errors += 1
+                if len(error_samples) < 3:
+                    error_samples.append(f"HTTP {resp.status_code}: {resp.text[:150]}")
 
         except Exception as e:
-            errors += len(batch)
-            if errors <= 3:
-                print(f"    Exception: {str(e)[:80]}")
+            errors += 1
+            if len(error_samples) < 3:
+                error_samples.append(f"{type(e).__name__}: {str(e)[:100]}")
 
-        _save_ai_cache(cache)
-        done = min(i + batch_size, len(needs_ai))
-        print(f"    [{done}/{len(needs_ai)}] categorized")
+        # Save cache every 50 products
+        if (i + 1) % 50 == 0:
+            _save_ai_cache(cache)
 
-        if i + batch_size < len(needs_ai):
-            _time.sleep(0.5)
+        if (i + 1) % 100 == 0 or (i + 1) == len(needs_ai):
+            print(f"    [{i+1}/{len(needs_ai)}] {categorized} OK, {errors} errors")
+
+    _save_ai_cache(cache)
+
+    if error_samples:
+        print(f"  First errors:")
+        for sample in error_samples:
+            print(f"    {sample}")
 
     print(f"  AI categorized {categorized} products, {errors} errors ({len(cache)} cached)")
 
@@ -927,8 +950,8 @@ def _call_claude_categorize(title, api_key):
     except Exception:
         pass
 
-    # If API fails, fall back to Heroes & Characters (safer than Accessories)
-    return "wargaming-heroes-characters"
+    # If API fails, fall back to Infantry & Troops (most common category)
+    return "wargaming-infantry"
 
 
 def _validate_ai_category(handle, title):
