@@ -471,6 +471,9 @@ def clean_title(title, category_handle="wargaming-infantry"):
         else:
             t = t[:MAX_TITLE_LENGTH].rsplit(" ", 1)[0].rstrip(" ,—-–")
 
+    # Final cleanup: strip any remaining leading colons/spaces
+    t = re.sub(r"^[\s:]+", "", t).strip()
+
     return t
 
 
@@ -656,18 +659,34 @@ def detect_scale(title):
 def categorize(title, description=""):
     """
     Pure keyword categorization — NO API calls. 200+ keywords.
-    Checks categories in priority order. Highest score wins.
+    Uses word-boundary regex matching (not substring) to avoid
+    false positives like 'elf' matching 'self-assembled'.
     """
     t = f"{title} {description}".lower()
 
-    # ── Priority checks (unambiguous matches) ──
+    def _has(words):
+        """Check if any word matches with word boundaries."""
+        return any(re.search(r"\b" + re.escape(w) + r"\b", t) for w in words)
 
-    # Military vehicles (check BEFORE infantry — "tank crew" → vehicles)
+    # ── Priority checks (unambiguous matches with word boundaries) ──
+
+    # Infantry FIRST (most common — WW2/military soldiers)
+    infantry_words = ["ww2", "wwii", "ww1", "wwi", "world war", "vietnam",
+                       "korea", "soviet", "german soldier", "american soldier",
+                       "british soldier", "french soldier", "infantry",
+                       "sniper", "officer", "marine", "paratrooper",
+                       "commando", "navy seal", "special forces", "ranger",
+                       "grenadier", "medic", "artilleryman", "surrendering",
+                       "modern soldier", "modern military"]
+    if _has(infantry_words):
+        return "wargaming-infantry", 10, "wargaming-tabletop"
+
+    # Military vehicles
     mv_words = ["tank", "panzer", "sherman", "tiger", "t-34", "halftrack",
                  "artillery", "sdkfz", "howitzer", "armored car", "apc",
                  "ifv", "stug", "panther", "leopard", "abrams", "mortar",
                  "cannon", "jeep", "military truck", "afv"]
-    if any(w in t for w in mv_words) and not any(w in t for w in ["bust", "portrait"]):
+    if _has(mv_words) and not _has(["bust", "portrait"]):
         return "scale-military-vehicles", 10, "scale-model-kits"
 
     # Ships
@@ -675,52 +694,51 @@ def categorize(title, description=""):
                    "u-boat", "naval", "frigate", "cruiser", "carrier",
                    "corvette", "warship", "bismarck", "yamato", "admiral",
                    "sailor", "navy"]
-    if any(w in t for w in ship_words) and not any(w in t for w in ["soldier", "warrior", "knight"]):
+    if _has(ship_words) and not _has(["soldier", "warrior", "knight"]):
         return "scale-ships-naval", 10, "scale-model-kits"
 
     # Aircraft
-    air_words = ["aircraft", "plane", "airplane", "spitfire", "mustang p-51",
+    air_words = ["aircraft", "plane", "airplane", "spitfire",
                   "bomber", "helicopter", "messerschmitt", "zero fighter",
                   "corsair", "hurricane", "lancaster", "jet fighter",
-                  "apache helicopter", "aviation", "p-51"]
-    if any(w in t for w in air_words):
+                  "apache helicopter", "aviation"]
+    if _has(air_words):
         return "scale-aircraft", 10, "scale-model-kits"
 
-    # Fantasy (check BEFORE heroes — "dragon warrior" → fantasy)
+    # Fantasy (word-boundary safe — "elf" won't match "self")
     fantasy_words = ["dragon", "elf", "orc", "dwarf", "goblin", "wizard",
                       "witch", "undead", "skeleton", "zombie", "vampire",
                       "werewolf", "demon", "daemon", "warhammer", "necromancer",
                       "sorcerer", "dark fantasy", "dark elf", "troll", "ogre",
                       "minotaur", "hydra", "griffin", "phoenix", "fairy",
                       "wyvern", "wyrm", "cthulhu", "eldritch"]
-    if any(w in t for w in fantasy_words):
+    if _has(fantasy_words):
         return "fantasy-warriors", 10, "anime-fantasy-figures"
 
     # Anime
     anime_words = ["anime", "manga", "schoolgirl", "school girl", "waifu",
                     "chibi", "cosplay", "maid costume", "kawaii", "otaku",
                     "bishoujo", "japanese school"]
-    if any(w in t for w in anime_words):
+    if _has(anime_words):
         return "anime-characters", 10, "anime-fantasy-figures"
 
     # Busts
     bust_words = ["bust", "portrait bust", "half body", "head sculpt"]
     bust_scales = ["1/10", "1/9", "1/8", "200mm", "150mm", "100mm"]
-    if any(w in t for w in bust_words):
-        if any(s in t for s in bust_scales) or "bust" in t:
-            return "busts-portraits", 10, "anime-fantasy-figures"
+    if _has(bust_words) and (_has(bust_scales) or _has(["bust"])):
+        return "busts-portraits", 10, "anime-fantasy-figures"
 
     # Mechs
     mech_words = ["mech", "mecha", "gundam", "robot", "android", "cyborg",
-                   "battletech", "titan walker", "at-st", "at-at"]
-    if any(w in t for w in mech_words):
+                   "battletech", "titan walker"]
+    if _has(mech_words):
         return "wargaming-vehicles-mechs", 10, "wargaming-tabletop"
 
     # Cars
     car_words = ["car model", "race car", "rally car", "f1 car", "formula",
                   "motorcycle", "motorbike", "muscle car", "classic car",
                   "sports car", "hot rod", "drag car", "supercar", "cafe racer"]
-    if any(w in t for w in car_words):
+    if _has(car_words):
         return "scale-cars-motorcycles", 10, "scale-model-kits"
 
     # Buildings / terrain
@@ -728,7 +746,7 @@ def categorize(title, description=""):
                     "bunker", "trench", "terrain", "diorama base", "tower",
                     "temple", "house", "fortress", "watchtower", "gate",
                     "arch", "column", "fountain", "barricade", "wall", "fence"]
-    if any(w in t for w in build_words) and not any(w in t for w in ["soldier", "warrior", "figure", "bust"]):
+    if _has(build_words) and not _has(["soldier", "warrior", "figure", "bust"]):
         return "terrain-buildings-ruins", 10, "diorama-terrain"
 
     # Accessories (strict — ONLY supplies, never figures)
@@ -739,19 +757,19 @@ def categorize(title, description=""):
                   "pin vise", "sandpaper", "putty", "milliput", "green stuff",
                   "spray booth", "paint rack", "flock mix", "static grass",
                   "airbrush needle", "airbrush compressor"]
-    if any(w in t for w in acc_words) and not any(w in t for w in FIGURE_KEYWORDS):
+    if _has(acc_words) and not any(re.search(r"\b" + re.escape(w) + r"\b", t) for w in FIGURE_KEYWORDS):
         return "accessories", 10, "accessories"
 
-    # Monsters/creatures (non-fantasy — aliens, beasts)
+    # Monsters/creatures
     monster_words = ["monster", "creature", "beast", "alien", "predator",
                       "xenomorph", "chimera", "cerberus", "kraken", "giant spider"]
-    if any(w in t for w in monster_words):
+    if _has(monster_words):
         return "wargaming-monsters-creatures", 10, "wargaming-tabletop"
 
     # Sci-fi
     scifi_words = ["sci-fi", "cyberpunk", "space marine", "power armor",
                     "post-apocalyptic", "science fiction", "starship trooper"]
-    if any(w in t for w in scifi_words):
+    if _has(scifi_words):
         return "scifi-figures", 10, "anime-fantasy-figures"
 
     # Named/famous characters → heroes
@@ -759,19 +777,8 @@ def categorize(title, description=""):
               "cleopatra", "joan of arc", "selene", "aragorn", "legolas",
               "conan", "leonidas", "saladin", "genghis", "attila",
               "king arthur", "robin hood", "zorro", "dracula"]
-    if any(w in t for w in famous):
+    if _has(famous):
         return "wargaming-heroes-characters", 10, "wargaming-tabletop"
-
-    # Infantry (WW1/WW2/modern soldiers — check keywords)
-    infantry_words = ["ww2", "wwii", "ww1", "wwi", "world war", "vietnam",
-                       "korea", "soviet", "german soldier", "american soldier",
-                       "british soldier", "french soldier", "infantry",
-                       "sniper", "officer", "marine", "paratrooper",
-                       "commando", "navy seal", "special forces", "ranger",
-                       "grenadier", "medic", "artilleryman", "surrendering",
-                       "modern soldier", "modern military"]
-    if any(w in t for w in infantry_words):
-        return "wargaming-infantry", 10, "wargaming-tabletop"
 
     # Generic warriors (knight/samurai/viking without a famous name)
     warrior_words = ["knight", "samurai", "viking", "gladiator", "crusader",
@@ -780,20 +787,19 @@ def categorize(title, description=""):
                       "swordsman", "ronin", "paladin", "assassin", "amazon",
                       "valkyrie", "musketeer", "legionary", "roman",
                       "medieval", "ancient", "gunslinger"]
-    if any(w in t for w in warrior_words):
+    if _has(warrior_words):
         return "wargaming-heroes-characters", 10, "wargaming-tabletop"
 
     # Army bundles
-    if any(w in t for w in ["set of", "squad", "platoon", "bundle", "pack"]):
+    if _has(["set of", "squad", "platoon", "bundle", "pack"]):
         return "wargaming-army-bundles", 10, "wargaming-tabletop"
 
     # Busts — wider check (any 75mm+ without other category match)
-    if any(s in t for s in ["75mm", "90mm", "200mm", "150mm", "100mm", "1/10"]):
+    if _has(["75mm", "90mm", "200mm", "150mm", "100mm", "1/10"]):
         return "busts-portraits", 5, "anime-fantasy-figures"
 
-    # If it has "soldier", "figure", "crew", "pilot" → infantry
-    if any(w in t for w in ["soldier", "figure", "crew", "pilot", "gunner",
-                             "troops", "military"]):
+    # If it has "soldier", "crew", "pilot", "troops" → infantry
+    if _has(["soldier", "crew", "pilot", "gunner", "troops", "military"]):
         return "wargaming-infantry", 5, "wargaming-tabletop"
 
     # Default: heroes-characters (most unnamed figures are warriors/characters)

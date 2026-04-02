@@ -422,15 +422,16 @@ def _is_valid_product_image(url):
     # Must be .jpg/.jpeg (skip .png — logos/watermarks)
     if not re.search(r"\.jpe?g$", url, re.IGNORECASE):
         return False
-    # Filename must be long enough (logos have short filenames)
-    m = re.search(r"/kf/(.+)$", url)
-    if m and len(m.group(1)) < 20:
-        return False
-    # No dimension patterns in URL path
+    # No dimension patterns in URL path (icon sizes like /27x27/)
     if re.search(r"/\d+x\d+", url):
         return False
-    # Skip description/info card images
-    if "desc" in url.lower() or "description" in url.lower():
+    # Skip junk URLs by content indicators in the path
+    junk_indicators = ["desc", "description", "banner", "shop", "store",
+                        "logo", "icon", "review", "feedback", "rating",
+                        "point", "star", "shipping", "delivery",
+                        "customer", "service"]
+    url_lower = url.lower()
+    if any(ind in url_lower for ind in junk_indicators):
         return False
     return True
 
@@ -468,16 +469,7 @@ def fix_product_image_urls(products):
                 seen_hashes.add(h)
                 deduped.append(u)
 
-        # Reorder: if 3+ images and first image hash is shorter than avg,
-        # it's likely a promo graphic — move it to the end
-        if len(deduped) >= 3:
-            def _hash_len(url):
-                m = re.search(r"/kf/([^/.]+)", url)
-                return len(m.group(1)) if m else 0
-            first_len = _hash_len(deduped[0])
-            avg_len = sum(_hash_len(u) for u in deduped[1:]) / max(len(deduped) - 1, 1)
-            if first_len < avg_len * 0.7:  # first is 30%+ shorter
-                deduped.append(deduped.pop(0))
+        # Keep original order — scraper already captured them correctly
 
         # Fallback: if all images filtered out, accept any alicdn .jpg
         if not deduped:
