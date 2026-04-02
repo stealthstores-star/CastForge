@@ -885,13 +885,12 @@ async def _title_worker(browser, worker_id, items, products, session_path,
             await page.add_init_script(STEALTH_JS)
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
 
-            try:
-                await page.wait_for_selector("h1", timeout=5000)
-            except Exception:
-                pass
+            # Give JS 3 seconds to render the title
+            await page.wait_for_timeout(3000)
 
             title = ""
 
+            # 1. Try h1 selectors
             for sel in ['h1[data-pl="product-title"]', "h1.product-title-text",
                          "h1", '[class*="title--wrap"] h1']:
                 el = await page.query_selector(sel)
@@ -901,16 +900,20 @@ async def _title_worker(browser, worker_id, items, products, session_path,
                         title = text
                         break
 
+            # 2. og:title via JS evaluate (works even if DOM not fully ready)
             if not title:
-                og = await page.query_selector('meta[property="og:title"]')
-                if og:
-                    text = (await og.get_attribute("content")) or ""
-                    text = text.strip()
-                    if text and len(text) > 5 and "aliexpress" not in text.lower():
-                        title = text
+                try:
+                    og_text = await page.evaluate(
+                        'document.querySelector("meta[property=\'og:title\']")?.content || ""'
+                    )
+                    og_text = og_text.strip() if og_text else ""
+                    if og_text and len(og_text) > 5 and "aliexpress" not in og_text.lower()[:15]:
+                        title = og_text
+                except Exception:
+                    pass
 
+            # 3. Browser tab title (strip " - AliExpress" suffix)
             if not title:
-                import re
                 page_title = (await page.title()).strip()
                 page_title = re.sub(r"\s*[-|]\s*AliExpress.*$", "", page_title,
                                      flags=re.IGNORECASE)
