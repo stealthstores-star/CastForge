@@ -370,6 +370,10 @@ def clean_title(title, category_handle="wargaming-infantry"):
     t = DISCOUNT_PATTERN.sub("", t)
     # Strip brand-code prefixes at start of title
     t = BRAND_CODE_PATTERN.sub("", t)
+    # Strip leading colons and spaces (": Title" → "Title")
+    t = re.sub(r"^[\s:]+", "", t)
+    # Strip M90022 style catalog codes (letter + 4-5 digits)
+    t = re.sub(r"\b[A-Z]\d{4,5}\b", "", t)
 
     # Strip catalog codes (A-757, Td-3622, Hong-06, Jk12, etc.)
     # but preserve military designations (F16, T34, WW2, etc.)
@@ -651,37 +655,149 @@ def detect_scale(title):
 
 def categorize(title, description=""):
     """
-    Fast-path keyword categorization for OBVIOUS cases only.
-    Everything else returns needs_ai=True for batch AI processing.
+    Pure keyword categorization — NO API calls. 200+ keywords.
+    Checks categories in priority order. Highest score wins.
     """
     t = f"{title} {description}".lower()
 
-    # Fast-path: unambiguous keyword matches
-    if any(w in t for w in ["brush", "airbrush", "cutting mat", "work pad",
-                             "silicone mat", "hobby knife", "paint set",
-                             "wet palette", "hobby tool", "hobby lamp"]):
-        if not any(w in t for w in FIGURE_KEYWORDS):
-            return "accessories", 10, "accessories"
+    # ── Priority checks (unambiguous matches) ──
 
-    if any(w in t for w in ["tank", "panzer", "sherman", "tiger", "t-34",
-                             "halftrack", "sdkfz", "howitzer"]):
-        if not any(w in t for w in ["bust", "figure", "pilot", "crew"]):
-            return "scale-military-vehicles", 10, "scale-model-kits"
+    # Military vehicles (check BEFORE infantry — "tank crew" → vehicles)
+    mv_words = ["tank", "panzer", "sherman", "tiger", "t-34", "halftrack",
+                 "artillery", "sdkfz", "howitzer", "armored car", "apc",
+                 "ifv", "stug", "panther", "leopard", "abrams", "mortar",
+                 "cannon", "jeep", "military truck", "afv"]
+    if any(w in t for w in mv_words) and not any(w in t for w in ["bust", "portrait"]):
+        return "scale-military-vehicles", 10, "scale-model-kits"
 
-    if any(w in t for w in ["dragon", "orc", "elf", "wizard", "goblin",
-                             "warhammer", "undead", "necromancer", "demon"]):
+    # Ships
+    ship_words = ["ship", "boat", "submarine", "destroyer", "battleship",
+                   "u-boat", "naval", "frigate", "cruiser", "carrier",
+                   "corvette", "warship", "bismarck", "yamato", "admiral",
+                   "sailor", "navy"]
+    if any(w in t for w in ship_words) and not any(w in t for w in ["soldier", "warrior", "knight"]):
+        return "scale-ships-naval", 10, "scale-model-kits"
+
+    # Aircraft
+    air_words = ["aircraft", "plane", "airplane", "spitfire", "mustang p-51",
+                  "bomber", "helicopter", "messerschmitt", "zero fighter",
+                  "corsair", "hurricane", "lancaster", "jet fighter",
+                  "apache helicopter", "aviation", "p-51"]
+    if any(w in t for w in air_words):
+        return "scale-aircraft", 10, "scale-model-kits"
+
+    # Fantasy (check BEFORE heroes — "dragon warrior" → fantasy)
+    fantasy_words = ["dragon", "elf", "orc", "dwarf", "goblin", "wizard",
+                      "witch", "undead", "skeleton", "zombie", "vampire",
+                      "werewolf", "demon", "daemon", "warhammer", "necromancer",
+                      "sorcerer", "dark fantasy", "dark elf", "troll", "ogre",
+                      "minotaur", "hydra", "griffin", "phoenix", "fairy",
+                      "wyvern", "wyrm", "cthulhu", "eldritch"]
+    if any(w in t for w in fantasy_words):
         return "fantasy-warriors", 10, "anime-fantasy-figures"
 
-    if any(w in t for w in ["anime", "manga", "waifu", "schoolgirl",
-                             "school girl", "chibi", "kawaii"]):
+    # Anime
+    anime_words = ["anime", "manga", "schoolgirl", "school girl", "waifu",
+                    "chibi", "cosplay", "maid costume", "kawaii", "otaku",
+                    "bishoujo", "japanese school"]
+    if any(w in t for w in anime_words):
         return "anime-characters", 10, "anime-fantasy-figures"
 
-    if "bust" in t and any(w in t for w in ["1/10", "200mm", "150mm", "100mm"]):
-        return "busts-portraits", 10, "anime-fantasy-figures"
+    # Busts
+    bust_words = ["bust", "portrait bust", "half body", "head sculpt"]
+    bust_scales = ["1/10", "1/9", "1/8", "200mm", "150mm", "100mm"]
+    if any(w in t for w in bust_words):
+        if any(s in t for s in bust_scales) or "bust" in t:
+            return "busts-portraits", 10, "anime-fantasy-figures"
 
-    # Everything else → needs AI categorization
-    # Return placeholder; ai_categorize_batch will override
-    return "wargaming-infantry", 0, "wargaming-tabletop"
+    # Mechs
+    mech_words = ["mech", "mecha", "gundam", "robot", "android", "cyborg",
+                   "battletech", "titan walker", "at-st", "at-at"]
+    if any(w in t for w in mech_words):
+        return "wargaming-vehicles-mechs", 10, "wargaming-tabletop"
+
+    # Cars
+    car_words = ["car model", "race car", "rally car", "f1 car", "formula",
+                  "motorcycle", "motorbike", "muscle car", "classic car",
+                  "sports car", "hot rod", "drag car", "supercar", "cafe racer"]
+    if any(w in t for w in car_words):
+        return "scale-cars-motorcycles", 10, "scale-model-kits"
+
+    # Buildings / terrain
+    build_words = ["building", "ruin", "ruins", "church", "castle", "bridge",
+                    "bunker", "trench", "terrain", "diorama base", "tower",
+                    "temple", "house", "fortress", "watchtower", "gate",
+                    "arch", "column", "fountain", "barricade", "wall", "fence"]
+    if any(w in t for w in build_words) and not any(w in t for w in ["soldier", "warrior", "figure", "bust"]):
+        return "terrain-buildings-ruins", 10, "diorama-terrain"
+
+    # Accessories (strict — ONLY supplies, never figures)
+    acc_words = ["brush", "paint set", "airbrush", "glue", "primer",
+                  "cutting mat", "work pad", "silicone mat", "silicone pad",
+                  "hobby knife", "hobby tool", "hobby lamp", "wet palette",
+                  "magnifying", "tweezers", "turntable", "display case",
+                  "pin vise", "sandpaper", "putty", "milliput", "green stuff",
+                  "spray booth", "paint rack", "flock mix", "static grass",
+                  "airbrush needle", "airbrush compressor"]
+    if any(w in t for w in acc_words) and not any(w in t for w in FIGURE_KEYWORDS):
+        return "accessories", 10, "accessories"
+
+    # Monsters/creatures (non-fantasy — aliens, beasts)
+    monster_words = ["monster", "creature", "beast", "alien", "predator",
+                      "xenomorph", "chimera", "cerberus", "kraken", "giant spider"]
+    if any(w in t for w in monster_words):
+        return "wargaming-monsters-creatures", 10, "wargaming-tabletop"
+
+    # Sci-fi
+    scifi_words = ["sci-fi", "cyberpunk", "space marine", "power armor",
+                    "post-apocalyptic", "science fiction", "starship trooper"]
+    if any(w in t for w in scifi_words):
+        return "scifi-figures", 10, "anime-fantasy-figures"
+
+    # Named/famous characters → heroes
+    famous = ["napoleon", "spartacus", "alexander the great", "caesar",
+              "cleopatra", "joan of arc", "selene", "aragorn", "legolas",
+              "conan", "leonidas", "saladin", "genghis", "attila",
+              "king arthur", "robin hood", "zorro", "dracula"]
+    if any(w in t for w in famous):
+        return "wargaming-heroes-characters", 10, "wargaming-tabletop"
+
+    # Infantry (WW1/WW2/modern soldiers — check keywords)
+    infantry_words = ["ww2", "wwii", "ww1", "wwi", "world war", "vietnam",
+                       "korea", "soviet", "german soldier", "american soldier",
+                       "british soldier", "french soldier", "infantry",
+                       "sniper", "officer", "marine", "paratrooper",
+                       "commando", "navy seal", "special forces", "ranger",
+                       "grenadier", "medic", "artilleryman", "surrendering",
+                       "modern soldier", "modern military"]
+    if any(w in t for w in infantry_words):
+        return "wargaming-infantry", 10, "wargaming-tabletop"
+
+    # Generic warriors (knight/samurai/viking without a famous name)
+    warrior_words = ["knight", "samurai", "viking", "gladiator", "crusader",
+                      "templar", "spartan", "centurion", "pirate", "cowboy",
+                      "barbarian", "berserker", "warrior", "archer",
+                      "swordsman", "ronin", "paladin", "assassin", "amazon",
+                      "valkyrie", "musketeer", "legionary", "roman",
+                      "medieval", "ancient", "gunslinger"]
+    if any(w in t for w in warrior_words):
+        return "wargaming-heroes-characters", 10, "wargaming-tabletop"
+
+    # Army bundles
+    if any(w in t for w in ["set of", "squad", "platoon", "bundle", "pack"]):
+        return "wargaming-army-bundles", 10, "wargaming-tabletop"
+
+    # Busts — wider check (any 75mm+ without other category match)
+    if any(s in t for s in ["75mm", "90mm", "200mm", "150mm", "100mm", "1/10"]):
+        return "busts-portraits", 5, "anime-fantasy-figures"
+
+    # If it has "soldier", "figure", "crew", "pilot" → infantry
+    if any(w in t for w in ["soldier", "figure", "crew", "pilot", "gunner",
+                             "troops", "military"]):
+        return "wargaming-infantry", 5, "wargaming-tabletop"
+
+    # Default: heroes-characters (most unnamed figures are warriors/characters)
+    return "wargaming-heroes-characters", 1, "wargaming-tabletop"
 
 
 # ═══════════════════════════════════════════════════════════════

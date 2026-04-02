@@ -321,13 +321,8 @@ def process_products(products):
 
         sku_counter += 1
 
-    # AI categorization pass for low-scoring products
-    api_key = config.ANTHROPIC_API_KEY
-    if needs_ai and api_key and api_key != "sk-ant-xxx":
-        categorizer.ai_categorize_batch(needs_ai, api_key)
-    elif needs_ai:
-        print(f"  {len(needs_ai)} products need AI categorization but no ANTHROPIC_API_KEY set")
-        print(f"  Using fallback: Props & Accessories")
+    # Categorization is now pure keyword — no AI calls needed
+    # (ai_categorize_batch removed — keywords handle everything)
 
     # Second pass: generate titles, descriptions, SEO with final categories
     for product_data in export_products:
@@ -434,6 +429,9 @@ def _is_valid_product_image(url):
     # No dimension patterns in URL path
     if re.search(r"/\d+x\d+", url):
         return False
+    # Skip description/info card images
+    if "desc" in url.lower() or "description" in url.lower():
+        return False
     return True
 
 
@@ -470,6 +468,17 @@ def fix_product_image_urls(products):
                 seen_hashes.add(h)
                 deduped.append(u)
 
+        # Reorder: if 3+ images and first image hash is shorter than avg,
+        # it's likely a promo graphic — move it to the end
+        if len(deduped) >= 3:
+            def _hash_len(url):
+                m = re.search(r"/kf/([^/.]+)", url)
+                return len(m.group(1)) if m else 0
+            first_len = _hash_len(deduped[0])
+            avg_len = sum(_hash_len(u) for u in deduped[1:]) / max(len(deduped) - 1, 1)
+            if first_len < avg_len * 0.7:  # first is 30%+ shorter
+                deduped.append(deduped.pop(0))
+
         # Fallback: if all images filtered out, accept any alicdn .jpg
         if not deduped:
             fallback = [_fix_image_url(u) for u in all_urls
@@ -488,6 +497,14 @@ def fix_product_image_urls(products):
             filtered += 1
 
     print(f"  Images: {fixed} products with valid images, {filtered} with none")
+
+    # Debug: show hero image for first 5 products
+    print(f"  Hero images (first 5):")
+    for p in products[:5]:
+        img = p.get("image_url", "")
+        title = p.get("title", p.get("_raw_title", ""))[:40]
+        total = len(p.get("images", "").split("|")) if p.get("images") else 0
+        print(f"    [{total} imgs] {title} → {img[-50:] if img else 'NONE'}")
 
 
 # ═══════════════════════════════════════════════════════════════
