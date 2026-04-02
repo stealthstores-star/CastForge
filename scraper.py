@@ -717,6 +717,9 @@ async def _run_scraper(urls, scraped_ids, products, debug=False,
         # Ensure login session exists
         session_path = await _ensure_login(pw)
 
+        BROWSER_RESTART_EVERY = 500
+        products_since_restart = 0
+
         browser = await pw.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled",
@@ -756,16 +759,31 @@ async def _run_scraper(urls, scraped_ids, products, debug=False,
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
+            cycle_products = 0
             for result in results:
                 if isinstance(result, list):
                     products.extend(result)
+                    cycle_products += len(result)
                 elif isinstance(result, Exception):
                     print(f"  Context error: {result}")
 
+            products_since_restart += cycle_products
             _save_checkpoint(scraped_ids, products)
             print(f"  Checkpoint: {len(products)} products saved")
 
-            if cycle_start + urls_per_cycle < len(remaining):
+            # Restart browser every 500 products to prevent OOM
+            if products_since_restart >= BROWSER_RESTART_EVERY and cycle_start + urls_per_cycle < len(remaining):
+                print(f"  Restarting browser (memory cleanup after {products_since_restart} products)...")
+                await browser.close()
+                await asyncio.sleep(3)
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=["--disable-blink-features=AutomationControlled",
+                          "--no-sandbox", "--disable-dev-shm-usage"],
+                )
+                products_since_restart = 0
+
+            elif cycle_start + urls_per_cycle < len(remaining):
                 print(f"  Cooling down {cd}s...")
                 await asyncio.sleep(cd)
 
