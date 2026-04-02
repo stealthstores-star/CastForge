@@ -250,18 +250,45 @@ async def _scrape_page_async(context, url, debug=False,
 
         # ── DOM: Title ──
         if not product.get("product_title"):
-            for sel in ["h1[data-pl='product-title']", "h1.product-title-text",
-                         "[class*='title--wrap'] h1", "h1"]:
+            for sel in ['h1[data-pl="product-title"]', "h1.product-title-text",
+                         "h1", '[class*="title--wrap"] h1']:
                 el = await page.query_selector(sel)
                 if el:
                     text = (await el.inner_text()).strip()
                     if debug:
                         print(f"[DEBUG] Title '{sel}': '{text[:60]}'")
-                    if len(text) > 5:
+                    # Reject generic/junk titles
+                    if len(text) > 5 and text.lower() not in [
+                        "aliexpress", "ali express", "aliexpress.com",
+                        "page not found", "404", ""
+                    ] and "aliexpress" not in text.lower()[:15]:
                         product["product_title"] = text
                         break
                 elif debug:
                     print(f"[DEBUG] Title '{sel}': NOT FOUND")
+
+        # Fallback: og:title meta tag
+        if not product.get("product_title"):
+            og = await page.query_selector('meta[property="og:title"]')
+            if og:
+                text = (await og.get_attribute("content")) or ""
+                text = text.strip()
+                if text and len(text) > 5 and "aliexpress" not in text.lower()[:15]:
+                    product["product_title"] = text
+                    if debug:
+                        print(f"[DEBUG] Title from og:title: '{text[:60]}'")
+
+        # Last resort: page title tag (strip " - AliExpress" suffix)
+        if not product.get("product_title"):
+            page_title = (await page.title()).strip()
+            page_title = re.sub(r"\s*[-|]\s*AliExpress.*$", "", page_title, flags=re.IGNORECASE)
+            if page_title and len(page_title) > 5 and "aliexpress" not in page_title.lower():
+                product["product_title"] = page_title
+                if debug:
+                    print(f"[DEBUG] Title from <title>: '{page_title[:60]}'")
+
+        if not product.get("product_title") and debug:
+            print(f"[DEBUG] WARNING: No title extracted for {url}")
 
         # ── DOM: Price ──
         if not product.get("product_price"):

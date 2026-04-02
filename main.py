@@ -743,7 +743,195 @@ def cmd_scrape(urls_file, limit=None, debug=False, speed="safe"):
     scrape_urls(urls_file, output, limit=limit, debug=debug, speed=speed)
 
 
-def cmd_brand_images():
+def cmd_fix_titles():
+    """
+    Fix 'Aliexpress' titles in scrape_checkpoint.json.
+    15 concurrent contexts, h1-only extraction, ~300 pages/min.
+    Browser restart every 1000 titles.
+    """
+    import asyncio
+
+    checkpoint_path = Path("scrape_checkpoint.json")
+    if not checkpoint_path.exists():
+        print("No scrape_checkpoint.json found.")
+        return
+
+    data = json.loads(checkpoint_path.read_text())
+    products = data.get("products", [])
+
+    # Find products needing title fix
+    needs_fix = []
+    for i, p in enumerate(products):
+        title = p.get("product_title", "")
+        if not title or title.lower() in ["aliexpress", "ali express", "aliexpress.com", ""] \
+                or "aliexpress" in title.lower()[:15]:
+            url = p.get("product_url") or p.get("source_url", "")
+            if url:
+                needs_fix.append((i, url))
+
+    print(f"\n══════════════════════════════════════")
+    print(f"  CastForge Title Fixer")
+    print(f"══════════════════════════════════════\n")
+    print(f"  Total products: {len(products)}")
+    print(f"  Need title fix: {len(needs_fix)}")
+
+    if not needs_fix:
+        print("  Nothing to fix!")
+        return
+
+    print(f"  Strategy: 15 contexts, h1-only, ~300/min")
+    print(f"  Estimated: {len(needs_fix) / 300:.0f} minutes\n")
+
+    fixed = asyncio.run(_run_title_fixer(needs_fix, products))
+
+    # Save updated checkpoint
+    data["products"] = products
+    checkpoint_path.write_text(json.dumps(data, ensure_ascii=False))
+    print(f"\n  Checkpoint saved: {fixed} titles fixed")
+
+
+async def _run_title_fixer(needs_fix, products):
+    """Async title fixer with 15 concurrent contexts."""
+    from playwright.async_api import async_playwright
+    from scraper import STEALTH_JS, USER_AGENTS, SESSION_FILE, _fix_ali_image_url
+
+    CONTEXTS = 15
+    BATCH_PER_CONTEXT = 70  # ~1050 per cycle
+    BROWSER_RESTART = 1000
+
+    fixed_total = 0
+    start_time = time.time()
+
+    async with async_playwright() as pw:
+        # Load login session
+        session_path = str(SESSION_FILE) if SESSION_FILE.exists() else None
+
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled",
+                  "--no-sandbox", "--disable-dev-shm-usage"],
+        )
+
+        titles_since_restart = 0
+
+        for cycle_start in range(0, len(needs_fix), CONTEXTS * BATCH_PER_CONTEXT):
+            cycle = needs_fix[cycle_start:cycle_start + CONTEXTS * BATCH_PER_CONTEXT]
+
+            # Split across contexts
+            chunks = []
+            for ci in range(CONTEXTS):
+                chunk = cycle[ci * BATCH_PER_CONTEXT:(ci + 1) * BATCH_PER_CONTEXT]
+                if chunk:
+                    chunks.append(chunk)
+
+            # Run all contexts concurrently
+            tasks = [
+                _title_worker(browser, ci + 1, chunk, products, session_path)
+                for ci, chunk in enumerate(chunks)
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            cycle_fixed = sum(r for r in results if isinstance(r, int))
+            fixed_total += cycle_fixed
+            titles_since_restart += cycle_fixed
+
+            # Save checkpoint every cycle
+            elapsed = time.time() - start_time
+            rate = fixed_total / max(elapsed, 1) * 60
+            remaining = len(needs_fix) - cycle_start - len(cycle)
+            eta = remaining / max(rate, 1)
+            print(f"  [{cycle_start + len(cycle)}/{len(needs_fix)}] "
+                  f"{fixed_total} fixed | {rate:.0f}/min | ETA: {eta:.0f} min")
+
+            # Browser restart every 1000
+            if titles_since_restart >= BROWSER_RESTART and remaining > 0:
+                await browser.close()
+                await asyncio.sleep(2)
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=["--disable-blink-features=AutomationControlled",
+                          "--no-sandbox", "--disable-dev-shm-usage"],
+                )
+                titles_since_restart = 0
+                print(f"  Browser restarted")
+
+        await browser.close()
+
+    return fixed_total
+
+
+async def _title_worker(browser, worker_id, items, products, session_path):
+    """One context that extracts h1 titles from a list of (index, url) pairs."""
+    import random
+    from scraper import STEALTH_JS, USER_AGENTS
+
+    ua = random.choice(USER_AGENTS)
+    vp = {"width": random.choice([1280, 1366, 1440, 1920]),
+          "height": random.choice([720, 900, 1080])}
+
+    ctx_kwargs = dict(user_agent=ua, viewport=vp, locale="en-US")
+    if session_path:
+        ctx_kwargs["storage_state"] = session_path
+
+    context = await browser.new_context(**ctx_kwargs)
+    fixed = 0
+
+    for idx, url in items:
+        try:
+            page = await context.new_page()
+            await page.add_init_script(STEALTH_JS)
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+
+            # Wait for h1 specifically — that's all we need
+            try:
+                await page.wait_for_selector("h1", timeout=5000)
+            except Exception:
+                pass
+
+            title = ""
+
+            # Try selectors in order
+            for sel in ['h1[data-pl="product-title"]', "h1.product-title-text",
+                         "h1", '[class*="title--wrap"] h1']:
+                el = await page.query_selector(sel)
+                if el:
+                    text = (await el.inner_text()).strip()
+                    if len(text) > 5 and "aliexpress" not in text.lower()[:15]:
+                        title = text
+                        break
+
+            # og:title fallback
+            if not title:
+                og = await page.query_selector('meta[property="og:title"]')
+                if og:
+                    text = (await og.get_attribute("content")) or ""
+                    text = text.strip()
+                    if text and len(text) > 5 and "aliexpress" not in text.lower():
+                        title = text
+
+            # <title> tag fallback
+            if not title:
+                import re
+                page_title = (await page.title()).strip()
+                page_title = re.sub(r"\s*[-|]\s*AliExpress.*$", "", page_title,
+                                     flags=re.IGNORECASE)
+                if page_title and len(page_title) > 5 and "aliexpress" not in page_title.lower():
+                    title = page_title
+
+            if title:
+                products[idx]["product_title"] = title
+                fixed += 1
+
+            await page.close()
+
+        except Exception:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+    await context.close()
+    return fixed
     """Apply branded overlays to products already on Shopify."""
     print("\n══════════════════════════════════════")
     print("  CastForge Brand Image Processor")
@@ -988,6 +1176,8 @@ if __name__ == "__main__":
         cmd_audit()
     elif command == "brand-images":
         cmd_brand_images()
+    elif command == "fix-titles":
+        cmd_fix_titles()
     else:
         print(f"Unknown command: {command}")
         print(USAGE)
