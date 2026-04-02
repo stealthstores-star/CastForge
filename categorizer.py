@@ -186,19 +186,28 @@ CATEGORIES = {
                       "1/10", "1/35"],
     },
 
-    # ── Accessories ──
+    # ── Accessories (ONLY actual hobby supplies, NOT resin figures) ──
     "accessories": {
         "keywords": [
-            "brush", "brushes", "paint", "paints", "primer", "glue",
-            "airbrush", "tool", "tools", "display case", "turntable",
-            "wet palette", "magnifier", "lamp", "tweezers", "hobby knife",
-            "cutting mat", "pin vise", "sandpaper", "putty", "filler",
-            "thinner", "varnish", "sealer", "sculpting", "milliput",
-            "green stuff", "basing", "flock", "grass", "static grass",
-            "pigment", "wash", "ink",
+            # Multi-word phrases that are unambiguously accessories
+            "paint set", "brush set", "airbrush kit", "airbrush needle",
+            "cutting mat", "hobby knife", "pin vise", "display case",
+            "wet palette", "work mat", "work pad", "hobby mat",
+            "static grass", "green stuff", "milliput", "sculpting putty",
+            "hobby tool", "hobby lamp", "magnifying glass", "magnifying lamp",
+            "airbrush compressor", "spray booth", "paint rack",
+            "basing material", "flock mix",
+            # Single words ONLY if they're very specific to supplies
+            "airbrush", "tweezers", "turntable",
         ],
-        "negative": ["bust", "warrior", "knight",
-                      "soldier", "tank", "dragon", "vehicle", "infantry"],
+        "negative": ["figure", "bust", "warrior", "knight", "soldier",
+                      "tank", "dragon", "vehicle", "infantry", "miniature",
+                      "ship", "aircraft", "mech", "building", "ruin",
+                      "diorama", "monster", "creature", "officer",
+                      "samurai", "viking", "gladiator", "anime",
+                      "resin model", "resin figure", "resin bust",
+                      "75mm", "90mm", "200mm", "54mm", "28mm",
+                      "1/10", "1/35", "1/72", "1/24", "1/48"],
     },
 }
 
@@ -318,7 +327,7 @@ def _save_title_cache(cache):
     _AI_TITLE_CACHE_FILE.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
 
 
-def clean_title(title, category_handle="terrain-props"):
+def clean_title(title, category_handle="wargaming-heroes-characters"):
     """
     Remove AliExpress spam, title-case, and limit to 60 chars.
     Format: descriptive name + scale + Resin Figure/Kit/Bust.
@@ -452,22 +461,27 @@ def ai_generate_titles_batch(products, api_key):
     print(f"  AI title generation for {len(needs_ai)} products (batches of 10)...")
 
     prompt = (
-        "You are naming products for a premium resin miniature store. "
-        "Based on this AliExpress title, write a compelling product name "
-        "that a hobbyist would search for. Be SPECIFIC about what the figure "
-        "depicts — if it's a knight say what kind of knight, if it's a soldier "
-        "say what era and role, if it's a fantasy creature describe it. "
-        "Include the scale. Under 50 characters. "
-        "Do NOT use generic words like standing, figure, portrait, character, "
-        "model, assembly, resin, kit, DIY, colorless, self-assembled. "
+        "You are naming products for a premium resin miniature store called CastForge. "
+        "Based on this AliExpress listing title, write a clean product name. "
+        "RULES: "
+        "1. STRIP all brand names, store names, manufacturer codes (like 'Hobby Mio', "
+        "'Mry-Sfw', 'GK', 'RW', 'Yufan' etc.) — these appear at the START of titles. "
+        "2. STRIP all catalog/SKU numbers (like '295', '310', 'A-757', 'TD-3622'). "
+        "3. KEEP the scale (1/35, 75mm, 1/72, 54mm etc.) — this is important. "
+        "4. STRIP filler words: unassembled, unpainted, sculpture, for hobbyists, "
+        "resin kit, model kit, figure, self-assembled, colorless, DIY. "
+        "5. Be SPECIFIC: say WHAT the model depicts (era, nationality, subject). "
+        "6. Under 50 characters. "
+        "7. If it's a hobby supply (paint, brush, tool, mat), just describe the product simply. "
         "Examples of GOOD titles: "
-        "Viking Berserker with Axe 75mm, "
-        "WW2 German Panzer Commander 1/35, "
-        "Japanese Schoolgirl Anime 1/35, "
-        "Dwarf King on Throne 54mm, "
-        "Roman Legionnaire Charging 1/10 Bust, "
-        "Dragon Perched on Skull 200mm. "
-        "Respond with ONLY the product name, nothing else."
+        "Medieval Crusader Knight 54mm, "
+        "WWII German Tiger Tank Crew 1/35, "
+        "Napoleon at Waterloo 90mm, "
+        "Silicone Hobby Work Pad, "
+        "Dragon Slayer Fantasy Warrior 75mm, "
+        "Japanese Schoolgirl Anime 1/7. "
+        "Original AliExpress title: {raw_title}. "
+        "Respond with ONLY the clean product name, nothing else."
     )
 
     generated = 0
@@ -483,7 +497,7 @@ def ai_generate_titles_batch(products, api_key):
             # often fail when Claude API tries to fetch them)
             content = [{
                 "type": "text",
-                "text": f"{prompt}\n\nOriginal title: {raw}",
+                "text": prompt.format(raw_title=raw),
             }]
 
             try:
@@ -616,14 +630,31 @@ def _get_name_to_handle():
     return _NAME_TO_HANDLE
 
 _AI_PROMPT = (
-    "Categorize this resin model into exactly one of these categories: "
-    "Infantry & Troops, Vehicles & Mechs, Monsters & Creatures, "
-    "Heroes & Characters, Army Bundles, Military Vehicles, Aircraft, "
-    "Ships & Naval, Cars & Motorcycles, Anime Characters, Fantasy Warriors, "
-    "Sci-Fi Figures, Busts & Portraits, Bases & Plinths, Scenery Pieces, "
-    "Buildings & Ruins, Natural Elements, Props & Accessories, Accessories. "
-    "Use Accessories for modelling tools, supplies, paints, brushes, "
-    "airbrush parts, display cases, and hobby supplies (not resin figures). "
+    "Categorize this product for a resin miniature store. "
+    "MOST products are resin figures/models — pick the most specific category. "
+    "Categories: "
+    "Infantry & Troops (soldiers, troops, military personnel), "
+    "Vehicles & Mechs (mechs, walkers, battle suits), "
+    "Monsters & Creatures (dragons, demons, beasts), "
+    "Heroes & Characters (individual characters, heroes, leaders, wizards), "
+    "Army Bundles (sets of multiple figures), "
+    "Military Vehicles (tanks, APCs, artillery), "
+    "Aircraft (planes, helicopters), "
+    "Ships & Naval (ships, boats, submarines), "
+    "Cars & Motorcycles (civilian vehicles), "
+    "Anime Characters (anime/manga style figures), "
+    "Fantasy Warriors (medieval, fantasy, historical warriors), "
+    "Sci-Fi Figures (sci-fi, cyberpunk, space), "
+    "Busts & Portraits (busts, half-body, portrait pieces, 75mm+ scales), "
+    "Bases & Plinths (display bases only), "
+    "Scenery Pieces (scatter terrain, barricades), "
+    "Buildings & Ruins (buildings, ruins, structures), "
+    "Natural Elements (trees, rocks, rivers), "
+    "Props & Accessories (diorama props, furniture, accessories for scenes), "
+    "Accessories (ONLY actual hobby supplies: paints, brushes, tools, airbrush, "
+    "cutting mats, work pads — NOT resin figures or models). "
+    "If it's a resin figure of any kind, do NOT use Accessories. "
+    "When in doubt, use Heroes & Characters for individual figures. "
     "Product title: {title}. "
     "Respond with ONLY the category name, nothing else."
 )
@@ -648,8 +679,9 @@ def _ai_categorize(title):
         return handle, 1, parent
 
     # Queue for batch processing — return placeholder that will be
-    # resolved by ai_categorize_batch
-    return "terrain-props", 0, "diorama-terrain"
+    # resolved by ai_categorize_batch. Heroes & Characters is a safer
+    # default than Props/Accessories for figure products.
+    return "wargaming-heroes-characters", 0, "wargaming-tabletop"
 
 
 def ai_categorize_batch(products, api_key):
@@ -764,8 +796,8 @@ def _call_claude_categorize(title, api_key):
     except Exception:
         pass
 
-    # If API fails, fall back to Props & Accessories
-    return "terrain-props"
+    # If API fails, fall back to Heroes & Characters (safer than Accessories)
+    return "wargaming-heroes-characters"
 
 
 def _validate_ai_category(handle, title):
@@ -791,6 +823,13 @@ def _validate_ai_category(handle, title):
                              "soldier", "bust", "anime", "figure"],
         "terrain-buildings-ruins": ["girl", "woman", "female", "warrior",
                                      "figure", "bust", "anime"],
+        "accessories": ["figure", "soldier", "warrior", "knight", "bust",
+                         "dragon", "tank", "ship", "aircraft", "mech",
+                         "monster", "creature", "officer", "samurai",
+                         "viking", "gladiator", "anime", "infantry",
+                         "resin model", "resin figure", "resin bust",
+                         "75mm", "90mm", "200mm", "54mm", "28mm",
+                         "1/10", "1/35", "1/72", "1/24"],
     }
 
     contradictions = _CONTRADICTIONS.get(handle, [])
