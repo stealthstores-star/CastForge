@@ -11,141 +11,172 @@ from pathlib import Path
 # CATEGORY TAXONOMY — handle → (keywords, negative_keywords)
 # ═══════════════════════════════════════════════════════════════
 
+# Words that mean "this is a figure product, NEVER Accessories"
+FIGURE_KEYWORDS = {
+    "soldier", "warrior", "knight", "figure", "bust", "tank", "ship",
+    "aircraft", "plane", "dragon", "monster", "creature", "mech", "robot",
+    "anime", "samurai", "viking", "roman", "german", "soviet", "american",
+    "british", "french", "japanese", "medieval", "ancient", "modern",
+    "ww2", "wwii", "ww1", "wwi", "napoleonic", "civil war", "infantry",
+    "cavalry", "officer", "commander", "sniper", "pilot", "crew", "gunner",
+    "archer", "musketeer", "legion", "centurion", "gladiator", "spartan",
+    "crusader", "templar", "pirate", "cowboy", "zombie", "vampire",
+    "werewolf", "demon", "angel", "elf", "dwarf", "orc", "goblin",
+    "wizard", "witch", "skeleton", "undead", "trooper", "paratrooper",
+    "commando", "ranger", "marine", "seal", "special forces",
+    "barbarian", "berserker", "ronin", "paladin", "assassin",
+}
+
 CATEGORIES = {
-    # ── Wargaming ──
+    # ── Checked FIRST: specific figure/model categories ──
     "wargaming-infantry": {
         "keywords": [
-            "infantry", "troops", "soldiers", "squad", "regiment", "platoon",
-            "guardsmen", "warriors", "militia", "marines", "battle sisters",
-            "skeletons", "zombies", "undead", "orc boyz", "goblins", "elves",
-            "dwarf warriors", "sci-fi troops", "clone",
-            "ww2", "wwii", "ww1", "wwi", "world war",
-            "german soldier", "american soldier", "surrendering",
-            "paratroopers", "commando", "sniper", "officer",
+            "soldier", "infantry", "troops", "rifleman", "gunner", "sniper",
+            "commando", "paratrooper", "ranger", "marine", "crew", "officer",
+            "grenadier", "medic", "sergeant", "lieutenant", "captain", "general",
+            "ww2", "wwii", "ww1", "wwi", "world war", "vietnam", "korea",
+            "civil war", "napoleonic", "german soldier", "american soldier",
+            "soviet soldier", "british soldier", "french soldier",
+            "surrendering", "artilleryman", "pilot", "navy seal",
         ],
-        "negative": ["vehicle", "bust", "terrain", "building", "base", "plinth"],
+        "negative": ["vehicle", "bust", "terrain", "building", "base",
+                      "plinth", "tank", "aircraft", "ship"],
     },
-    "wargaming-vehicles-mechs": {
-        "keywords": [
-            "mech", "walker", "titan", "dreadnought", "warjack",
-            "battle suit", "robot", "war machine", "tank miniature",
-            "hover tank", "grav tank", "sentinel", "stompa", "gorkanaut",
-        ],
-        "negative": ["bust", "infantry", "troops", "terrain"],
-    },
-    "wargaming-monsters-creatures": {
-        "keywords": [
-            "monster", "creature", "beast", "demon", "daemon",
-            "dragon miniature", "hydra", "wyrm", "wyvern", "giant", "troll",
-            "ogre", "minotaur", "spider", "brood", "swarm", "cthulhu",
-            "eldritch", "xenomorph",
-        ],
-        "negative": ["bust", "vehicle", "terrain", "tank", "aircraft"],
-    },
-    "wargaming-heroes-characters": {
-        "keywords": [
-            "hero", "commander", "captain", "general", "warlord",
-            "champion", "leader", "character", "wizard", "sorcerer", "mage",
-            "psyker", "warlock", "paladin", "lord", "king", "queen",
-            "assassin", "rogue", "ranger", "commissar", "inquisitor",
-            "chaplain", "necromancer",
-        ],
-        "negative": ["vehicle", "terrain", "bust", "tank", "aircraft"],
-    },
-    "wargaming-army-bundles": {
-        "keywords": [
-            "army", "bundle", "starter", "lot", "set of", "warband",
-            "regiment set", "army box", "kill team", "patrol",
-            "10pc", "20pc", "5pc", "mega bundle",
-        ],
-        "negative": ["bust", "terrain", "single"],
-    },
-
-    # ── Scale Models ──
     "scale-military-vehicles": {
         "keywords": [
-            "1/72", "1/35", "1/48", "1/76", "1/144", "tank", "panzer",
-            "tiger", "sherman", "t-34", "leopard", "abrams", "halftrack",
-            "armored car", "artillery", "howitzer", "ww2 vehicle", "wwii",
-            "military model", "afv", "panther", "stug", "sdkfz",
+            "tank", "panzer", "halftrack", "armored car", "jeep", "truck",
+            "artillery", "cannon", "howitzer", "mortar", "apc", "ifv",
+            "armored vehicle", "sdkfz", "t-34", "tiger", "sherman",
+            "panther", "leopard", "abrams", "stug", "afv",
         ],
-        "negative": ["bust", "figure", "miniature figure", "diorama figure",
-                      "aircraft", "ship", "plane", "boat"],
-    },
-    "scale-aircraft": {
-        "keywords": [
-            "aircraft", "airplane", "plane", "fighter", "bomber", "spitfire",
-            "mustang", "p-51", "messerschmitt", "zero", "corsair", "hurricane",
-            "lancaster", "jet fighter", "f-16", "helicopter", "apache", "aviation",
-        ],
-        "negative": ["tank", "ship", "bust", "infantry", "car"],
+        "negative": ["bust", "figure", "aircraft", "ship", "plane", "boat"],
     },
     "scale-ships-naval": {
         "keywords": [
-            "ship", "battleship", "destroyer", "cruiser", "carrier", "submarine",
-            "u-boat", "frigate", "naval", "warship", "bismarck", "yamato",
-            "boat model",
+            "ship", "boat", "submarine", "destroyer", "battleship", "cruiser",
+            "carrier", "frigate", "corvette", "u-boat", "naval", "admiral",
+            "sailor", "navy", "warship", "bismarck", "yamato",
         ],
-        "negative": ["tank", "aircraft", "bust", "plane", "car"],
+        "negative": ["tank", "aircraft", "bust", "plane", "car",
+                      "soldier", "warrior", "knight", "anime", "dragon"],
+    },
+    "scale-aircraft": {
+        "keywords": [
+            "aircraft", "plane", "airplane", "fighter", "bomber", "helicopter",
+            "spitfire", "mustang", "messerschmitt", "zero", "aviation",
+            "lancaster", "corsair", "hurricane", "jet fighter", "apache",
+        ],
+        "negative": ["tank", "ship", "bust", "infantry", "car",
+                      "soldier", "warrior", "knight", "anime", "dragon"],
+    },
+    "wargaming-heroes-characters": {
+        "keywords": [
+            "hero", "commander", "captain", "general", "warlord", "champion",
+            "leader", "wizard", "sorcerer", "mage", "warlock", "paladin",
+            "lord", "king", "queen", "assassin", "rogue", "ranger",
+            "commissar", "inquisitor", "chaplain", "necromancer",
+            "ronin", "gunslinger", "thief",
+        ],
+        "negative": ["vehicle", "terrain", "tank", "aircraft"],
+    },
+    "fantasy-warriors": {
+        "keywords": [
+            "fantasy", "barbarian", "viking", "gladiator", "samurai",
+            "knight", "crusader", "warrior", "archer", "swordsman",
+            "spartan", "centurion", "legionary", "roman", "medieval",
+            "templar", "musketeer", "pirate", "cowboy", "amazon",
+            "valkyrie", "berserker", "conan", "dark elf", "elven",
+            "goddess", "angel", "female warrior",
+        ],
+        "negative": ["vehicle", "terrain", "tank", "aircraft",
+                      "1/64", "1/100", "1/144", "garage"],
+    },
+    "wargaming-monsters-creatures": {
+        "keywords": [
+            "monster", "creature", "beast", "demon", "daemon", "dragon",
+            "hydra", "wyrm", "wyvern", "giant", "troll", "ogre",
+            "minotaur", "cthulhu", "eldritch", "xenomorph", "chimera",
+            "cerberus", "griffin", "phoenix", "kraken", "alien", "predator",
+        ],
+        "negative": ["vehicle", "terrain", "tank", "aircraft"],
+    },
+    "busts-portraits": {
+        "keywords": [
+            "bust", "portrait", "torso", "half body", "head sculpt",
+            "display bust", "resin bust", "museum piece", "pedestal",
+            "200mm", "150mm", "100mm", "90mm", "75mm",
+            "1/10", "1/9", "1/8",
+        ],
+        "negative": ["infantry", "vehicle", "terrain", "army", "troops",
+                      "1/64", "1/35", "1/72", "1/48", "1/100", "1/144",
+                      "school", "schoolgirl"],
+    },
+    "scifi-figures": {
+        "keywords": [
+            "sci-fi", "cyberpunk", "robot", "android", "cyborg",
+            "power armor", "post-apocalyptic", "science fiction",
+            "space marine", "mecha pilot", "starship trooper",
+        ],
+        "negative": ["tank", "terrain"],
+    },
+    "anime-characters": {
+        "keywords": [
+            "anime", "manga", "schoolgirl", "school girl", "waifu",
+            "bishoujo", "chibi", "cosplay", "maid", "otaku", "kawaii",
+            "japanese school",
+        ],
+        "negative": ["tank", "vehicle", "terrain", "building"],
+    },
+    "wargaming-vehicles-mechs": {
+        "keywords": [
+            "mech", "mecha", "gundam", "battletech", "titan", "walker",
+            "dreadnought", "warjack", "battle suit", "war machine",
+            "stompa", "gorkanaut", "sentinel",
+        ],
+        "negative": ["bust", "infantry", "troops", "terrain"],
     },
     "scale-cars-motorcycles": {
         "keywords": [
             "car model", "race car", "rally", "f1", "formula", "motorcycle",
-            "motorbike", "truck", "muscle car", "classic car", "sports car",
-            "1/24", "1/18", "car", "automobile", "vehicle model",
-            "hot rod", "drag car", "racing", "gt", "supercar",
+            "motorbike", "muscle car", "classic car", "sports car",
+            "hot rod", "drag car", "supercar",
         ],
         "negative": ["tank", "aircraft", "ship", "bust", "infantry",
-                      "armored car"],
+                      "soldier", "warrior", "knight", "dragon", "vampire",
+                      "anime", "figure", "armored car", "fantasy"],
+    },
+    "wargaming-army-bundles": {
+        "keywords": [
+            "army", "bundle", "starter set", "set of", "warband",
+            "regiment set", "army box", "kill team", "patrol",
+            "squad pack", "platoon",
+        ],
+        "negative": ["bust", "terrain", "single"],
     },
 
-    # ── Anime & Fantasy Figures ──
-    "anime-characters": {
+    # ── Terrain & Diorama ──
+    "terrain-buildings-ruins": {
         "keywords": [
-            "anime", "manga", "waifu", "bishoujo", "one piece",
-            "dragon ball", "demon slayer", "jujutsu", "my hero academia",
-            "evangelion", "sailor moon", "fate", "kawaii", "otaku",
+            "building", "ruin", "ruins", "tower", "castle", "church",
+            "temple", "house", "fortress", "bunker", "watchtower",
+            "trench", "gate", "arch", "column", "fountain",
         ],
-        "negative": ["tank", "vehicle", "terrain", "building"],
+        "negative": ["bust", "figure", "vehicle", "infantry"],
     },
-    "fantasy-warriors": {
+    "terrain-scenery": {
         "keywords": [
-            "fantasy figure", "barbarian", "viking", "gladiator", "samurai",
-            "knight figure", "crusader", "elven warrior", "dark elf",
-            "female warrior", "amazon", "valkyrie", "berserker", "conan",
-            "warrior", "knight", "soldier", "archer", "swordsman",
-            "spartan", "centurion", "legionary", "roman soldier",
-            "medieval", "templar", "musketeer", "pirate figure",
-            "notre dame", "statue", "goddess", "angel figure",
-            "figure colorless", "self-assembled",
-            "resin model kits figure", "resin figure",
+            "scenery", "scatter terrain", "barricade", "wall", "fence",
+            "crate", "barrel", "campfire", "bridge",
         ],
-        "negative": ["vehicle", "terrain", "tank", "aircraft",
-                      "1/64", "1/100", "1/144", "garage", "diorama scene"],
+        "negative": ["bust", "figure", "vehicle", "infantry"],
     },
-    "scifi-figures": {
+    "terrain-natural": {
         "keywords": [
-            "sci-fi figure", "cyberpunk", "robot figure", "android", "cyborg",
-            "mecha pilot", "power armor", "alien figure", "post-apocalyptic",
-            "science fiction", "sci fi",
+            "tree", "forest", "rock", "boulder", "cliff", "hill", "river",
+            "waterfall", "mountain", "mushroom", "crystal", "cave", "swamp",
         ],
-        "negative": ["tank", "terrain", "fantasy"],
+        "negative": ["bust", "figure", "vehicle", "infantry", "building"],
     },
-    "busts-portraits": {
-        "keywords": [
-            "bust", "portrait", "torso", "1/10 bust", "1/12 bust",
-            "display bust", "pedestal", "museum piece",
-            "resin bust", "model bust",
-            "200mm", "150mm", "100mm", "90mm", "75mm", "54mm",
-            "1/10", "1/9", "1/8", "1/7", "1/6",
-            "head sculpt", "face", "half body",
-        ],
-        "negative": ["infantry", "vehicle", "terrain", "army", "troops",
-                      "1/64", "1/35", "1/72", "1/48", "1/100", "1/144",
-                      "garage", "diorama scene"],
-    },
-
-    # ── Diorama & Terrain ──
     "terrain-bases-plinths": {
         "keywords": [
             "base", "plinth", "display base", "scenic base", "round base",
@@ -153,61 +184,32 @@ CATEGORIES = {
         ],
         "negative": ["bust", "figure", "infantry", "vehicle"],
     },
-    "terrain-scenery": {
-        "keywords": [
-            "scenery", "scatter terrain", "barricade", "wall", "fence", "crate",
-            "barrel", "objective marker", "campfire", "bridge",
-        ],
-        "negative": ["bust", "figure", "vehicle", "infantry"],
-    },
-    "terrain-buildings-ruins": {
-        "keywords": [
-            "building", "ruin", "ruins", "tower", "castle", "church",
-            "temple", "house", "fortress", "bunker", "watchtower", "gothic",
-        ],
-        "negative": ["bust", "figure", "vehicle", "infantry"],
-    },
-    "terrain-natural": {
-        "keywords": [
-            "tree", "forest", "rock", "boulder", "cliff", "hill", "river",
-            "mushroom", "crystal", "cave", "swamp", "bush",
-        ],
-        "negative": ["bust", "figure", "vehicle", "infantry", "building"],
-    },
     "terrain-props": {
         "keywords": [
-            "prop", "accessory", "weapon rack", "treasure chest",
-            "throne", "altar", "portal", "tombstone", "grave", "cart",
-            "garage", "repair", "workshop",
-            "1/64 diorama", "diorama set", "scene prop",
+            "weapon rack", "treasure chest", "throne", "altar", "portal",
+            "tombstone", "grave", "cart", "wagon", "tent", "flag", "banner",
+            "sign", "cross", "barrel", "crate",
         ],
         "negative": ["bust", "infantry", "vehicle", "figure", "warrior",
-                      "knight", "soldier", "75mm", "90mm", "200mm", "54mm",
+                      "knight", "soldier", "75mm", "90mm", "200mm",
                       "1/10", "1/35"],
     },
 
-    # ── Accessories (ONLY actual hobby supplies, NOT resin figures) ──
+    # ── Accessories: ONLY actual hobby supplies ──
     "accessories": {
         "keywords": [
-            # Multi-word phrases that are unambiguously accessories
             "paint set", "brush set", "airbrush kit", "airbrush needle",
             "cutting mat", "hobby knife", "pin vise", "display case",
             "wet palette", "work mat", "work pad", "hobby mat",
+            "silicone mat", "silicone pad",
             "static grass", "green stuff", "milliput", "sculpting putty",
             "hobby tool", "hobby lamp", "magnifying glass", "magnifying lamp",
             "airbrush compressor", "spray booth", "paint rack",
             "basing material", "flock mix",
-            # Single words ONLY if they're very specific to supplies
-            "airbrush", "tweezers", "turntable",
+            "airbrush", "tweezers", "turntable", "organizer",
+            "led light", "led lamp",
         ],
-        "negative": ["figure", "bust", "warrior", "knight", "soldier",
-                      "tank", "dragon", "vehicle", "infantry", "miniature",
-                      "ship", "aircraft", "mech", "building", "ruin",
-                      "diorama", "monster", "creature", "officer",
-                      "samurai", "viking", "gladiator", "anime",
-                      "resin model", "resin figure", "resin bust",
-                      "75mm", "90mm", "200mm", "54mm", "28mm",
-                      "1/10", "1/35", "1/72", "1/24", "1/48"],
+        "negative": list(FIGURE_KEYWORDS),  # ALL figure words are negative
     },
 }
 
@@ -262,7 +264,39 @@ ALIEXPRESS_JUNK = [
     "minifigures", "minifigure", "assembly", "spot", "status",
 ]
 
+# Brand names to strip
+BRAND_NAMES = [
+    "hobby mio", "mry-sfw", "yufan", "djmax", "tuskmodel", "jiestar",
+    "figura", "resinkit", "modelon", "masterclub", "mantis miniatures",
+    "nutsplanet", "jmini", "scale75", "amati", "italeri", "verlinden",
+    "pegaso", "andrea", "celtic", "romeo", "el viejo dragon",
+    "best soldiers", "alexandros", "penz", "alpine miniatures",
+    "bravo6", "dolman", "jaguar", "legend", "mini art", "royal model",
+    "stalingrad", "thor", "ultracast", "warriors", "wolf",
+    "dna model", "meng", "trumpeter", "tamiya", "revell", "airfix",
+    "hasegawa", "fujimi", "aoshima", "finemolds", "flyhawk",
+    "mirage hobby", "master box", "ice model", "zkmodel", "corsar rex",
+]
+
+# Extra filler to strip
+EXTRA_FILLER = [
+    "resin kit", "model kit", "figure kit", "garage kit", "gk",
+    "statue", "figurine", "character model", "action figure",
+    "figure model", "scale model", "hobby", "collection", "decoration",
+    "gift", "home decor", "desk decor", "for hobbyists", "for collectors",
+    "for painters", "for modelers", "detail up", "spot goods",
+    "3d printed", "3d print", "unassembled", "unpainted",
+    "sculpture for hobbyists",
+]
+
+ALIEXPRESS_JUNK.extend(BRAND_NAMES)
+ALIEXPRESS_JUNK.extend(EXTRA_FILLER)
 ALIEXPRESS_JUNK.sort(key=len, reverse=True)
+
+# Brand-code prefix pattern: MRY-SFW, ZK-001, YUFAN style codes at start
+BRAND_CODE_PATTERN = re.compile(
+    r"^[A-Z][A-Za-z]*[-_]?[A-Z0-9]{1,5}\s+",
+)
 
 JUNK_PATTERN = re.compile(
     r"\b(?:" + "|".join(re.escape(j) for j in ALIEXPRESS_JUNK) + r")\w*\b",
@@ -334,6 +368,8 @@ def clean_title(title, category_handle="wargaming-heroes-characters"):
     """
     t = JUNK_PATTERN.sub("", title)
     t = DISCOUNT_PATTERN.sub("", t)
+    # Strip brand-code prefixes at start of title
+    t = BRAND_CODE_PATTERN.sub("", t)
 
     # Strip catalog codes (A-757, Td-3622, Hong-06, Jk12, etc.)
     # but preserve military designations (F16, T34, WW2, etc.)
@@ -461,27 +497,35 @@ def ai_generate_titles_batch(products, api_key):
     print(f"  AI title generation for {len(needs_ai)} products (batches of 10)...")
 
     prompt = (
-        "You are naming products for a premium resin miniature store called CastForge. "
-        "Based on this AliExpress listing title, write a clean product name. "
-        "RULES: "
-        "1. STRIP all brand names, store names, manufacturer codes (like 'Hobby Mio', "
-        "'Mry-Sfw', 'GK', 'RW', 'Yufan' etc.) — these appear at the START of titles. "
-        "2. STRIP all catalog/SKU numbers (like '295', '310', 'A-757', 'TD-3622'). "
-        "3. KEEP the scale (1/35, 75mm, 1/72, 54mm etc.) — this is important. "
-        "4. STRIP filler words: unassembled, unpainted, sculpture, for hobbyists, "
-        "resin kit, model kit, figure, self-assembled, colorless, DIY. "
-        "5. Be SPECIFIC: say WHAT the model depicts (era, nationality, subject). "
-        "6. Under 50 characters. "
-        "7. If it's a hobby supply (paint, brush, tool, mat), just describe the product simply. "
-        "Examples of GOOD titles: "
-        "Medieval Crusader Knight 54mm, "
-        "WWII German Tiger Tank Crew 1/35, "
-        "Napoleon at Waterloo 90mm, "
-        "Silicone Hobby Work Pad, "
-        "Dragon Slayer Fantasy Warrior 75mm, "
-        "Japanese Schoolgirl Anime 1/7. "
-        "Original AliExpress title: {raw_title}. "
-        "Respond with ONLY the clean product name, nothing else."
+        "You are writing product names for CastForge, a premium resin miniature store.\n\n"
+        "Given this raw AliExpress product title, write a clean, compelling product name.\n\n"
+        "RULES:\n"
+        "- Be SPECIFIC: describe what the figure/model actually depicts\n"
+        "- Include the ERA or SETTING (WWII, Medieval, Fantasy, Sci-Fi, Modern)\n"
+        "- Include NATIONALITY or FACTION if military (German, Soviet, American, British)\n"
+        "- Include the ROLE or TYPE (Officer, Sniper, Knight, Dragon, Tank Crew)\n"
+        "- Include the SCALE if present in the original title (1/35, 75mm, etc.)\n"
+        "- DO NOT include: brand names, catalog numbers, 'resin', 'model kit', "
+        "'figure', 'unpainted', 'unassembled', 'sculpture', 'for hobbyists'\n"
+        "- DO NOT start with generic words like 'The', 'A', 'New'\n"
+        "- MAX 50 characters\n"
+        "- The suffix 'Resin Figure' or 'Resin Bust' will be added automatically\n\n"
+        "GOOD examples:\n"
+        "WWII German Panzer Commander 1/35\n"
+        "Medieval Teutonic Knight 54mm\n"
+        "Viking Berserker with Battle Axe 75mm\n"
+        "Vampire Selene Underworld Fantasy 1/24\n"
+        "Napoleon at Austerlitz 90mm\n"
+        "Modern US Navy SEAL Operator 1/35\n"
+        "Fire Dragon with Treasure Hoard 75mm\n"
+        "Silicone Hobby Work Pad\n\n"
+        "BAD examples (don't do these):\n"
+        "Figure Model Kit 295\n"
+        "Mry-Sfw Detail Up American\n"
+        "Unassembled Sculpture For Hobbyists\n"
+        "Standing Male Character\n\n"
+        "Raw title: {raw_title}\n\n"
+        "Write ONLY the product name, nothing else."
     )
 
     generated = 0
@@ -584,16 +628,23 @@ def detect_scale(title):
 
 def categorize(title, description=""):
     """
-    Score a product against all categories. Returns (best_handle, score, parent_handle).
+    Categorize a product. Priority:
+    1. Check if it's a figure product (has figure keywords) → never Accessories
+    2. Score against all categories
+    3. Validate: if result is Accessories but has figure keywords, re-route
+    4. Default: heroes-characters for figures, accessories only for supplies
     """
     text = f"{title} {description}".lower()
-    scores = {}
 
+    # Step 1: Is this a figure/model product?
+    is_figure = any(kw in text for kw in FIGURE_KEYWORDS)
+
+    # Step 2: Score all categories
+    scores = {}
     for handle, data in CATEGORIES.items():
         score = 0
         for kw in data["keywords"]:
             if kw in text:
-                # Title match = +3, description-only = +1
                 if kw in title.lower():
                     score += 3
                 else:
@@ -606,9 +657,19 @@ def categorize(title, description=""):
     best = max(scores, key=scores.get)
     best_score = scores[best]
 
+    # Step 3: Validate — force figures OUT of Accessories
+    if best == "accessories" and is_figure:
+        scores["accessories"] = 0
+        best = max(scores, key=scores.get)
+        best_score = scores[best]
+
+    # Step 4: If still no good match, use AI or default
     if best_score < 2:
-        # Use Claude AI for accurate categorization
-        return _ai_categorize(title)
+        if is_figure:
+            # Try AI, but default to heroes-characters not accessories
+            return _ai_categorize(title)
+        else:
+            return _ai_categorize(title)
 
     parent = PARENT_COLLECTIONS.get(best)
     return best, best_score, parent
@@ -823,13 +884,7 @@ def _validate_ai_category(handle, title):
                              "soldier", "bust", "anime", "figure"],
         "terrain-buildings-ruins": ["girl", "woman", "female", "warrior",
                                      "figure", "bust", "anime"],
-        "accessories": ["figure", "soldier", "warrior", "knight", "bust",
-                         "dragon", "tank", "ship", "aircraft", "mech",
-                         "monster", "creature", "officer", "samurai",
-                         "viking", "gladiator", "anime", "infantry",
-                         "resin model", "resin figure", "resin bust",
-                         "75mm", "90mm", "200mm", "54mm", "28mm",
-                         "1/10", "1/35", "1/72", "1/24"],
+        "accessories": list(FIGURE_KEYWORDS),
     }
 
     contradictions = _CONTRADICTIONS.get(handle, [])
