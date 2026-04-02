@@ -417,27 +417,77 @@ def _fix_image_url(url):
     return url
 
 
-def fix_product_image_urls(products):
-    """Fix all image URLs in a list of products."""
-    fixed = 0
-    for product in products:
-        # Fix main image
-        old = product.get("image_url", "")
-        if old:
-            new = _fix_image_url(old)
-            if new != old:
-                product["image_url"] = new
-                fixed += 1
+def _is_valid_product_image(url):
+    """Check if an image URL is a valid product photo (not junk)."""
+    if not url:
+        return False
+    # Must be from alicdn.com/kf/
+    if "alicdn.com/kf/" not in url:
+        return False
+    # Must be .jpg/.jpeg (skip .png — logos/watermarks)
+    if not re.search(r"\.jpe?g$", url, re.IGNORECASE):
+        return False
+    # Filename must be long enough (logos have short filenames)
+    m = re.search(r"/kf/(.+)$", url)
+    if m and len(m.group(1)) < 20:
+        return False
+    # No dimension patterns in URL path
+    if re.search(r"/\d+x\d+", url):
+        return False
+    return True
 
-        # Fix additional images
+
+def fix_product_image_urls(products):
+    """Fix, filter, deduplicate, and order product images."""
+    fixed = 0
+    filtered = 0
+    for product in products:
+        # Collect all image URLs
+        all_urls = []
+        main = product.get("image_url", "")
+        if main:
+            all_urls.append(main)
         images_raw = product.get("images", "")
         if images_raw:
-            urls = [u.strip() for u in images_raw.split("|") if u.strip()]
-            fixed_urls = [_fix_image_url(u) for u in urls]
-            product["images"] = "|".join(fixed_urls)
+            for u in images_raw.split("|"):
+                u = u.strip()
+                if u and u not in all_urls:
+                    all_urls.append(u)
 
-    if fixed:
-        print(f"  Fixed {fixed} image URLs (CDN domain + full-size)")
+        # Fix CDN URLs
+        all_urls = [_fix_image_url(u) for u in all_urls]
+
+        # Filter: only valid product images
+        valid = [u for u in all_urls if _is_valid_product_image(u)]
+
+        # Deduplicate by first 30 chars of /kf/ hash
+        seen_hashes = set()
+        deduped = []
+        for u in valid:
+            m = re.search(r"/kf/(S[^/.]{0,30})", u)
+            h = m.group(1) if m else u[:50]
+            if h not in seen_hashes:
+                seen_hashes.add(h)
+                deduped.append(u)
+
+        # Fallback: if all images filtered out, accept any alicdn .jpg
+        if not deduped:
+            fallback = [_fix_image_url(u) for u in all_urls
+                        if "alicdn.com" in u and u.lower().endswith((".jpg", ".jpeg"))]
+            if fallback:
+                deduped = fallback[:6]
+
+        # Apply
+        if deduped:
+            product["image_url"] = deduped[0]
+            product["images"] = "|".join(deduped)
+            fixed += 1
+        else:
+            product["image_url"] = ""
+            product["images"] = ""
+            filtered += 1
+
+    print(f"  Images: {fixed} products with valid images, {filtered} with none")
 
 
 # ═══════════════════════════════════════════════════════════════

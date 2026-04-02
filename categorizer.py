@@ -378,6 +378,29 @@ def clean_title(title, category_handle="wargaming-heroes-characters"):
         return m.group() if code in _MILITARY_DESIGNATIONS else ""
     t = CATALOG_CODE_PATTERN.sub(_strip_catalog, t)
 
+    # Strip standalone 1-4 digit numbers that aren't scales or years
+    # Preserves: 1/35 (scale), 54mm (scale), 1805 (year 1800-2099)
+    # Uses lookahead/lookbehind to avoid eating scale components
+    def _strip_standalone_number(m):
+        num = m.group()
+        full = m.string
+        start = m.start()
+        end = m.end()
+        # Preserve if preceded by "/" (part of scale like 1/35)
+        if start > 0 and full[start - 1] == "/":
+            return num
+        # Preserve if followed by "/" (part of scale like 1/35)
+        if end < len(full) and full[end] == "/":
+            return num
+        # Preserve if followed by "mm" (scale like 54mm)
+        if end < len(full) and full[end:end+2].lower() == "mm":
+            return num
+        # Preserve years 1800-2099
+        if num.isdigit() and len(num) == 4 and 1800 <= int(num) <= 2099:
+            return num
+        return ""
+    t = re.sub(r"(?<!/)\b\d{1,4}\b(?!mm|/)", _strip_standalone_number, t)
+
     # Remove orphaned punctuation and double spaces
     t = re.sub(r"^\s*[,\-–—]\s*", "", t)
     t = re.sub(r"\s*[,\-–—]\s*$", "", t)
@@ -628,51 +651,37 @@ def detect_scale(title):
 
 def categorize(title, description=""):
     """
-    Categorize a product. Priority:
-    1. Check if it's a figure product (has figure keywords) → never Accessories
-    2. Score against all categories
-    3. Validate: if result is Accessories but has figure keywords, re-route
-    4. Default: heroes-characters for figures, accessories only for supplies
+    Fast-path keyword categorization for OBVIOUS cases only.
+    Everything else returns needs_ai=True for batch AI processing.
     """
-    text = f"{title} {description}".lower()
+    t = f"{title} {description}".lower()
 
-    # Step 1: Is this a figure/model product?
-    is_figure = any(kw in text for kw in FIGURE_KEYWORDS)
+    # Fast-path: unambiguous keyword matches
+    if any(w in t for w in ["brush", "airbrush", "cutting mat", "work pad",
+                             "silicone mat", "hobby knife", "paint set",
+                             "wet palette", "hobby tool", "hobby lamp"]):
+        if not any(w in t for w in FIGURE_KEYWORDS):
+            return "accessories", 10, "accessories"
 
-    # Step 2: Score all categories
-    scores = {}
-    for handle, data in CATEGORIES.items():
-        score = 0
-        for kw in data["keywords"]:
-            if kw in text:
-                if kw in title.lower():
-                    score += 3
-                else:
-                    score += 1
-        for neg in data.get("negative", []):
-            if neg in text:
-                score -= 5
-        scores[handle] = max(score, 0)
+    if any(w in t for w in ["tank", "panzer", "sherman", "tiger", "t-34",
+                             "halftrack", "sdkfz", "howitzer"]):
+        if not any(w in t for w in ["bust", "figure", "pilot", "crew"]):
+            return "scale-military-vehicles", 10, "scale-model-kits"
 
-    best = max(scores, key=scores.get)
-    best_score = scores[best]
+    if any(w in t for w in ["dragon", "orc", "elf", "wizard", "goblin",
+                             "warhammer", "undead", "necromancer", "demon"]):
+        return "fantasy-warriors", 10, "anime-fantasy-figures"
 
-    # Step 3: Validate — force figures OUT of Accessories
-    if best == "accessories" and is_figure:
-        scores["accessories"] = 0
-        best = max(scores, key=scores.get)
-        best_score = scores[best]
+    if any(w in t for w in ["anime", "manga", "waifu", "schoolgirl",
+                             "school girl", "chibi", "kawaii"]):
+        return "anime-characters", 10, "anime-fantasy-figures"
 
-    # Step 4: If still no good match, use AI or default
-    if best_score < 2:
-        if is_figure:
-            # Try AI, but default to heroes-characters not accessories
-            return _ai_categorize(title)
-        else:
-            return _ai_categorize(title)
+    if "bust" in t and any(w in t for w in ["1/10", "200mm", "150mm", "100mm"]):
+        return "busts-portraits", 10, "anime-fantasy-figures"
 
-    parent = PARENT_COLLECTIONS.get(best)
-    return best, best_score, parent
+    # Everything else → needs AI categorization
+    # Return placeholder; ai_categorize_batch will override
+    return "wargaming-heroes-characters", 0, "wargaming-tabletop"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -690,35 +699,39 @@ def _get_name_to_handle():
         _NAME_TO_HANDLE = {v: k for k, v in CATEGORY_DISPLAY_NAMES.items()}
     return _NAME_TO_HANDLE
 
-_AI_PROMPT = (
-    "Categorize this product for a resin miniature store. "
-    "MOST products are resin figures/models — pick the most specific category. "
-    "Categories: "
-    "Infantry & Troops (soldiers, troops, military personnel), "
-    "Vehicles & Mechs (mechs, walkers, battle suits), "
-    "Monsters & Creatures (dragons, demons, beasts), "
-    "Heroes & Characters (individual characters, heroes, leaders, wizards), "
-    "Army Bundles (sets of multiple figures), "
-    "Military Vehicles (tanks, APCs, artillery), "
-    "Aircraft (planes, helicopters), "
-    "Ships & Naval (ships, boats, submarines), "
-    "Cars & Motorcycles (civilian vehicles), "
-    "Anime Characters (anime/manga style figures), "
-    "Fantasy Warriors (medieval, fantasy, historical warriors), "
-    "Sci-Fi Figures (sci-fi, cyberpunk, space), "
-    "Busts & Portraits (busts, half-body, portrait pieces, 75mm+ scales), "
-    "Bases & Plinths (display bases only), "
-    "Scenery Pieces (scatter terrain, barricades), "
-    "Buildings & Ruins (buildings, ruins, structures), "
-    "Natural Elements (trees, rocks, rivers), "
-    "Props & Accessories (diorama props, furniture, accessories for scenes), "
-    "Accessories (ONLY actual hobby supplies: paints, brushes, tools, airbrush, "
-    "cutting mats, work pads — NOT resin figures or models). "
-    "If it's a resin figure of any kind, do NOT use Accessories. "
-    "When in doubt, use Heroes & Characters for individual figures. "
-    "Product title: {title}. "
-    "Respond with ONLY the category name, nothing else."
-)
+_BATCH_AI_PROMPT = """Categorize each resin miniature product into exactly one category.
+
+Categories with examples:
+- infantry-troops: WW1/WW2/modern/historical soldiers, military personnel, generic unnamed troops. Examples: "WW2 German Sniper 1/35", "US Marine Vietnam 1/35", "Soviet Infantry Stalingrad"
+- military-vehicles: tanks, APCs, artillery, military trucks. Examples: "Tiger Tank 1/35", "Sherman M4A3 1/72"
+- ships-naval: warships, submarines, naval vessels, sailors. Examples: "HMS Victory 1/350", "U-Boat Type VII"
+- aircraft: planes, helicopters, pilots. Examples: "Spitfire Mk.V 1/48", "Apache Helicopter 1/72"
+- heroes-characters: ONLY named/notable individuals — historical leaders, movie characters, named warriors. Examples: "Napoleon at Waterloo 54mm", "Spartacus 75mm", "Vampire Selene 1/24"
+- fantasy-warriors: dragons, elves, orcs, wizards, undead, dark fantasy. Examples: "Fire Dragon 75mm", "Orc Warboss", "Dark Elf Assassin"
+- busts-portraits: bust/head/shoulder sculptures, typically 1/10 or larger. Examples: "Viking Warrior Bust 1/10", "Roman Centurion Bust 200mm"
+- monsters-creatures: beasts, aliens, mythical creatures. Examples: "Xenomorph Alien 1/10", "Giant Spider"
+- sci-fi-figures: robots, cyberpunk, space marines, futuristic. Examples: "Space Marine Commander", "Cyberpunk Samurai"
+- anime-characters: anime/manga style, schoolgirls, chibi. Examples: "Anime Schoolgirl 1/24", "Manga Warrior Girl"
+- vehicles-mechs: sci-fi vehicles, mechs, gundams. Examples: "Gundam RX-78", "Battle Mech Titan"
+- cars-motorcycles: civilian vehicles, racing. Examples: "1967 Mustang 1/24", "Cafe Racer Motorcycle"
+- buildings-ruins: terrain, buildings, ruins, diorama bases. Examples: "Ruined Church 1/35", "Medieval Castle Gate"
+- natural-elements: trees, rocks, water features. Examples: "Oak Tree Set", "Rock Formation"
+- props-accessories: standalone weapons, barrels, camp items. Examples: "Weapon Rack", "Wooden Barrel Set"
+- army-bundles: sets of multiple figures. Examples: "WW2 German Squad 5-Pack"
+- accessories: ONLY hobby tools/paints/brushes — NEVER figures. Examples: "Silicone Work Pad", "Airbrush Needle"
+
+CRITICAL RULES:
+- Generic unnamed soldiers ALWAYS go to infantry-troops, NOT heroes-characters
+- heroes-characters is ONLY for specifically named/notable individuals
+- If unsure between infantry-troops and heroes-characters, choose infantry-troops
+- accessories is ONLY for non-figure hobby supplies
+- busts-portraits is ONLY for bust-format sculptures (head/shoulders)
+
+Products to categorize:
+{products_list}
+
+Reply with ONLY a JSON object mapping each product number to its category handle, like:
+{{"1": "infantry-troops", "2": "heroes-characters", "3": "fantasy-warriors"}}"""
 
 
 def _load_ai_cache():
@@ -747,78 +760,135 @@ def _ai_categorize(title):
 
 def ai_categorize_batch(products, api_key):
     """
-    Batch-categorize products that scored < 2 using Claude API.
-    Call this from the pipeline AFTER initial categorize() pass.
-    Processes 10 at a time, caches results.
+    AI-first categorization. Sends products in batches of 20 to Claude.
+    Only products with score 0 (not caught by keyword fast-path) need AI.
     """
     import requests as req
+    import time as _time
 
     cache = _load_ai_cache()
-    uncategorized = []
+    needs_ai = []
     cached_hits = 0
 
     for p in products:
         title = p.get("_raw_title", p.get("title", ""))
+        score = p.get("_score", 0)
+
+        # Already categorized by keyword fast-path (score >= 10)
+        if score >= 2:
+            continue
+
         if title in cache:
-            # Apply cached AI category — but validate it first
-            handle = _validate_ai_category(cache[title], title)
-            if handle != cache[title]:
-                cache[title] = handle  # update cache with corrected value
-            parent = PARENT_COLLECTIONS.get(handle, "diorama-terrain")
+            handle = cache[title]
+            parent = PARENT_COLLECTIONS.get(handle, "wargaming-tabletop")
             p["category_handle"] = handle
             p["parent_handle"] = parent
-            p["product_type"] = PARENT_DISPLAY_NAMES.get(parent, "Diorama & Terrain")
+            p["product_type"] = PARENT_DISPLAY_NAMES.get(parent, "Wargaming & Tabletop")
             cached_hits += 1
         else:
-            uncategorized.append((p, title))
+            needs_ai.append((p, title))
 
     if cached_hits:
         print(f"  AI cache: applied {cached_hits} cached categories")
 
-    if not uncategorized:
+    if not needs_ai:
         return
 
-    print(f"  AI categorizing {len(uncategorized)} products (batches of 10)...")
+    print(f"  AI categorizing {len(needs_ai)} products (batches of 20)...")
 
-    batch_size = 10
+    batch_size = 20
     categorized = 0
+    errors = 0
 
-    for i in range(0, len(uncategorized), batch_size):
-        batch = uncategorized[i:i + batch_size]
+    for i in range(0, len(needs_ai), batch_size):
+        batch = needs_ai[i:i + batch_size]
 
-        for product, title in batch:
-            if title in cache:
-                handle = cache[title]
+        # Build numbered product list for the prompt
+        products_list = "\n".join(
+            f"{j+1}. {title[:100]}" for j, (_, title) in enumerate(batch)
+        )
+
+        try:
+            resp = req.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 500,
+                    "messages": [{
+                        "role": "user",
+                        "content": _BATCH_AI_PROMPT.format(products_list=products_list),
+                    }],
+                },
+                timeout=30,
+            )
+
+            if resp.status_code == 200:
+                text = resp.json()["content"][0]["text"].strip()
+                # Parse JSON from response (handle markdown code blocks)
+                if text.startswith("```"):
+                    text = re.sub(r"^```(?:json)?\s*", "", text)
+                    text = re.sub(r"\s*```$", "", text)
+                try:
+                    results = json.loads(text)
+                except json.JSONDecodeError:
+                    # Try to extract JSON from response
+                    m = re.search(r"\{[^}]+\}", text)
+                    if m:
+                        results = json.loads(m.group())
+                    else:
+                        errors += len(batch)
+                        continue
+
+                # Apply results
+                name_map = _get_name_to_handle()
+                for j, (product, title) in enumerate(batch):
+                    key = str(j + 1)
+                    handle = results.get(key, "wargaming-heroes-characters")
+
+                    # Map display name to handle if needed
+                    if handle not in PARENT_COLLECTIONS and handle not in ["accessories"]:
+                        mapped = name_map.get(handle)
+                        if mapped:
+                            handle = mapped
+
+                    # Validate
+                    if handle not in PARENT_COLLECTIONS and handle != "accessories":
+                        handle = "wargaming-heroes-characters"
+
+                    cache[title] = handle
+                    parent = PARENT_COLLECTIONS.get(handle, "wargaming-tabletop")
+                    product["category_handle"] = handle
+                    product["parent_handle"] = parent
+                    product["product_type"] = PARENT_DISPLAY_NAMES.get(parent, "Wargaming & Tabletop")
+                    categorized += 1
+
             else:
-                handle = _call_claude_categorize(title, api_key)
-                # Validate: catch absurd mismatches
-                handle = _validate_ai_category(handle, title)
-                cache[title] = handle
-                categorized += 1
+                errors += len(batch)
+                if errors <= 3:
+                    print(f"    API error {resp.status_code}: {resp.text[:100]}")
 
-            parent = PARENT_COLLECTIONS.get(handle, "diorama-terrain")
-            product["category_handle"] = handle
-            product["parent_handle"] = parent
-
-            # Update product_type display name
-            parent_name = PARENT_DISPLAY_NAMES.get(parent, "Diorama & Terrain")
-            product["product_type"] = parent_name
+        except Exception as e:
+            errors += len(batch)
+            if errors <= 3:
+                print(f"    Exception: {str(e)[:80]}")
 
         _save_ai_cache(cache)
+        done = min(i + batch_size, len(needs_ai))
+        print(f"    [{done}/{len(needs_ai)}] categorized")
 
-        done = min(i + batch_size, len(uncategorized))
-        print(f"    [{done}/{len(uncategorized)}] categorized")
+        if i + batch_size < len(needs_ai):
+            _time.sleep(0.5)
 
-        # Small delay between batches
-        if i + batch_size < len(uncategorized):
-            import time
-            time.sleep(0.5)
-
-    print(f"  AI categorized {categorized} products ({len(cache)} cached total)")
+    print(f"  AI categorized {categorized} products, {errors} errors ({len(cache)} cached)")
 
 
 def _call_claude_categorize(title, api_key):
-    """Call Claude API to categorize a single product title."""
+    """Legacy single-product categorizer (kept for compatibility)."""
     import requests as req
 
     try:
@@ -834,7 +904,7 @@ def _call_claude_categorize(title, api_key):
                 "max_tokens": 30,
                 "messages": [{
                     "role": "user",
-                    "content": _AI_PROMPT.format(title=title),
+                    "content": f"Categorize this resin miniature: {title}. Reply with ONLY the category handle from: infantry-troops, military-vehicles, ships-naval, aircraft, heroes-characters, fantasy-warriors, busts-portraits, monsters-creatures, sci-fi-figures, anime-characters, vehicles-mechs, cars-motorcycles, buildings-ruins, natural-elements, props-accessories, army-bundles, accessories. Generic soldiers→infantry-troops. Named characters→heroes-characters.",
                 }],
             },
             timeout=10,
