@@ -440,66 +440,24 @@ def _is_valid_product_image(url):
 
 
 def fix_product_image_urls(products):
-    """Fix, filter, deduplicate, and order product images."""
-    fixed = 0
-    filtered = 0
+    """Fix CDN URLs only. NO filtering, NO reordering. Pass through as-is."""
     for product in products:
-        # Collect all image URLs
-        all_urls = []
+        # Fix main image URL
         main = product.get("image_url", "")
         if main:
-            all_urls.append(main)
+            product["image_url"] = _fix_image_url(main)
+
+        # Fix additional image URLs — keep exact order from scraper
         images_raw = product.get("images", "")
         if images_raw:
-            for u in images_raw.split("|"):
-                u = u.strip()
-                if u and u not in all_urls:
-                    all_urls.append(u)
-
-        # Fix CDN URLs
-        all_urls = [_fix_image_url(u) for u in all_urls]
-
-        # Filter: only valid product images
-        valid = [u for u in all_urls if _is_valid_product_image(u)]
-
-        # Deduplicate by first 30 chars of /kf/ hash
-        seen_hashes = set()
-        deduped = []
-        for u in valid:
-            m = re.search(r"/kf/(S[^/.]{0,30})", u)
-            h = m.group(1) if m else u[:50]
-            if h not in seen_hashes:
-                seen_hashes.add(h)
-                deduped.append(u)
-
-        # Keep original order — scraper already captured them correctly
-
-        # Fallback: if all images filtered out, accept any alicdn .jpg
-        if not deduped:
-            fallback = [_fix_image_url(u) for u in all_urls
-                        if "alicdn.com" in u and u.lower().endswith((".jpg", ".jpeg"))]
-            if fallback:
-                deduped = fallback[:6]
-
-        # Apply
-        if deduped:
-            product["image_url"] = deduped[0]
-            product["images"] = "|".join(deduped)
-            fixed += 1
-        else:
-            product["image_url"] = ""
-            product["images"] = ""
-            filtered += 1
-
-    print(f"  Images: {fixed} products with valid images, {filtered} with none")
-
-    # Debug: show hero image for first 5 products
-    print(f"  Hero images (first 5):")
-    for p in products[:5]:
-        img = p.get("image_url", "")
-        title = p.get("title", p.get("_raw_title", ""))[:40]
-        total = len(p.get("images", "").split("|")) if p.get("images") else 0
-        print(f"    [{total} imgs] {title} → {img[-50:] if img else 'NONE'}")
+            urls = [u.strip() for u in images_raw.split("|") if u.strip()]
+            fixed_urls = [_fix_image_url(u) for u in urls]
+            # Only filter: skip completely empty/null URLs
+            fixed_urls = [u for u in fixed_urls if u]
+            product["images"] = "|".join(fixed_urls)
+            # Set main image to first from list if not already set
+            if fixed_urls and not product.get("image_url"):
+                product["image_url"] = fixed_urls[0]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1144,6 +1102,51 @@ async def _title_worker(browser, worker_id, items, products, session_path,
     print(f"\n  Done: {processed} branded, {skipped} already done, {failed} failed")
 
 
+def cmd_review():
+    """Print needs_review.csv grouped by suggested category."""
+    review_path = Path("needs_review.csv")
+    if not review_path.exists():
+        print("No needs_review.csv found. Run export first.")
+        return
+
+    print("\n══════════════════════════════════════")
+    print("  CastForge Review Queue")
+    print("══════════════════════════════════════\n")
+
+    import csv as csv_mod
+    with open(review_path, newline="", encoding="utf-8") as f:
+        reader = csv_mod.DictReader(f)
+        items = list(reader)
+
+    if not items:
+        print("  Review queue is empty.")
+        return
+
+    # Group by suggested category
+    groups = {}
+    for item in items:
+        cat = item.get("suggested", "unknown")
+        if cat not in groups:
+            groups[cat] = []
+        groups[cat].append(item)
+
+    print(f"  Total: {len(items)} products need review\n")
+
+    for cat in sorted(groups, key=lambda c: -len(groups[c])):
+        cat_items = groups[cat]
+        display = categorizer.CATEGORY_DISPLAY_NAMES.get(cat, cat)
+        print(f"  ── {display} ({len(cat_items)}) ──")
+        for item in cat_items[:30]:
+            title = item.get("title", "")[:70]
+            reason = item.get("reason", "")
+            print(f"    {title}")
+            if reason:
+                print(f"      → {reason}")
+        if len(cat_items) > 30:
+            print(f"    ... and {len(cat_items) - 30} more")
+        print()
+
+
 # ═══════════════════════════════════════════════════════════════
 # CLI
 # ═══════════════════════════════════════════════════════════════
@@ -1216,6 +1219,8 @@ if __name__ == "__main__":
         cmd_brand_images()
     elif command == "fix-titles":
         cmd_fix_titles()
+    elif command == "review":
+        cmd_review()
     else:
         print(f"Unknown command: {command}")
         print(USAGE)

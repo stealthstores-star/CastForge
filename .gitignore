@@ -12,6 +12,7 @@ upload_log.json
 
 # Generated exports
 *_shopify_import.csv
+needs_review.csv
 shopify_import.csv
 *_scraped.csv
 scraped_products.csv

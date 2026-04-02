@@ -366,7 +366,9 @@ def clean_title(title, category_handle="wargaming-infantry"):
     Remove AliExpress spam, title-case, and limit to 60 chars.
     Format: descriptive name + scale + Resin Figure/Kit/Bust.
     """
-    t = JUNK_PATTERN.sub("", title)
+    # Strip " - AliExpress 26" suffix first
+    t = _strip_ali_suffix(title)
+    t = JUNK_PATTERN.sub("", t)
     t = DISCOUNT_PATTERN.sub("", t)
     # Strip brand-code prefixes at start of title
     t = BRAND_CODE_PATTERN.sub("", t)
@@ -527,35 +529,26 @@ def ai_generate_titles_batch(products, api_key):
     print(f"  AI title generation for {len(needs_ai)} products (batches of 10)...")
 
     prompt = (
-        "You are writing product names for CastForge, a premium resin miniature store.\n\n"
-        "Given this raw AliExpress product title, write a clean, compelling product name.\n\n"
+        "Write a product name for a resin miniature store.\n\n"
         "RULES:\n"
-        "- Be SPECIFIC: describe what the figure/model actually depicts\n"
-        "- Include the ERA or SETTING (WWII, Medieval, Fantasy, Sci-Fi, Modern)\n"
-        "- Include NATIONALITY or FACTION if military (German, Soviet, American, British)\n"
-        "- Include the ROLE or TYPE (Officer, Sniper, Knight, Dragon, Tank Crew)\n"
-        "- Include the SCALE if present in the original title (1/35, 75mm, etc.)\n"
-        "- DO NOT include: brand names, catalog numbers, 'resin', 'model kit', "
-        "'figure', 'unpainted', 'unassembled', 'sculpture', 'for hobbyists'\n"
-        "- DO NOT start with generic words like 'The', 'A', 'New'\n"
-        "- MAX 50 characters\n"
-        "- The suffix 'Resin Figure' or 'Resin Bust' will be added automatically\n\n"
-        "GOOD examples:\n"
-        "WWII German Panzer Commander 1/35\n"
-        "Medieval Teutonic Knight 54mm\n"
-        "Viking Berserker with Battle Axe 75mm\n"
-        "Vampire Selene Underworld Fantasy 1/24\n"
-        "Napoleon at Austerlitz 90mm\n"
-        "Modern US Navy SEAL Operator 1/35\n"
-        "Fire Dragon with Treasure Hoard 75mm\n"
-        "Silicone Hobby Work Pad\n\n"
-        "BAD examples (don't do these):\n"
-        "Figure Model Kit 295\n"
-        "Mry-Sfw Detail Up American\n"
-        "Unassembled Sculpture For Hobbyists\n"
-        "Standing Male Character\n\n"
+        "1. ALWAYS include the SCALE from the original title (1/35, 54mm, 75mm, 90mm, 1/10 etc.)\n"
+        "2. Describe WHAT the figure/model IS — soldier, knight, tank crew, dragon, etc.\n"
+        "3. Include era/nationality if military (WWII German, Medieval, Modern US)\n"
+        "4. Format: [Subject Description] [Scale] Resin [Figure/Miniature/Bust]\n"
+        "5. NEVER use generic titles without describing what it is\n"
+        "6. MAX 60 characters total\n"
+        "7. Strip brand names, catalog numbers, 'unpainted', 'unassembled', 'DIY'\n\n"
+        "GOOD: 'WWII German Sniper 1/35 Resin Figure'\n"
+        "GOOD: 'Medieval Knight Templar 54mm Resin Character'\n"
+        "GOOD: 'Viking Warrior Bust 1/10 Resin Sculpture'\n"
+        "GOOD: 'Modern US Navy SEAL 1/35 Resin Figure'\n"
+        "GOOD: 'Fire Dragon 75mm Resin Fantasy Figure'\n"
+        "GOOD: 'Silicone Hobby Work Pad'\n\n"
+        "BAD: 'Resin Miniature' (too generic, no description)\n"
+        "BAD: 'Modern U.S. Military Resin Miniature' (missing scale)\n"
+        "BAD: 'Standing Male Character' (too vague)\n\n"
         "Raw title: {raw_title}\n\n"
-        "Write ONLY the product name, nothing else."
+        "Write ONLY the product name:"
     )
 
     generated = 0
