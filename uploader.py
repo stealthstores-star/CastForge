@@ -9,6 +9,8 @@ import math
 import os
 import time
 import csv
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
@@ -51,7 +53,8 @@ class ShopifyUploader:
         self.collection_map = self._load_collection_map()
         self.sku_counter = self._get_next_sku()
         self.results = {"success": 0, "failed": 0, "skipped": 0, "product_ids": []}
-        self.failed_products = []  # for failed_uploads.csv
+        self.failed_products = []
+        self._lock = threading.Lock()
 
     def _load_collection_map(self):
         path = os.path.join(os.path.dirname(__file__) or ".", "collection_map.json")
@@ -156,15 +159,17 @@ class ShopifyUploader:
         try:
             resp = self._api_call("POST", f"{self.base_url}/products.json", payload)
         except Exception as e:
-            self.results["failed"] += 1
-            self.failed_products.append({"title": product["title"][:80],
-                                          "error": str(e)[:100]})
+            with self._lock:
+                self.results["failed"] += 1
+                self.failed_products.append({"title": product["title"][:80],
+                                              "error": str(e)[:100]})
             return None
 
         if resp.status_code == 201:
             product_id = resp.json()["product"]["id"]
-            self.results["product_ids"].append(product_id)
-            self.results["success"] += 1
+            with self._lock:
+                self.results["product_ids"].append(product_id)
+                self.results["success"] += 1
 
             self._assign_collections(product_id,
                                       product.get("category_handle"),
@@ -172,14 +177,15 @@ class ShopifyUploader:
             time.sleep(config.RATE_LIMIT_DELAY)
             return product_id
         else:
-            self.results["failed"] += 1
             err_msg = ""
             try:
                 err_msg = json.dumps(resp.json().get("errors", ""))[:100]
             except Exception:
                 err_msg = resp.text[:100]
-            self.failed_products.append({"title": product["title"][:80],
-                                          "error": f"HTTP {resp.status_code}: {err_msg}"})
+            with self._lock:
+                self.results["failed"] += 1
+                self.failed_products.append({"title": product["title"][:80],
+                                              "error": f"HTTP {resp.status_code}: {err_msg}"})
             return None
 
     def _assign_collections(self, product_id, category_handle, parent_handle):
@@ -197,15 +203,24 @@ class ShopifyUploader:
             time.sleep(0.2)
 
     def upload_chunk(self, products, chunk_num, total_chunks):
-        """Upload a chunk of products with progress."""
+        """Upload a chunk with 2 concurrent threads to max Shopify rate limit."""
         total = len(products)
-        print(f"\n  ── Chunk {chunk_num}/{total_chunks}: {total} products ──\n")
+        print(f"\n  ── Chunk {chunk_num}/{total_chunks}: {total} products (2 threads) ──\n")
 
-        for i, product in enumerate(products):
+        done = [0]  # mutable counter for progress
+
+        def _upload_one(product):
             pid = self.upload_product(product)
-            if (i + 1) % 50 == 0 or (i + 1) == total:
-                print(f"    [{i+1}/{total}] {self.results['success']} OK, "
+            with self._lock:
+                done[0] += 1
+                d = done[0]
+            if d % 50 == 0 or d == total:
+                print(f"    [{d}/{total}] {self.results['success']} OK, "
                       f"{self.results['failed']} failed")
+            return pid
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            list(executor.map(_upload_one, products))
 
         return self.results
 
