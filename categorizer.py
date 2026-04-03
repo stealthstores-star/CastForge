@@ -370,6 +370,8 @@ def clean_title(title, category_handle="wargaming-infantry"):
     t = _strip_ali_suffix(title)
     t = JUNK_PATTERN.sub("", t)
     t = DISCOUNT_PATTERN.sub("", t)
+    # Strip 'Various' artifacts from multi-SKU listings
+    t = re.sub(r"\s*\(?\s*(?:and\s+)?various\s*\)?\s*", " ", t, flags=re.IGNORECASE)
     # Strip brand-code prefixes at start of title
     t = BRAND_CODE_PATTERN.sub("", t)
     # Strip leading colons and spaces (": Title" → "Title")
