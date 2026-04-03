@@ -1441,14 +1441,131 @@ def cmd_fix_shopify_titles():
     print(f"  Done: {fixed} titles fixed")
 
 
-def cmd_fix_prices():
-    """Recalculate and update all prices from source data."""
+def cmd_fix_prices(csv_path=None):
+    """Recalculate prices from CSV source data and update Shopify products."""
     from uploader import get_shopify_token
+
     print("\n══════════════════════════════════════")
     print("  CastForge Price Fixer")
     print("══════════════════════════════════════\n")
-    print("  This command will recalculate prices when re-scraped data is available.")
-    print("  Not yet implemented — needs source price data linked to Shopify products.")
+
+    if not csv_path:
+        # Try checkpoint
+        cp = Path("scrape_checkpoint.json")
+        if cp.exists():
+            print("  Using scrape_checkpoint.json as price source")
+            data = json.loads(cp.read_text())
+            source_products = data.get("products", [])
+        else:
+            print("  No CSV or checkpoint found. Usage: python3 main.py fix-prices <source.csv>")
+            return
+    else:
+        print(f"  Using {csv_path} as price source")
+        source_products = []
+        import csv as csv_mod
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv_mod.DictReader(f)
+            for row in reader:
+                source_products.append(dict(row))
+
+    # Build price lookup: source_url → (price_gbp, shipping_gbp)
+    price_lookup = {}
+    for sp in source_products:
+        url = sp.get("product_url") or sp.get("source_url", "")
+        price_raw = sp.get("product_price", "")
+        ship_raw = sp.get("shipping", "0")
+        if url:
+            price_gbp = _parse_price(price_raw)
+            ship_gbp = _parse_price(ship_raw)
+            price_lookup[url] = (price_gbp, ship_gbp)
+
+    print(f"  Price lookup: {len(price_lookup)} products with source URLs")
+    prices_with_data = sum(1 for p, s in price_lookup.values() if p > 0)
+    print(f"  Products with actual prices: {prices_with_data}")
+    print(f"  Products with price=0 (scraper missed): {len(price_lookup) - prices_with_data}")
+
+    if prices_with_data == 0:
+        print("\n  No actual prices found in source data. Scraper needs to re-capture prices.")
+        print("  To fix: re-scrape URLs with --debug to check price extraction.")
+        return
+
+    # Fetch all Shopify products
+    token = get_shopify_token()
+    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
+    base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+
+    products = []
+    url = f"{base}/products.json?limit=250&fields=id,title,tags,variants"
+    while url:
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 429:
+            time.sleep(float(r.headers.get("Retry-After", 2)))
+            continue
+        products.extend(r.json().get("products", []))
+        link = r.headers.get("Link", "")
+        url = None
+        if 'rel="next"' in link:
+            for part in link.split(","):
+                if 'rel="next"' in part:
+                    url = part.split("<")[1].split(">")[0]
+
+    print(f"  Shopify products: {len(products)}")
+
+    # Match and update
+    updated = 0
+    skipped = 0
+    no_match = 0
+
+    for i, prod in enumerate(products):
+        # Extract source URL from tags
+        source_url = ""
+        for tag in (prod.get("tags", "") or "").split(","):
+            tag = tag.strip()
+            if tag.startswith("source:"):
+                source_url = tag[7:]
+                break
+
+        if not source_url or source_url not in price_lookup:
+            no_match += 1
+            continue
+
+        price_gbp, ship_gbp = price_lookup[source_url]
+        if price_gbp <= 0:
+            skipped += 1
+            continue
+
+        sell_usd, compare_usd = calculate_price(price_gbp, ship_gbp)
+
+        # Check if price actually changed
+        variant = prod.get("variants", [{}])[0]
+        current_price = float(variant.get("price", "0"))
+        if abs(current_price - sell_usd) < 0.01:
+            skipped += 1
+            continue
+
+        # Update
+        variant_id = variant.get("id")
+        if variant_id:
+            try:
+                r = requests.put(
+                    f"{base}/variants/{variant_id}.json",
+                    headers=headers, timeout=30,
+                    json={"variant": {
+                        "id": variant_id,
+                        "price": f"{sell_usd:.2f}",
+                        "compare_at_price": f"{compare_usd:.2f}",
+                    }},
+                )
+                if r.status_code == 200:
+                    updated += 1
+                time.sleep(0.3)
+            except Exception:
+                pass
+
+        if (i + 1) % 100 == 0:
+            print(f"    [{i+1}/{len(products)}] {updated} updated, {skipped} skipped")
+
+    print(f"\n  Done: {updated} prices updated, {skipped} skipped, {no_match} no source match")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1534,7 +1651,7 @@ if __name__ == "__main__":
     elif command == "fix-shopify-titles":
         cmd_fix_shopify_titles()
     elif command == "fix-prices":
-        cmd_fix_prices()
+        cmd_fix_prices(file_args[0] if file_args else None)
     else:
         print(f"Unknown command: {command}")
         print(USAGE)
