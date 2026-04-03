@@ -704,11 +704,10 @@ def cmd_scrape(urls_file, limit=None, debug=False, speed="safe"):
     scrape_urls(urls_file, output, limit=limit, debug=debug, speed=speed)
 
 
-def cmd_fix_titles():
+def cmd_fix_titles(use_proxy=False):
     """
     Fix 'Aliexpress' titles in scrape_checkpoint.json.
-    15 concurrent contexts, h1-only extraction, ~300 pages/min.
-    Browser restart every 1000 titles.
+    --proxy: use IPRoyal rotating residential proxy with 60 contexts.
     """
     import asyncio
 
@@ -720,7 +719,6 @@ def cmd_fix_titles():
     data = json.loads(checkpoint_path.read_text())
     products = data.get("products", [])
 
-    # Find products needing title fix
     needs_fix = []
     for i, p in enumerate(products):
         title = p.get("product_title", "")
@@ -730,65 +728,82 @@ def cmd_fix_titles():
             if url:
                 needs_fix.append((i, url))
 
+    ctx_count = 60 if use_proxy else 15
+
     print(f"\n══════════════════════════════════════")
     print(f"  CastForge Title Fixer")
     print(f"══════════════════════════════════════\n")
     print(f"  Total products: {len(products)}")
     print(f"  Need title fix: {len(needs_fix)}")
+    print(f"  Contexts: {ctx_count}" + (" (proxy)" if use_proxy else ""))
+    if use_proxy:
+        print(f"  Proxy: IPRoyal rotating residential (US)")
 
     if not needs_fix:
         print("  Nothing to fix!")
         return
 
-    print(f"  Strategy: 15 contexts, h1-only, ~300/min")
-    print(f"  Estimated: {len(needs_fix) / 300:.0f} minutes\n")
+    est_rate = ctx_count * 12  # ~12 pages/min per context
+    print(f"  Estimated: {len(needs_fix) / est_rate:.0f} minutes (~{est_rate}/min)\n")
 
-    fixed = asyncio.run(_run_title_fixer(needs_fix, products))
+    fixed = asyncio.run(_run_title_fixer(needs_fix, products,
+                                          use_proxy=use_proxy, ctx_count=ctx_count))
 
-    # Save updated checkpoint
     data["products"] = products
     checkpoint_path.write_text(json.dumps(data, ensure_ascii=False))
     print(f"\n  Checkpoint saved: {fixed} titles fixed")
 
 
-async def _run_title_fixer(needs_fix, products):
-    """Async title fixer with 15 concurrent contexts."""
+async def _run_title_fixer(needs_fix, products, use_proxy=False, ctx_count=15):
+    """Async title fixer with concurrent contexts. Optional proxy."""
     from playwright.async_api import async_playwright
-    from scraper import STEALTH_JS, USER_AGENTS, SESSION_FILE, _fix_ali_image_url
+    from scraper import STEALTH_JS, USER_AGENTS, SESSION_FILE
 
-    CONTEXTS = 15
-    BATCH_PER_CONTEXT = 70  # ~1050 per cycle
-    BROWSER_RESTART = 1000
+    BATCH_PER_CONTEXT = 50
+    BROWSER_RESTART = 1500
+
+    # Proxy config
+    proxy_config = None
+    if use_proxy:
+        proxy_config = {
+            "server": "http://geo.iproyal.com:12321",
+            "username": "jpo1c9lb5mytbj0t",
+            "password": "GnXsjzZq15h0WEdY_country-us",
+        }
 
     fixed_total = 0
     start_time = time.time()
 
     async with async_playwright() as pw:
-        # Load login session
         session_path = str(SESSION_FILE) if SESSION_FILE.exists() else None
 
-        browser = await pw.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled",
-                  "--no-sandbox", "--disable-dev-shm-usage"],
-        )
+        launch_args = {
+            "headless": True,
+            "args": ["--disable-blink-features=AutomationControlled",
+                     "--no-sandbox", "--disable-dev-shm-usage"],
+        }
+        if proxy_config:
+            launch_args["proxy"] = proxy_config
+
+        browser = await pw.chromium.launch(**launch_args)
 
         progress = {"done": 0, "fixed": 0, "failed": 0,
                     "total": len(needs_fix), "start": start_time}
 
         titles_since_restart = 0
 
-        for cycle_start in range(0, len(needs_fix), CONTEXTS * BATCH_PER_CONTEXT):
-            cycle = needs_fix[cycle_start:cycle_start + CONTEXTS * BATCH_PER_CONTEXT]
+        for cycle_start in range(0, len(needs_fix), ctx_count * BATCH_PER_CONTEXT):
+            cycle = needs_fix[cycle_start:cycle_start + ctx_count * BATCH_PER_CONTEXT]
 
             chunks = []
-            for ci in range(CONTEXTS):
+            for ci in range(ctx_count):
                 chunk = cycle[ci * BATCH_PER_CONTEXT:(ci + 1) * BATCH_PER_CONTEXT]
                 if chunk:
                     chunks.append(chunk)
 
             tasks = [
-                _title_worker(browser, ci + 1, chunk, products, session_path,
+                _title_worker(browser, ci + 1, chunk, products,
+                              session_path if not use_proxy else None,
                               progress)
                 for ci, chunk in enumerate(chunks)
             ]
@@ -799,22 +814,23 @@ async def _run_title_fixer(needs_fix, products):
             titles_since_restart += cycle_fixed
 
             # Save checkpoint every cycle
+            checkpoint_path = Path("scrape_checkpoint.json")
+            data = json.loads(checkpoint_path.read_text())
+            data["products"] = products
+            checkpoint_path.write_text(json.dumps(data, ensure_ascii=False))
+
             elapsed = time.time() - start_time
-            rate = fixed_total / max(elapsed, 1) * 60
+            rate = progress["done"] / max(elapsed, 1) * 60
             remaining = len(needs_fix) - cycle_start - len(cycle)
-            eta = remaining / max(rate, 1)
+            eta = remaining / max(rate, 1) if rate > 0 else 0
             print(f"  [{cycle_start + len(cycle)}/{len(needs_fix)}] "
                   f"{fixed_total} fixed | {rate:.0f}/min | ETA: {eta:.0f} min")
 
-            # Browser restart every 1000
+            # Browser restart
             if titles_since_restart >= BROWSER_RESTART and remaining > 0:
                 await browser.close()
                 await asyncio.sleep(2)
-                browser = await pw.chromium.launch(
-                    headless=True,
-                    args=["--disable-blink-features=AutomationControlled",
-                          "--no-sandbox", "--disable-dev-shm-usage"],
-                )
+                browser = await pw.chromium.launch(**launch_args)
                 titles_since_restart = 0
                 print(f"  Browser restarted")
 
@@ -1218,7 +1234,8 @@ if __name__ == "__main__":
     elif command == "brand-images":
         cmd_brand_images()
     elif command == "fix-titles":
-        cmd_fix_titles()
+        proxy_mode = "--proxy" in args
+        cmd_fix_titles(use_proxy=proxy_mode)
     elif command == "review":
         cmd_review()
     else:
