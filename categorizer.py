@@ -480,25 +480,8 @@ def clean_title(title, category_handle="wargaming-infantry"):
 
 
 def title_needs_ai(cleaned_title, raw_title):
-    """Check if a cleaned title is garbage and needs AI rewriting."""
-    # Strip the type suffix to check just the descriptive part
-    desc = cleaned_title
-    for suffix in _TITLE_TYPE_SUFFIX.values():
-        if desc.endswith(suffix):
-            desc = desc[:-(len(suffix))].strip()
-            break
-
-    # Remove scale from desc for length check
-    desc_no_scale = SCALE_PATTERN.sub("", desc)
-    desc_no_scale = SCALE_MM_PATTERN.sub("", desc_no_scale).strip()
-
-    # Too short after cleaning = garbage
-    if len(desc_no_scale) < 20:
-        return True
-
-    # Still has catalog codes
-    if CATALOG_CODE_PATTERN.search(cleaned_title):
-        return True
+    """Always return True — force all products through AI title generation."""
+    return True
 
     return False
 
@@ -664,7 +647,7 @@ def ai_generate_titles_batch(products, api_key):
                     new_title = resp.json()["content"][0]["text"].strip()
                     new_title = new_title.strip('"\'')
 
-                    # Handle SKIP response — try vision fallback with product image
+                    # Handle SKIP response — try vision, then fall back to regex-cleaned title
                     if new_title.upper() == "SKIP":
                         image_url = p.get("image_url", "")
                         if image_url:
@@ -672,11 +655,16 @@ def ai_generate_titles_batch(products, api_key):
                             if vision_title:
                                 new_title = vision_title
                             else:
+                                # Use the regex-cleaned title as last resort
+                                new_title = p.get("title", "")
+                                if not new_title or len(new_title) < 10:
+                                    skipped += 1
+                                    continue
+                        else:
+                            new_title = p.get("title", "")
+                            if not new_title or len(new_title) < 10:
                                 skipped += 1
                                 continue
-                        else:
-                            skipped += 1
-                            continue
 
                     # Ensure scale is included — but only if AI didn't already add one
                     has_scale = (re.search(r"\b\d{2,3}\s*mm\b", new_title, re.IGNORECASE)

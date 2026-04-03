@@ -9,6 +9,9 @@ clean_products.csv
 audit_results.json
 image_scan_cache.json
 upload_log.json
+upload_progress.json
+failed_uploads.csv
+image_mismatches.csv
 
 # Generated exports
 *_shopify_import.csv

@@ -1,12 +1,14 @@
 """
 CastForge Shopify Uploader
 Uploads products via Admin REST API with collection assignment.
+Chunked upload with auto-resume support.
 """
 
 import json
 import math
 import os
 import time
+import csv
 
 import requests
 
@@ -24,14 +26,15 @@ def get_shopify_token():
                     "client_secret": config.SHOPIFY_CLIENT_SECRET,
                     "grant_type": "client_credentials",
                 },
+                timeout=15,
             )
             if resp.status_code != 200:
-                raise RuntimeError(f"Token exchange failed: {resp.status_code} {resp.text[:200]}")
+                raise RuntimeError(f"Token exchange failed: {resp.status_code}")
             return resp.json()["access_token"]
         except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
             wait = 2 ** (attempt + 1)
             if attempt < 3:
-                print(f"  Token exchange connection error, retrying in {wait}s...")
+                print(f"  Token exchange error, retrying in {wait}s...")
                 time.sleep(wait)
             else:
                 raise
@@ -48,23 +51,23 @@ class ShopifyUploader:
         self.collection_map = self._load_collection_map()
         self.sku_counter = self._get_next_sku()
         self.results = {"success": 0, "failed": 0, "skipped": 0, "product_ids": []}
+        self.failed_products = []  # for failed_uploads.csv
 
     def _load_collection_map(self):
         path = os.path.join(os.path.dirname(__file__) or ".", "collection_map.json")
         if os.path.exists(path):
             with open(path) as f:
                 return json.load(f)
-        print("  Warning: collection_map.json not found — skipping collection assignment")
         return {}
 
     def _get_next_sku(self):
-        """Determine next SKU number from existing products."""
-        resp = requests.get(
-            f"{self.base_url}/products/count.json",
-            headers=self.headers,
-        )
-        if resp.status_code == 200:
-            return resp.json().get("count", 0) + 1
+        try:
+            resp = requests.get(f"{self.base_url}/products/count.json",
+                                headers=self.headers, timeout=15)
+            if resp.status_code == 200:
+                return resp.json().get("count", 0) + 1
+        except Exception:
+            pass
         return 1
 
     def _next_sku(self):
@@ -72,37 +75,43 @@ class ShopifyUploader:
         self.sku_counter += 1
         return sku
 
-    def _api_call(self, method, url, json_data=None, retries=4):
-        """Make API call with rate limit handling, SSL retry, and backoff."""
+    def _api_call(self, method, url, json_data=None, retries=3):
+        """API call with 30s timeout, rate limit handling, retry on 502/timeout."""
         for attempt in range(retries):
             try:
-                resp = requests.request(method, url, headers=self.headers, json=json_data)
+                resp = requests.request(method, url, headers=self.headers,
+                                         json=json_data, timeout=30)
                 if resp.status_code == 429:
                     retry_after = float(resp.headers.get("Retry-After", 2))
-                    print(f"    Rate limited, waiting {retry_after}s...")
                     time.sleep(retry_after)
                     continue
+                if resp.status_code == 502 and attempt < retries - 1:
+                    time.sleep(3)
+                    continue
                 return resp
-            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
-                wait = 2 ** (attempt + 1)
+            except (requests.exceptions.Timeout, requests.exceptions.SSLError,
+                    requests.exceptions.ConnectionError) as e:
                 if attempt < retries - 1:
-                    print(f"    Connection error, retrying in {wait}s... ({attempt+1}/{retries})")
-                    time.sleep(wait)
+                    time.sleep(3)
                 else:
                     raise
         return resp
 
     def upload_product(self, product):
-        """
-        Upload a single product to Shopify.
-        Product dict keys: title, body_html, product_type, tags, price,
-        compare_at_price, image_url, category_handle, parent_handle, seo_title,
-        seo_description.
-        """
+        """Upload a single product. Stores source_url as tag for matching."""
         sku = self._next_sku()
         tags = product.get("tags", [])
         if isinstance(tags, list):
-            tags = ", ".join(tags)
+            tags = list(tags)
+        else:
+            tags = [t.strip() for t in str(tags).split(",") if t.strip()]
+
+        # Add source URL as tag for matching back later
+        source_url = product.get("source_url", "")
+        if source_url:
+            tags.append(f"source:{source_url[:200]}")
+
+        tags_str = ", ".join(tags)
 
         payload = {
             "product": {
@@ -110,7 +119,7 @@ class ShopifyUploader:
                 "body_html": product.get("body_html", ""),
                 "vendor": "CastForge",
                 "product_type": product.get("product_type", ""),
-                "tags": tags,
+                "tags": tags_str,
                 "status": "draft",
                 "variants": [
                     {
@@ -128,13 +137,12 @@ class ShopifyUploader:
             }
         }
 
-        # Add images
+        # Images — pass through as-is, exact order from scraper
         all_images = []
         img_url = product.get("image_url")
         if img_url and img_url.startswith("http"):
             all_images.append({"src": img_url})
 
-        # Additional images from pipe-separated list
         images_raw = product.get("images", "")
         if images_raw:
             for extra in images_raw.split("|"):
@@ -145,70 +153,71 @@ class ShopifyUploader:
         if all_images:
             payload["product"]["images"] = all_images
 
-        # Debug: show image info for first 3 products
-        if self.results["success"] + self.results["failed"] < 3:
-            img_count = len(payload["product"].get("images", []))
-            first_src = payload["product"].get("images", [{}])[0].get("src", "")[:60] if img_count else "NONE"
-            print(f"    Images: {img_count} | src: {first_src}")
-
-        resp = self._api_call("POST", f"{self.base_url}/products.json", payload)
+        try:
+            resp = self._api_call("POST", f"{self.base_url}/products.json", payload)
+        except Exception as e:
+            self.results["failed"] += 1
+            self.failed_products.append({"title": product["title"][:80],
+                                          "error": str(e)[:100]})
+            return None
 
         if resp.status_code == 201:
             product_id = resp.json()["product"]["id"]
             self.results["product_ids"].append(product_id)
             self.results["success"] += 1
 
-            # Assign to collections
-            self._assign_collections(
-                product_id,
-                product.get("category_handle"),
-                product.get("parent_handle"),
-            )
-
+            self._assign_collections(product_id,
+                                      product.get("category_handle"),
+                                      product.get("parent_handle"))
             time.sleep(config.RATE_LIMIT_DELAY)
             return product_id
         else:
             self.results["failed"] += 1
-            print(f"    FAIL [{resp.status_code}]: {product['title'][:50]}")
-            if resp.status_code != 429:
-                try:
-                    err = resp.json()
-                    print(f"           {json.dumps(err.get('errors', err))[:150]}")
-                except Exception:
-                    pass
+            err_msg = ""
+            try:
+                err_msg = json.dumps(resp.json().get("errors", ""))[:100]
+            except Exception:
+                err_msg = resp.text[:100]
+            self.failed_products.append({"title": product["title"][:80],
+                                          "error": f"HTTP {resp.status_code}: {err_msg}"})
             return None
 
     def _assign_collections(self, product_id, category_handle, parent_handle):
-        """Assign product to its subcategory and parent collections."""
         handles = [h for h in [category_handle, parent_handle] if h]
         for handle in handles:
             collection_id = self.collection_map.get(handle)
             if not collection_id:
                 continue
-            resp = self._api_call(
-                "POST",
-                f"{self.base_url}/collects.json",
-                {"collect": {"product_id": product_id, "collection_id": collection_id}},
-            )
-            if resp.status_code not in (201, 200):
-                pass  # Non-critical — product still uploaded
+            try:
+                self._api_call("POST", f"{self.base_url}/collects.json",
+                                {"collect": {"product_id": product_id,
+                                             "collection_id": collection_id}})
+            except Exception:
+                pass
             time.sleep(0.2)
 
-    def upload_batch(self, products):
-        """Upload a list of products with progress reporting."""
+    def upload_chunk(self, products, chunk_num, total_chunks):
+        """Upload a chunk of products with progress."""
         total = len(products)
-        print(f"\n  Uploading {total} products to Shopify (as drafts)...\n")
+        print(f"\n  ── Chunk {chunk_num}/{total_chunks}: {total} products ──\n")
 
         for i, product in enumerate(products):
             pid = self.upload_product(product)
-            status = "OK" if pid else "FAIL"
-            if (i + 1) % 10 == 0 or (i + 1) == total:
-                print(f"  [{i+1}/{total}] {status} — {product['title'][:55]}")
+            if (i + 1) % 50 == 0 or (i + 1) == total:
+                print(f"    [{i+1}/{total}] {self.results['success']} OK, "
+                      f"{self.results['failed']} failed")
 
         return self.results
 
+    def save_failed(self, path="failed_uploads.csv"):
+        if self.failed_products:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=["title", "error"])
+                w.writeheader()
+                w.writerows(self.failed_products)
+            print(f"  Failed uploads: {len(self.failed_products)} → {path}")
+
     def print_summary(self):
-        """Print upload summary."""
         r = self.results
         print(f"\n  {'='*50}")
         print(f"  Upload Summary")
@@ -218,3 +227,46 @@ class ShopifyUploader:
         print(f"  Skipped:   {r['skipped']}")
         print(f"  Total IDs: {len(r['product_ids'])}")
         print(f"  {'='*50}")
+
+
+def nuke_all_products():
+    """Delete ALL products from Shopify store."""
+    token = get_shopify_token()
+    headers = {"X-Shopify-Access-Token": token}
+    base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+
+    all_ids = []
+    for status in ["draft", "active", "archived"]:
+        url = f"{base}/products.json?status={status}&limit=250&fields=id"
+        while url:
+            r = requests.get(url, headers=headers, timeout=15)
+            if r.status_code == 429:
+                time.sleep(float(r.headers.get("Retry-After", 2)))
+                continue
+            all_ids.extend(p["id"] for p in r.json().get("products", []))
+            link = r.headers.get("Link", "")
+            url = None
+            if 'rel="next"' in link:
+                for part in link.split(","):
+                    if 'rel="next"' in part:
+                        url = part.split("<")[1].split(">")[0]
+
+    print(f"  Found {len(all_ids)} products to delete")
+
+    deleted = 0
+    for i, pid in enumerate(all_ids):
+        while True:
+            r = requests.delete(f"{base}/products/{pid}.json",
+                                headers=headers, timeout=30)
+            if r.status_code == 429:
+                time.sleep(float(r.headers.get("Retry-After", 2)))
+                continue
+            break
+        if r.status_code == 200:
+            deleted += 1
+        if (i + 1) % 50 == 0 or (i + 1) == len(all_ids):
+            print(f"    [{i+1}/{len(all_ids)}] Deleted {deleted}")
+        time.sleep(0.3)
+
+    print(f"  Done: {deleted} products deleted")
+    return deleted

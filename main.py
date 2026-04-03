@@ -540,41 +540,107 @@ def cmd_stats(csv_path):
             print(f"    - {t[:70]}")
 
 
-def cmd_upload(csv_path):
-    """Full pipeline: comply → dedup → categorize → price → upload as drafts."""
+def cmd_nuke():
+    """Delete ALL products from Shopify."""
+    print("\n══════════════════════════════════════")
+    print("  CastForge Nuke — Delete All Products")
+    print("══════════════════════════════════════\n")
+    from uploader import nuke_all_products
+    nuke_all_products()
+
+
+UPLOAD_PROGRESS_FILE = Path("upload_progress.json")
+CHUNK_SIZE = 1000
+
+
+def _load_upload_progress():
+    if UPLOAD_PROGRESS_FILE.exists():
+        return json.loads(UPLOAD_PROGRESS_FILE.read_text())
+    return {"uploaded_urls": [], "product_ids": [], "chunks_done": 0,
+            "total_success": 0, "total_failed": 0}
+
+
+def _save_upload_progress(progress):
+    UPLOAD_PROGRESS_FILE.write_text(json.dumps(progress, indent=2))
+
+
+def cmd_upload(csv_path, resume=False):
+    """Chunked upload: process all → upload in chunks of 1000 with auto-resume."""
     print("\n╔══════════════════════════════════════╗")
-    print("║  CastForge Full Upload Pipeline      ║")
+    print("║  CastForge Chunked Upload Pipeline   ║")
     print("╚══════════════════════════════════════╝\n")
 
+    # Step 1: Load + process ALL products at once
     print("Step 1: Loading CSV...")
     products = load_csv(csv_path)
 
-    print("Step 2: Processing products...")
+    print("Step 2: Processing all products (compliance/categorize/pricing/titles)...")
     upload_ready, blocked, dupes = process_products(products)
 
     if not upload_ready:
-        print("\nNo products passed compliance. Aborting upload.")
+        print("\nNo products passed compliance.")
         return
 
-    # Price samples
-    print(f"\n  Price samples (first 5):")
-    for p in upload_ready[:5]:
-        print(f"    ${p['price']:.2f} (was ${p['compare_at_price']:.2f}) — {p['title'][:50]}")
+    print(f"\n  Ready to upload: {len(upload_ready)} products in "
+          f"{math.ceil(len(upload_ready) / CHUNK_SIZE)} chunks of {CHUNK_SIZE}")
 
-    # Upload
-    print(f"\nStep 3: Uploading {len(upload_ready)} products to Shopify as drafts...")
+    # Load resume state
+    progress = _load_upload_progress() if resume else {
+        "uploaded_urls": [], "product_ids": [], "chunks_done": 0,
+        "total_success": 0, "total_failed": 0,
+    }
+
+    # Filter out already-uploaded if resuming
+    if resume and progress["uploaded_urls"]:
+        already = set(progress["uploaded_urls"])
+        before = len(upload_ready)
+        upload_ready = [p for p in upload_ready if p.get("source_url", "") not in already]
+        print(f"  Resume: skipping {before - len(upload_ready)} already uploaded, "
+              f"{len(upload_ready)} remaining")
+
+    # Step 3: Upload in chunks
+    total_chunks = math.ceil(len(upload_ready) / CHUNK_SIZE)
+    print(f"\nStep 3: Uploading {len(upload_ready)} products in {total_chunks} chunks...\n")
+
     uploader = ShopifyUploader()
-    results = uploader.upload_batch(upload_ready)
-    uploader.print_summary()
+    start_time = time.time()
 
+    for chunk_idx in range(total_chunks):
+        chunk_start = chunk_idx * CHUNK_SIZE
+        chunk = upload_ready[chunk_start:chunk_start + CHUNK_SIZE]
+
+        uploader.upload_chunk(chunk, chunk_idx + 1, total_chunks)
+
+        # Track uploaded URLs for resume
+        for p in chunk:
+            url = p.get("source_url", "")
+            if url:
+                progress["uploaded_urls"].append(url)
+
+        progress["product_ids"].extend(uploader.results["product_ids"][-len(chunk):])
+        progress["chunks_done"] = chunk_idx + 1
+        progress["total_success"] = uploader.results["success"]
+        progress["total_failed"] = uploader.results["failed"]
+        _save_upload_progress(progress)
+
+        elapsed = time.time() - start_time
+        rate = uploader.results["success"] / max(elapsed, 1) * 60
+        remaining_chunks = total_chunks - chunk_idx - 1
+        print(f"  Chunk {chunk_idx + 1}/{total_chunks}: "
+              f"{uploader.results['success']} OK, {uploader.results['failed']} failed | "
+              f"{rate:.0f}/min")
+
+    uploader.print_summary()
+    uploader.save_failed()
+
+    # Save final upload log
     with open("upload_log.json", "w") as f:
         json.dump({
             "total": len(upload_ready),
-            "success": results["success"],
-            "failed": results["failed"],
-            "product_ids": results["product_ids"],
+            "success": uploader.results["success"],
+            "failed": uploader.results["failed"],
+            "product_ids": uploader.results["product_ids"],
             "blocked_count": len(blocked),
-            "duplicates_removed": dupes,
         }, f, indent=2)
     print("  Saved upload_log.json")
 
@@ -1163,6 +1229,228 @@ def cmd_review():
         print()
 
 
+def cmd_fix_images():
+    """Two-pass image fixer for existing Shopify products."""
+    from uploader import get_shopify_token
+    token = get_shopify_token()
+    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
+    base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+
+    print("\n══════════════════════════════════════")
+    print("  CastForge Image Fixer")
+    print("══════════════════════════════════════\n")
+
+    api_key = config.ANTHROPIC_API_KEY
+    if not api_key or api_key == "sk-ant-xxx":
+        print("  ANTHROPIC_API_KEY required for image scanning.")
+        return
+
+    # Fetch all products
+    products = []
+    url = f"{base}/products.json?limit=250&fields=id,title,images,tags"
+    while url:
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 429:
+            time.sleep(float(r.headers.get("Retry-After", 2)))
+            continue
+        products.extend(r.json().get("products", []))
+        link = r.headers.get("Link", "")
+        url = None
+        if 'rel="next"' in link:
+            for part in link.split(","):
+                if 'rel="next"' in part:
+                    url = part.split("<")[1].split(">")[0]
+
+    print(f"  Found {len(products)} products\n")
+
+    # ── Pass 1: Remove junk hero images ──
+    print("  ── Pass 1: Remove junk hero images ──")
+    junk_removed = 0
+    for i, prod in enumerate(products):
+        imgs = prod.get("images", [])
+        if not imgs:
+            continue
+
+        hero = imgs[0]
+        hero_url = hero.get("src", "")
+        if not hero_url:
+            continue
+
+        try:
+            resp = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                          "content-type": "application/json"},
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 10,
+                    "messages": [{"role": "user", "content": [
+                        {"type": "image", "source": {"type": "url", "url": hero_url}},
+                        {"type": "text", "text": "Is this a real product photo of a resin miniature/model, OR a seller info graphic/text card/promotional banner/emoji? Reply ONLY: PRODUCT or JUNK"},
+                    ]}],
+                },
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                answer = resp.json()["content"][0]["text"].strip().upper()
+                if "JUNK" in answer:
+                    # Delete the junk image
+                    requests.delete(f"{base}/products/{prod['id']}/images/{hero['id']}.json",
+                                     headers=headers, timeout=15)
+                    junk_removed += 1
+                    time.sleep(0.3)
+        except Exception:
+            pass
+
+        if (i + 1) % 50 == 0:
+            print(f"    [{i+1}/{len(products)}] Removed {junk_removed} junk images")
+
+    print(f"  Pass 1 done: {junk_removed} junk images removed\n")
+
+    # ── Pass 2: Flag mismatched images ──
+    print("  ── Pass 2: Flag image mismatches ──")
+    mismatches = []
+    for i, prod in enumerate(products):
+        imgs = prod.get("images", [])
+        if not imgs:
+            continue
+        hero_url = imgs[0].get("src", "")
+        title = prod.get("title", "")
+        if not hero_url or not title:
+            continue
+
+        try:
+            resp = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                          "content-type": "application/json"},
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 30,
+                    "messages": [{"role": "user", "content": [
+                        {"type": "image", "source": {"type": "url", "url": hero_url}},
+                        {"type": "text", "text": f"Does this image match this product? Title: {title}. Reply YES or NO with brief reason."},
+                    ]}],
+                },
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                answer = resp.json()["content"][0]["text"].strip()
+                if answer.upper().startswith("NO"):
+                    mismatches.append({"id": prod["id"], "title": title,
+                                        "image": hero_url, "reason": answer})
+        except Exception:
+            pass
+
+        if (i + 1) % 50 == 0:
+            print(f"    [{i+1}/{len(products)}] {len(mismatches)} mismatches found")
+
+    if mismatches:
+        import csv as csv_mod
+        with open("image_mismatches.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv_mod.DictWriter(f, fieldnames=["id", "title", "image", "reason"])
+            w.writeheader()
+            w.writerows(mismatches)
+        print(f"  Pass 2 done: {len(mismatches)} mismatches → image_mismatches.csv")
+    else:
+        print(f"  Pass 2 done: no mismatches found")
+
+
+def cmd_fix_shopify_titles():
+    """Fix garbage titles on existing Shopify products via AI."""
+    from uploader import get_shopify_token
+    token = get_shopify_token()
+    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
+    base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+
+    print("\n══════════════════════════════════════")
+    print("  CastForge Shopify Title Fixer")
+    print("══════════════════════════════════════\n")
+
+    api_key = config.ANTHROPIC_API_KEY
+    if not api_key or api_key == "sk-ant-xxx":
+        print("  ANTHROPIC_API_KEY required.")
+        return
+
+    # Fetch all products
+    products = []
+    url = f"{base}/products.json?limit=250&fields=id,title,tags"
+    while url:
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 429:
+            time.sleep(float(r.headers.get("Retry-After", 2)))
+            continue
+        products.extend(r.json().get("products", []))
+        link = r.headers.get("Link", "")
+        url = None
+        if 'rel="next"' in link:
+            for part in link.split(","):
+                if 'rel="next"' in part:
+                    url = part.split("<")[1].split(">")[0]
+
+    # Find garbage titles
+    garbage = []
+    for p in products:
+        title = p.get("title", "")
+        if ("，" in title or title.startswith("And ") or len(title) < 15 or
+                "SKIP" in title or title.startswith(": ")):
+            # Extract source URL from tags
+            raw_title = ""
+            for tag in (p.get("tags", "") or "").split(","):
+                tag = tag.strip()
+                if tag.startswith("source:"):
+                    raw_title = tag[7:]
+                    break
+            garbage.append({"id": p["id"], "title": title, "raw": raw_title})
+
+    print(f"  Found {len(garbage)} products with garbage titles")
+    if not garbage:
+        return
+
+    fixed = 0
+    for i, g in enumerate(garbage):
+        raw = g["raw"] or g["title"]
+        try:
+            resp = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                          "content-type": "application/json"},
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 80,
+                    "messages": [{"role": "user", "content":
+                        f"Write a product title for a resin miniature store. "
+                        f"Format: [Subject] [Scale] Resin [Figure/Bust]. Max 80 chars. "
+                        f"Raw title: {raw[:150]}. Write ONLY the title:"}],
+                },
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                new_title = resp.json()["content"][0]["text"].strip().strip('"\'')
+                if new_title and len(new_title) > 10 and new_title.upper() != "SKIP":
+                    requests.put(f"{base}/products/{g['id']}.json",
+                                  headers=headers, timeout=15,
+                                  json={"product": {"id": g["id"], "title": new_title}})
+                    fixed += 1
+        except Exception:
+            pass
+
+        if (i + 1) % 20 == 0:
+            print(f"    [{i+1}/{len(garbage)}] Fixed {fixed}")
+
+    print(f"  Done: {fixed} titles fixed")
+
+
+def cmd_fix_prices():
+    """Recalculate and update all prices from source data."""
+    from uploader import get_shopify_token
+    print("\n══════════════════════════════════════")
+    print("  CastForge Price Fixer")
+    print("══════════════════════════════════════\n")
+    print("  This command will recalculate prices when re-scraped data is available.")
+    print("  Not yet implemented — needs source price data linked to Shopify products.")
+
+
 # ═══════════════════════════════════════════════════════════════
 # CLI
 # ═══════════════════════════════════════════════════════════════
@@ -1220,7 +1508,8 @@ if __name__ == "__main__":
     elif command == "comply-images":
         cmd_comply_images(file_args[0])
     elif command == "upload":
-        cmd_upload(file_args[0])
+        resume_mode = "--resume" in args
+        cmd_upload(file_args[0], resume=resume_mode)
     elif command == "export":
         cmd_export(file_args[0], fast=fast_mode)
     elif command == "process-images":
@@ -1238,6 +1527,14 @@ if __name__ == "__main__":
         cmd_fix_titles(use_proxy=proxy_mode)
     elif command == "review":
         cmd_review()
+    elif command == "nuke":
+        cmd_nuke()
+    elif command == "fix-images":
+        cmd_fix_images()
+    elif command == "fix-shopify-titles":
+        cmd_fix_shopify_titles()
+    elif command == "fix-prices":
+        cmd_fix_prices()
     else:
         print(f"Unknown command: {command}")
         print(USAGE)
