@@ -1230,7 +1230,7 @@ def cmd_review():
 
 
 ALI_STATE_FILE = Path("ali_state.json")
-PRICE_TABS = 3
+PRICE_TABS = 10
 PRICE_SAVE_EVERY = 200
 
 
@@ -1453,16 +1453,16 @@ async def _scrape_single_price(page, url, debug_count=None):
         # Retry once on tunnel failure
         for _attempt in range(2):
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=15000)
                 break
             except Exception as nav_err:
                 if "TUNNEL" in str(nav_err) and _attempt == 0:
-                    await page.wait_for_timeout(2000)
+                    await page.wait_for_timeout(1000)
                     continue
                 raise
 
-        # Wait for price to render — the price is JS-rendered
-        await page.wait_for_timeout(5000)
+        # Wait for price to render
+        await page.wait_for_timeout(3000)
 
         # Also try waiting for a price-like element
         try:
