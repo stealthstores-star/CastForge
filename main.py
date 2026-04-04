@@ -1431,14 +1431,18 @@ def cmd_fix_scrape_prices(relogin=False):
             def is_capt():
                 try:
                     u = pg[0].url.lower()
-                    if any(w in u for w in ["captcha","punish","punch","tmd","sec.aliexpress",
-                                            "x5sec","x5secdata","unusual"]):
+                    if any(w in u for w in ["punish","x5sec","captcha"]):
                         return True
-                    t = (pg[0].query_selector("body").inner_text() or "")[:1000].lower()
-                    return any(w in t for w in ["robot","verify","unusual traffic",
-                                                "sorry, we have detected","captcha",
-                                                "check if you are"])
-                except: return True
+                    body = (pg[0].query_selector("body").inner_text() or "").strip()
+                    if len(body) < 500:
+                        bl = body.lower()
+                        if any(w in bl for w in ["unusual traffic","robot","detected"]):
+                            return True
+                    for frame in pg[0].frames:
+                        if "recaptcha" in (frame.url or "").lower():
+                            return True
+                    return False
+                except: return False
 
             fresh_browser()
 
