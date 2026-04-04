@@ -1252,7 +1252,6 @@ def _ensure_ali_login(pw):
 def cmd_fix_scrape_prices(relogin=False):
     """Re-scrape prices using the same approach as the working title scraper."""
     from playwright.sync_api import sync_playwright
-    from scraper import is_captcha, handle_captcha
 
     cp_path = Path("scrape_checkpoint.json")
     if not cp_path.exists():
@@ -1395,10 +1394,19 @@ def cmd_fix_scrape_prices(relogin=False):
 
             # CAPTCHA check
             try:
-                if is_captcha(page):
+                page_url = page.url.lower()
+                page_text = (page.query_selector("body").inner_text() or "")[:500].lower() if page.query_selector("body") else ""
+                is_capt = ("captcha" in page_url or "punch" in page_url
+                           or "verify" in page_text or "robot" in page_text
+                           or "unusual traffic" in page_text or "slide" in page_text)
+                if is_capt:
                     print(f"  CAPTCHA! Solve in browser...")
-                    while is_captcha(page):
+                    while True:
                         page.wait_for_timeout(3000)
+                        pt = (page.query_selector("body").inner_text() or "")[:500].lower() if page.query_selector("body") else ""
+                        pu = page.url.lower()
+                        if not ("captcha" in pu or "punch" in pu or "verify" in pt or "robot" in pt or "unusual" in pt):
+                            break
                     page.goto(url, wait_until="commit", timeout=12000)
                     time.sleep(0.5)
             except Exception:
