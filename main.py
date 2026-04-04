@@ -1250,14 +1250,174 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices: 60 Playwright contexts with proxy. DEBUG first failures."""
-    if relogin or not ALI_STATE_FILE.exists():
-        from playwright.sync_api import sync_playwright as sync_pw
-        with sync_pw() as p:
-            _ensure_ali_login(p)
+    """Re-scrape prices via mobile site (m.aliexpress.com) — prices in HTML, no JS needed."""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
 
-    import asyncio
-    asyncio.run(_run_price_scraper())
+    PROXY = "http://jpo1c9lb5mytbj0t:GnXsjzZq15h0WEdY_country-us@geo.iproyal.com:12321"
+    WORKERS = 60
+    SAVE_EVERY = 500
+
+    print("\n══════════════════════════════════════")
+    print("  CastForge Price Re-Scraper (Mobile Site)")
+    print("══════════════════════════════════════\n")
+
+    cp_path = Path("scrape_checkpoint.json")
+    if not cp_path.exists():
+        print("  No scrape_checkpoint.json found.")
+        return
+
+    data = json.loads(cp_path.read_text())
+    products = data.get("products", [])
+
+    needs_price = []
+    for i, p in enumerate(products):
+        price = p.get("product_price", "")
+        if not price or _parse_price(price) <= 0:
+            pid = p.get("id", "")
+            url = p.get("product_url") or p.get("source_url", "")
+            if not pid and url:
+                m = re.search(r"(\d{10,})", url)
+                if m:
+                    pid = m.group(1)
+            if pid:
+                needs_price.append((i, pid))
+
+    print(f"  Total products: {len(products)}")
+    print(f"  Missing prices: {len(needs_price)}")
+    print(f"  Workers: {WORKERS} (mobile site + proxy)")
+
+    if not needs_price:
+        print("  All products have prices!")
+        return
+
+    print(f"  Estimated: {len(needs_price) / (WORKERS * 15):.0f} minutes\n")
+
+    lock = threading.Lock()
+    progress = {"done": 0, "found": 0, "failed": 0, "start": time.time()}
+
+    def _fetch_mobile_price(item):
+        idx, product_id = item
+        proxies = {"http": PROXY, "https": PROXY}
+
+        # Mobile site renders prices server-side (not CSR like desktop)
+        mobile_url = f"https://m.aliexpress.com/item/{product_id}.html"
+        mobile_headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-GB,en;q=0.9",
+        }
+
+        price = ""
+        shipping = ""
+
+        for attempt in range(2):
+            try:
+                resp = requests.get(mobile_url, proxies=proxies, headers=mobile_headers,
+                                     timeout=15, allow_redirects=True)
+                if resp.status_code != 200:
+                    continue
+
+                text = resp.text
+
+                # Mobile site has prices in HTML/JSON
+                # Look for price patterns
+                for pat in [
+                    r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                    r'"activityPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                    r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                    r'"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                    r'"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                    r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
+                    r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d+)',
+                ]:
+                    m = re.search(pat, text)
+                    if m and float(m.group(1)) > 0.5:
+                        price = f"£{m.group(1)}"
+                        break
+
+                # Also try og:title which sometimes has price
+                if not price:
+                    m = re.search(r'og:title["\s]+content="[^"]*?[\uffe1£](\d+\.?\d+)', text)
+                    if m and float(m.group(1)) > 0.5:
+                        price = f"£{m.group(1)}"
+
+                # Raw £ pattern (but not £1.00 coupon)
+                if not price:
+                    text_norm = text.replace("\uffe1", "£")
+                    all_prices = re.findall(r"£(\d+\.\d{2})", text_norm)
+                    valid = [p for p in all_prices if float(p) > 1.50]
+                    if valid:
+                        price = f"£{valid[0]}"
+
+                # Shipping
+                sm = re.search(r'"freightAmount"[^}]*?"value"\s*:\s*"?(\d+\.?\d*)', text)
+                if sm and float(sm.group(1)) > 0:
+                    shipping = sm.group(1)
+                elif "freeShipping" in text:
+                    shipping = "0"
+
+                if price:
+                    break
+
+            except Exception:
+                if attempt == 0:
+                    time.sleep(0.5)
+                continue
+
+        with lock:
+            progress["done"] += 1
+            if price:
+                products[idx]["product_price"] = price
+                if shipping:
+                    products[idx]["shipping"] = shipping
+                progress["found"] += 1
+
+                if progress["found"] <= 5:
+                    print(f"  FOUND: {price} ship={shipping} pid={product_id}")
+            else:
+                progress["failed"] += 1
+
+            done = progress["done"]
+            if done % 100 == 0 or done == len(needs_price):
+                elapsed = time.time() - progress["start"]
+                rate = done / max(elapsed, 1) * 60
+                eta = (len(needs_price) - done) / max(rate, 1)
+                print(f"  [{done}/{len(needs_price)}] "
+                      f"Found {progress['found']}, Failed {progress['failed']} "
+                      f"| {rate:.0f}/min | ETA: {eta:.0f} min")
+
+            if done % SAVE_EVERY == 0:
+                data["products"] = products
+                cp_path.write_text(json.dumps(data, ensure_ascii=False))
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as executor:
+        list(executor.map(_fetch_mobile_price, needs_price))
+
+    # Final save
+    data["products"] = products
+    cp_path.write_text(json.dumps(data, ensure_ascii=False))
+
+    elapsed = time.time() - progress["start"]
+    print(f"\n  Done in {elapsed/60:.0f} min: {progress['found']} found, {progress['failed']} failed")
+
+    # Regenerate all_products.csv
+    print(f"  Regenerating all_products.csv...")
+    import csv as csv_mod
+    fieldnames = [
+        "id", "product_title", "product_price", "product_original_price",
+        "product_discount", "product_url", "product_image", "product_images",
+        "product_rating", "store_name", "store_url", "store_id",
+        "total_sales", "ship_from", "store_member_id", "trade_info",
+        "shipping", "launch_time", "company_name", "source_url",
+        "variations", "variation_images",
+    ]
+    with open("all_products.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv_mod.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for p in products:
+            writer.writerow(p)
+    print(f"  Saved all_products.csv ({len(products)} products)")
 
 
 async def _run_price_scraper():
