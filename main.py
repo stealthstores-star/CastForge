@@ -1806,11 +1806,22 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                     pass
 
             page.on("response", _on_response)
-            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(6000)  # wait for mtop API to return price data
+            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+
+            # Wait specifically for the mtop price API instead of a blind timeout
+            try:
+                await page.wait_for_response(
+                    lambda r: "mtop.aliexpress.pdp.pc.query" in r.url,
+                    timeout=15000
+                )
+                # Give response handler a moment to process it
+                await page.wait_for_timeout(500)
+            except Exception:
+                pass  # timeout — try fallback
+
             page.remove_listener("response", _on_response)
 
-            # Also try page content as fallback
+            # Fallback: extract from rendered page content
             if not price_data["price"]:
                 price_data["price"], price_data["shipping"] = await _extract_price_from_page(page)
 
