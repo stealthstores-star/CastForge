@@ -1306,9 +1306,15 @@ async def _run_price_scraper():
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             channel="msedge", headless=True,
+            proxy={
+                "server": "http://geo.iproyal.com:12321",
+                "username": "jpo1c9lb5mytbj0t",
+                "password": "GnXsjzZq15h0WEdY",
+            },
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
         )
         context = await browser.new_context(storage_state=str(ALI_STATE_FILE))
+        print(f"  Browser launched with proxy. Opening {PRICE_TABS} tabs...")
 
         # Split work across tabs
         chunk_size = max(1, len(needs_price) // PRICE_TABS + 1)
@@ -1439,11 +1445,12 @@ async def _scrape_single_price(page, url):
         except Exception:
             pass
 
-        # Check for captcha
-        content = await page.content()
-        captcha_words = ["captcha", "slider", "puzzle", "verify you are human",
-                          "security check", "access denied"]
-        if any(w in content.lower() for w in captcha_words):
+        # Check for captcha — only real captcha elements, not "Verified Purchase" etc.
+        captcha_el = await page.query_selector(
+            "iframe[src*='captcha'], [class*='captcha'], [class*='slider-verify'], "
+            "[class*='baxia'], [id*='captcha'], [class*='nc-container']"
+        )
+        if captcha_el:
             return ("", "", True)
 
         # Extract price
