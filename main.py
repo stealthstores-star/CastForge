@@ -1250,14 +1250,17 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices: direct HTTP + SEO API (low bandwidth)."""
-    if relogin or not ALI_STATE_FILE.exists():
+    """Re-scrape prices: Playwright + proxy (3 contexts, fresh session)."""
+    # Always re-login if session is older than 2 hours
+    state_age = (time.time() - ALI_STATE_FILE.stat().st_mtime) if ALI_STATE_FILE.exists() else 99999
+    if relogin or not ALI_STATE_FILE.exists() or state_age > 7200:
+        print("  Session expired or missing — launching browser to re-login...")
         from playwright.sync_api import sync_playwright as sync_pw
         with sync_pw() as p:
             _ensure_ali_login(p)
 
-    # Skip Playwright browser — go straight to lightweight HTTP approach
-    # (Playwright wastes ~1MB/product through proxy; HTTP uses ~10KB/product)
+    import asyncio
+    asyncio.run(_run_price_scraper())
 
     # Load cookies from login state
     cookies = {}
@@ -1535,12 +1538,12 @@ async def _run_price_scraper():
     from scraper import STEALTH_JS, USER_AGENTS
     import random
 
-    CONTEXTS = 8
-    BATCH_PER_CTX = 250
+    CONTEXTS = 3
+    BATCH_PER_CTX = 500
     BROWSER_RESTART = 1500
 
     print("\n══════════════════════════════════════")
-    print("  CastForge Price Re-Scraper (8 contexts)")
+    print("  CastForge Price Re-Scraper (3 contexts)")
     print("══════════════════════════════════════\n")
 
     session_path = str(ALI_STATE_FILE) if ALI_STATE_FILE.exists() else None
