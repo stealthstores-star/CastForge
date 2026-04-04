@@ -1242,7 +1242,7 @@ def _ensure_ali_login(pw):
         proxy={
             "server": "http://geo.iproyal.com:12321",
             "username": "jpo1c9lb5mytbj0t",
-            "password": "GnXsjzZq15h0WEdY",
+            "password": "GnXsjzZq15h0WEdY_country-us",
         },
     )
     context = browser.new_context(viewport={"width": 1280, "height": 900}, locale="en-GB")
@@ -1316,7 +1316,7 @@ async def _run_price_scraper():
             proxy={
                 "server": "http://geo.iproyal.com:12321",
                 "username": "jpo1c9lb5mytbj0t",
-                "password": "GnXsjzZq15h0WEdY",
+                "password": "GnXsjzZq15h0WEdY_country-us",
             },
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
         )
