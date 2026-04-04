@@ -1540,17 +1540,47 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
                 if progress["found"] <= 5:
                     print(f"  FOUND: {price_data['price']} ship={price_data['shipping']} — {url[-40:]}")
+                # Debug: dump page when £1.00 found (wrong price)
+                if progress["found"] <= 2 and worker_id == 0:
+                    content = await page.content()
+                    # Show what matched
+                    for pat in [r'"formattedActivityPrice"\s*:\s*"[^"]{0,20}"',
+                                 r'"minPrice"\s*:\s*"[^"]{0,20}"',
+                                 r'"skuCalPrice"\s*:\s*"[^"]{0,20}"']:
+                        ms = re.findall(pat, content[:50000])
+                        if ms:
+                            print(f"    MATCH: {ms[:3]}")
+                    # Show all £ context
+                    for m in re.finditer(r".{0,30}£.{0,20}", content[:30000]):
+                        print(f"    £ CONTEXT: {m.group()[:60]}")
             else:
                 progress["failed"] += 1
 
-                # Debug: dump first 3 failures
-                if progress["failed"] <= 3 and worker_id == 0:
+                # Debug: dump EVERYTHING for first failure from worker 0
+                if progress["failed"] <= 1 and worker_id == 0:
                     try:
                         title = await page.title()
                         pg_url = page.url
-                        print(f"  DEBUG FAIL: title='{title[:40]}' url={pg_url[:60]}")
-                    except Exception:
-                        pass
+                        content = await page.content()
+                        # Save full page to file for inspection
+                        with open("debug_price_page.html", "w", encoding="utf-8") as df:
+                            df.write(content)
+                        # Find any numbers in page
+                        all_nums = re.findall(r"\d+\.\d{2}", content[:50000])
+                        # Check page length and key indicators
+                        print(f"\n  ══ DEBUG FIRST FAILURE ══")
+                        print(f"  URL: {pg_url[:80]}")
+                        print(f"  Title: '{title[:60]}'")
+                        print(f"  Page length: {len(content)} chars")
+                        print(f"  Has 'isCSR': {'isCSR' in content}")
+                        print(f"  Has 'runParams': {'runParams' in content}")
+                        print(f"  Has 'price': {'price' in content.lower()}")
+                        print(f"  Has '£': {'£' in content}")
+                        print(f"  All X.XX numbers: {all_nums[:15]}")
+                        print(f"  Saved full page → debug_price_page.html")
+                        print(f"  ══════════════════════════\n")
+                    except Exception as de:
+                        print(f"  DEBUG error: {de}")
 
         except Exception:
             progress["failed"] += 1
