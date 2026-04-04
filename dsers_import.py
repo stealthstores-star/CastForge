@@ -9,8 +9,10 @@ FAILED_FILE = Path("dsers_failed.txt")
 
 def read_count(page):
     return page.evaluate("""() => {
-        const el = document.querySelector('a[href="/application/import_list"] b');
-        return el ? parseInt(el.textContent.trim()) : -1;
+        const cards = document.querySelectorAll('[class*="product-card"], [class*="ProductCard"], [class*="import-item"], [class*="ImportItem"], .ant-card, [class*="product_item"], [class*="productItem"]');
+        if (cards.length > 0) return cards.length;
+        const items = document.querySelectorAll('[class*="import"] [class*="item"], [class*="Import"] [class*="Item"]');
+        return items.length;
     }""")
 
 def submit_url(page, url, wait=5):
@@ -49,9 +51,14 @@ def main():
         input("  Log in if needed, then press ENTER... ")
 
         count = read_count(page)
-        print(f"  Badge count: {count}\n")
-        if count == -1:
-            print("  ERROR: can't read badge. Check selector."); browser.close(); return
+        print(f"  Card count: {count}\n")
+        if count == 0:
+            dump = page.evaluate("""() => {
+                const el = document.querySelector('[class*="import"]');
+                return el ? el.innerHTML.substring(0, 500) : 'NO IMPORT ELEMENT FOUND';
+            }""")
+            print(f"  DEBUG HTML: {dump}\n")
+            print("  Count is 0 — will proceed anyway (first import will create first card)\n")
 
         failed, ok = run_batch(page, urls)
         print(f"\n  Pass 1 done: {ok} success, {len(failed)} failed, badge={read_count(page)}")
