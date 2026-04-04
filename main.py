@@ -1250,14 +1250,230 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices: intercept mtop API response, 5 contexts, login state."""
+    """Re-scrape prices via seodata API (HTTP requests, 60 threads, no browser)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Login to get fresh cookies if needed
     if relogin or not ALI_STATE_FILE.exists():
         from playwright.sync_api import sync_playwright as sync_pw
         with sync_pw() as p:
             _ensure_ali_login(p)
 
-    import asyncio
-    asyncio.run(_run_price_scraper_direct())
+    # Load cookies from login state
+    cookies = {}
+    if ALI_STATE_FILE.exists():
+        state = json.loads(ALI_STATE_FILE.read_text())
+        for c in state.get("cookies", []):
+            cookies[c["name"]] = c["value"]
+    print(f"  Loaded {len(cookies)} cookies from {ALI_STATE_FILE}")
+
+    # Load products
+    cp_path = Path("scrape_checkpoint.json")
+    if not cp_path.exists():
+        print("  No scrape_checkpoint.json found.")
+        return
+
+    data = json.loads(cp_path.read_text())
+    products = data.get("products", [])
+
+    needs_price = []
+    for i, p in enumerate(products):
+        price = p.get("product_price", "")
+        if not price or _parse_price(price) <= 0:
+            url = p.get("product_url") or p.get("source_url", "")
+            if url:
+                needs_price.append((i, url))
+
+    WORKERS = 60
+    PROXY = {
+        "http": "http://jpo1c9lb5mytbj0t:GnXsjzZq15h0WEdY_country-us@geo.iproyal.com:12321",
+        "https": "http://jpo1c9lb5mytbj0t:GnXsjzZq15h0WEdY_country-us@geo.iproyal.com:12321",
+    }
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-GB,en;q=0.9",
+        "Referer": "https://www.aliexpress.com/",
+    }
+
+    print(f"\n══════════════════════════════════════")
+    print(f"  CastForge Price Re-Scraper (SEO API)")
+    print(f"══════════════════════════════════════\n")
+    print(f"  Total products: {len(products)}")
+    print(f"  Missing prices: {len(needs_price)}")
+    print(f"  Workers: {WORKERS}")
+    est = len(needs_price) / (WORKERS * 10)
+    print(f"  Estimated: {est:.0f} minutes\n")
+
+    import threading
+    lock = threading.Lock()
+    progress = {"done": 0, "found": 0, "failed": 0, "seo_ok": 0, "redirect_fail": 0, "start": time.time()}
+
+    def _fetch_price(item):
+        idx, url = item
+        price = ""
+        shipping = ""
+
+        try:
+            # Step 1: Follow redirect to get real product ID
+            session = requests.Session()
+            session.headers.update(HEADERS)
+            session.cookies.update(cookies)
+
+            # HEAD request to follow redirects cheaply
+            try:
+                r = session.head(url, proxies=PROXY, timeout=10, allow_redirects=True)
+                final_url = r.url
+            except Exception:
+                # Fallback: try GET
+                try:
+                    r = session.get(url, proxies=PROXY, timeout=10, allow_redirects=True)
+                    final_url = r.url
+                except Exception:
+                    with lock:
+                        progress["redirect_fail"] += 1
+                        progress["failed"] += 1
+                    return
+
+            # Extract product ID from final URL
+            m = re.search(r"/item/(\d+)\.html", final_url)
+            if not m:
+                # Try original URL
+                m = re.search(r"/item/(\d+)\.html", url)
+            if not m:
+                with lock:
+                    progress["failed"] += 1
+                return
+
+            product_id = m.group(1)
+
+            # Step 2: Call seodata API
+            seo_url = f"https://www.aliexpress.com/aeglodetailweb/api/seo/seodata?productId={product_id}"
+            try:
+                r = session.get(seo_url, proxies=PROXY, timeout=10)
+                if r.status_code == 200 and len(r.text) > 100:
+                    body = r.text
+                    # Parse price from seodata JSON
+                    # Look for structured data with price
+                    for pattern in [
+                        r'"lowPrice"\s*:\s*"?(\d+\.?\d*)',
+                        r'"highPrice"\s*:\s*"?(\d+\.?\d*)',
+                        r'"price"\s*:\s*"?(\d+\.?\d*)',
+                        r'"formattedActivityPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
+                        r'"minPrice"\s*:\s*"?(\d+\.?\d*)',
+                        r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                    ]:
+                        pm = re.search(pattern, body)
+                        if pm:
+                            val = float(pm.group(1))
+                            if 0.01 < val < 500:
+                                price = f"£{val:.2f}"
+                                with lock:
+                                    progress["seo_ok"] += 1
+                                break
+
+                    # Shipping from seodata
+                    ship_m = re.search(r'"freightAmount"\s*:\s*"?(\d+\.?\d*)', body)
+                    if ship_m:
+                        shipping = ship_m.group(1)
+                    elif "free" in body.lower()[:5000] and "shipping" in body.lower()[:5000]:
+                        shipping = "0"
+            except Exception:
+                pass
+
+            # Step 3: If seodata failed, try parsing the product page HTML
+            if not price:
+                try:
+                    r = session.get(final_url, proxies=PROXY, timeout=10)
+                    body = r.text
+                    body = body.replace("\uffe1", "£")
+
+                    # Look for price in embedded JSON/script tags
+                    for pattern in [
+                        r'"formattedActivityPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
+                        r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                        r'"skuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                        r'"minPrice"\s*:\s*"(\d+\.?\d*)',
+                        r'"lowPrice"\s*:\s*"(\d+\.?\d*)',
+                    ]:
+                        pm = re.search(pattern, body[:50000])
+                        if pm:
+                            val = float(pm.group(1))
+                            if 0.01 < val < 500:
+                                price = f"£{val:.2f}"
+                                break
+
+                    # Shipping from page
+                    if not shipping:
+                        ship_m = re.search(r'"freightAmount"\s*:\s*"?(\d+\.?\d*)', body[:50000])
+                        if ship_m:
+                            shipping = ship_m.group(1)
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+
+        if price:
+            with lock:
+                products[idx]["product_price"] = price
+                if shipping:
+                    products[idx]["shipping"] = shipping
+                progress["found"] += 1
+                if progress["found"] <= 10:
+                    print(f"  FOUND: {price} ship={shipping} — {url[-45:]}")
+        else:
+            with lock:
+                progress["failed"] += 1
+
+        with lock:
+            progress["done"] += 1
+            d = progress["done"]
+        if d % 100 == 0:
+            elapsed = time.time() - progress["start"]
+            rate = d / max(elapsed, 1) * 60
+            remaining = len(needs_price) - d
+            eta = remaining / max(rate, 1)
+            pct = progress["found"] / max(d, 1) * 100
+            print(f"  [{d}/{len(needs_price)}] Found {progress['found']} ({pct:.0f}%), "
+                  f"Failed {progress['failed']}, SEO API hits {progress['seo_ok']} "
+                  f"| {rate:.0f}/min | ETA: {eta:.0f} min")
+
+        # Checkpoint every 500
+        if d % 500 == 0:
+            with lock:
+                data["products"] = products
+                cp_path.write_text(json.dumps(data, ensure_ascii=False))
+
+    # Run with thread pool
+    with ThreadPoolExecutor(max_workers=WORKERS) as executor:
+        list(executor.map(_fetch_price, needs_price))
+
+    # Final save
+    data["products"] = products
+    cp_path.write_text(json.dumps(data, ensure_ascii=False))
+
+    elapsed = time.time() - progress["start"]
+    print(f"\n  Done in {elapsed/60:.0f} min: {progress['found']} found, "
+          f"{progress['failed']} failed, SEO hits: {progress['seo_ok']}")
+
+    # Regenerate CSV
+    print(f"  Regenerating all_products.csv...")
+    import csv as csv_mod
+    fieldnames = [
+        "id", "product_title", "product_price", "product_original_price",
+        "product_discount", "product_url", "product_image", "product_images",
+        "product_rating", "store_name", "store_url", "store_id",
+        "total_sales", "ship_from", "store_member_id", "trade_info",
+        "shipping", "launch_time", "company_name", "source_url",
+        "variations", "variation_images",
+    ]
+    with open("all_products.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv_mod.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for p in products:
+            writer.writerow(p)
+    print(f"  Saved all_products.csv ({len(products)} products)")
 
 
 async def _run_price_scraper():
