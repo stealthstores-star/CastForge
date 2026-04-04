@@ -1531,62 +1531,99 @@ def cmd_fix_scrape_prices(relogin=False):
 
         captcha_count = [0]
 
-        # Process products round-robin across tabs
-        tab_idx = 0
-        for i, (idx, url) in enumerate(needs_price):
-            tab_page = tabs[tab_idx % NUM_TABS]
-            tab_ctx_idx = tab_idx % NUM_TABS
+        # Retry loop — keeps going until all products have prices or no progress
+        MAX_PASSES = 5
+        for pass_num in range(1, MAX_PASSES + 1):
+            # Build list of products still missing prices
+            still_missing = []
+            for idx, url in needs_price:
+                price = products[idx].get("product_price", "")
+                if not price or _parse_price(price) <= 0:
+                    still_missing.append((idx, url))
 
-            result = _scrape_one(tab_page, url)
+            if not still_missing:
+                print(f"\n  All prices found!")
+                break
 
-            # Captcha hit — rotate: close this tab, make new one with fresh IP
-            if result is None:
-                captcha_count[0] += 1
-                print(f"  CAPTCHA on tab {tab_ctx_idx} — rotating IP... (#{captcha_count[0]})")
-                try:
-                    tabs[tab_ctx_idx].close()
-                    ctxs[tab_ctx_idx].close()
-                except Exception:
-                    pass
-                new_ctx, new_page = _make_tab(browser, tab_ctx_idx + captcha_count[0] * 10)
-                ctxs[tab_ctx_idx] = new_ctx
-                tabs[tab_ctx_idx] = new_page
-                # Retry on new IP
-                result = _scrape_one(new_page, url)
+            if pass_num > 1:
+                print(f"\n  ── Retry pass {pass_num}: {len(still_missing)} still missing ──")
+                # Rotate all tabs to fresh IPs for retry
+                for t in range(NUM_TABS):
+                    try:
+                        tabs[t].close()
+                        ctxs[t].close()
+                    except Exception:
+                        pass
+                    new_ctx, new_page = _make_tab(browser, t + pass_num * 100)
+                    ctxs[t] = new_ctx
+                    tabs[t] = new_page
+                print(f"  All tabs refreshed with new IPs")
+
+            pass_found = 0
+            tab_idx = 0
+
+            for i, (idx, url) in enumerate(still_missing):
+                tab_page = tabs[tab_idx % NUM_TABS]
+                tab_ctx_idx = tab_idx % NUM_TABS
+
+                result = _scrape_one(tab_page, url)
+
+                # Captcha hit — rotate: close this tab, make new one with fresh IP
                 if result is None:
+                    captcha_count[0] += 1
+                    print(f"  CAPTCHA on tab {tab_ctx_idx} — rotating IP... (#{captcha_count[0]})")
+                    try:
+                        tabs[tab_ctx_idx].close()
+                        ctxs[tab_ctx_idx].close()
+                    except Exception:
+                        pass
+                    new_ctx, new_page = _make_tab(browser, tab_ctx_idx + captcha_count[0] * 100)
+                    ctxs[tab_ctx_idx] = new_ctx
+                    tabs[tab_ctx_idx] = new_page
+                    # Retry on new IP
+                    result = _scrape_one(new_page, url)
+                    if result is None:
+                        failed += 1
+                        tab_idx += 1
+                        continue
+
+                price_text, shipping = result
+
+                if price_text:
+                    products[idx]["product_price"] = price_text
+                    if shipping:
+                        products[idx]["shipping"] = "0" if shipping == "Free" else shipping
+                    found += 1
+                    pass_found += 1
+                    if found <= 30 or pass_found <= 5:
+                        print(f"  ✓ [{i+1}/{len(still_missing)}] {price_text} ship={shipping}")
+                else:
                     failed += 1
-                    tab_idx += 1
-                    continue
 
-            price_text, shipping = result
+                tab_idx += 1
 
-            if price_text:
-                products[idx]["product_price"] = price_text
-                if shipping:
-                    products[idx]["shipping"] = "0" if shipping == "Free" else shipping
-                found += 1
-                if found <= 30:
-                    print(f"  ✓ [{i+1}/{len(needs_price)}] {price_text} ship={shipping}")
-            else:
-                failed += 1
+                # Progress
+                if (i + 1) % 50 == 0:
+                    elapsed = time.time() - start_time
+                    rate = (i + 1) / max(elapsed - (pass_num - 1) * 10, 1) * 60
+                    print(f"  [{i+1}/{len(still_missing)}] found={found} pass_found={pass_found} captchas={captcha_count[0]} | {rate:.0f}/min")
 
-            tab_idx += 1
+                # Save checkpoint every 200
+                if (i + 1) % 200 == 0:
+                    data["products"] = products
+                    cp_path.write_text(json.dumps(data, ensure_ascii=False))
 
-            # Progress
-            if (i + 1) % 50 == 0:
-                elapsed = time.time() - start_time
-                rate = (i + 1) / elapsed * 60
-                eta = (len(needs_price) - i - 1) / max(rate, 1)
-                print(f"  [{i+1}/{len(needs_price)}] found={found} failed={failed} captchas={captcha_count[0]} | {rate:.0f}/min ETA {eta:.0f}m")
+                time.sleep(random.uniform(0.3, 0.8))
 
-            # Save checkpoint every 200
-            if (i + 1) % 200 == 0:
-                data["products"] = products
-                cp_path.write_text(json.dumps(data, ensure_ascii=False))
-                print(f"  Checkpoint saved ({found} prices)")
+            # Checkpoint after each pass
+            data["products"] = products
+            cp_path.write_text(json.dumps(data, ensure_ascii=False))
+            print(f"  Pass {pass_num}: found {pass_found} new prices (total: {found})")
 
-            # Small delay to be gentler
-            time.sleep(random.uniform(0.3, 0.8))
+            # If no progress this pass, stop retrying
+            if pass_found == 0:
+                print(f"  No new prices found in pass {pass_num} — stopping retries.")
+                break
 
         # Cleanup
         for pg in tabs:
