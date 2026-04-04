@@ -1251,22 +1251,26 @@ def _ensure_ali_login(pw):
 
 def cmd_fix_scrape_prices(relogin=False):
     """Re-scrape prices using Playwright (CSR pages need real browser). 10 parallel tabs."""
+    # Login BEFORE entering async loop (sync Playwright can't run inside asyncio)
+    if relogin or not ALI_STATE_FILE.exists():
+        from playwright.sync_api import sync_playwright as sync_pw
+        with sync_pw() as p:
+            _ensure_ali_login(p)
+
     import asyncio
-    asyncio.run(_run_price_scraper(relogin=relogin))
+    asyncio.run(_run_price_scraper())
 
 
-async def _run_price_scraper(relogin=False):
+async def _run_price_scraper():
     from playwright.async_api import async_playwright
 
     print("\n══════════════════════════════════════")
     print("  CastForge Price Re-Scraper (Playwright)")
     print("══════════════════════════════════════\n")
 
-    # Login if needed
-    if relogin or not ALI_STATE_FILE.exists():
-        from playwright.sync_api import sync_playwright as sync_pw
-        with sync_pw() as p:
-            _ensure_ali_login(p)
+    if not ALI_STATE_FILE.exists():
+        print("  No login state found. Run with --relogin.")
+        return
 
     cp_path = Path("scrape_checkpoint.json")
     if not cp_path.exists():
