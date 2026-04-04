@@ -1833,16 +1833,35 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                             df.write(content)
                         # Find any numbers in page
                         all_nums = re.findall(r"\d+\.\d{2}", content[:50000])
-                        # Check page length and key indicators
+                        # Check what JS globals exist
+                        js_globals = await page.evaluate("""() => {
+                            const r = {};
+                            r.hasRunParams = typeof window.runParams !== 'undefined';
+                            r.hasInitData = typeof window.__INIT_DATA__ !== 'undefined';
+                            r.hasNextData = typeof window.__NEXT_DATA__ !== 'undefined';
+                            r.hasPageData = typeof window.PAGE_DATA !== 'undefined';
+                            // Check if any price elements exist in DOM
+                            r.priceEls = document.querySelectorAll('[class*="price" i]').length;
+                            // Get text of first few price elements
+                            r.priceTexts = [];
+                            document.querySelectorAll('[class*="price" i]').forEach((el, i) => {
+                                if (i < 8) r.priceTexts.push(el.className.substring(0, 50) + ' → ' + el.textContent.trim().substring(0, 60));
+                            });
+                            // Try to get runParams keys
+                            if (window.runParams) {
+                                r.runParamsKeys = Object.keys(window.runParams).slice(0, 15);
+                                if (window.runParams.data) r.runParamsDataKeys = Object.keys(window.runParams.data).slice(0, 15);
+                            }
+                            return r;
+                        }""")
                         print(f"\n  ══ DEBUG FIRST FAILURE ══")
                         print(f"  URL: {pg_url[:80]}")
                         print(f"  Title: '{title[:60]}'")
                         print(f"  Page length: {len(content)} chars")
-                        print(f"  Has 'isCSR': {'isCSR' in content}")
-                        print(f"  Has 'runParams': {'runParams' in content}")
-                        print(f"  Has 'price': {'price' in content.lower()}")
+                        print(f"  Has '$': {'$' in content}")
                         print(f"  Has '£': {'£' in content}")
                         print(f"  All X.XX numbers: {all_nums[:15]}")
+                        print(f"  JS globals: {json.dumps(js_globals, indent=4)}")
                         print(f"  Saved full page → debug_price_page.html")
                         print(f"  ══════════════════════════\n")
                     except Exception as de:
@@ -1868,72 +1887,176 @@ async def _extract_price_from_page(page):
     price = ""
     shipping = ""
 
-    # Get full page content and search for price data in the JSON/HTML
+    # Strategy 0 (best): Use JS to search the live DOM and global data objects
+    # This works on CSR pages where price data is loaded via API and rendered by JS
     try:
-        content = await page.content()
-        content = content.replace("\uffe1", "£")
+        js_result = await page.evaluate("""() => {
+            const result = {price: '', shipping: '', method: ''};
 
-        # Strategy 1: Look for price in embedded __INIT_DATA__ or API response JSON
-        # AliExpress embeds price data in script tags even on CSR pages
-        for pattern in [
-            r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
-            r'"activityPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-            r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-            r'"salePrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-            r'"salePrice"[^}]*?"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
-            r'"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
-            r'"price"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-            r'"price"[^}]*?"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
-            r'"minPrice"\s*:\s*"(\d+\.?\d+)',
-            r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
-            r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d+)',
-            r'"tradePrice"\s*:\s*"?(\d+\.?\d+)',
-            r'"promotionPrice"\s*:\s*"?(\d+\.?\d+)',
-            # Broad catch: any *Price field with a numeric value
-            r'"[a-zA-Z]*[Pp]rice"\s*:\s*"?(\d+\.\d{2})',
-        ]:
-            m = re.search(pattern, content)
-            if m and 0.50 < float(m.group(1)) < 500:
-                price = f"£{m.group(1)}"
-                break
-
-        # Strategy 2: DOM text — find the rendered price
-        if not price:
-            price_text = await page.evaluate("""() => {
-                const selectors = [
-                    '[class*="snow-price--mainPrice"]',
-                    '[class*="es--wrap--erdmPRe"]',
-                    '[class*="price--current--"]',
-                    '[class*="product-price-value"]',
-                ];
-                for (const sel of selectors) {
-                    const el = document.querySelector(sel);
-                    if (el) {
-                        const text = el.textContent.trim();
-                        if (!text.toLowerCase().includes('off') && !text.toLowerCase().includes('coupon'))
-                            return text;
+            // --- Method A: Search global data objects for price ---
+            const globals = [
+                window.runParams,
+                window.__INIT_DATA__,
+                window.__NEXT_DATA__,
+                window.PAGE_DATA,
+                window._dida_config_,
+            ];
+            function deepFindPrice(obj, depth) {
+                if (depth > 10 || !obj) return null;
+                if (typeof obj !== 'object') return null;
+                if (Array.isArray(obj)) {
+                    for (let i = 0; i < Math.min(obj.length, 20); i++) {
+                        const r = deepFindPrice(obj[i], depth + 1);
+                        if (r) return r;
+                    }
+                    return null;
+                }
+                for (const [k, v] of Object.entries(obj)) {
+                    const kl = k.toLowerCase();
+                    // Direct numeric price value
+                    if (kl.includes('price') && !kl.includes('compare') && !kl.includes('original')) {
+                        if (typeof v === 'number' && v > 0.01 && v < 9999) return v;
+                        if (typeof v === 'string') {
+                            const m = v.match(/(\d+\.?\d*)/);
+                            if (m && parseFloat(m[1]) > 0.01 && parseFloat(m[1]) < 9999) return parseFloat(m[1]);
+                        }
+                    }
+                    // Nested price object like {minPrice: "5.36"} or {value: 5.36}
+                    if (kl.includes('price') && typeof v === 'object' && v !== null && !Array.isArray(v)) {
+                        for (const [k2, v2] of Object.entries(v)) {
+                            const k2l = k2.toLowerCase();
+                            if (k2l === 'minprice' || k2l === 'value' || k2l === 'formattedprice'
+                                || k2l === 'amount' || k2l === 'min') {
+                                if (typeof v2 === 'number' && v2 > 0.01 && v2 < 9999) return v2;
+                                if (typeof v2 === 'string') {
+                                    const m = v2.match(/(\d+\.?\d*)/);
+                                    if (m && parseFloat(m[1]) > 0.01) return parseFloat(m[1]);
+                                }
+                            }
+                        }
+                    }
+                    // Recurse into nested objects
+                    if (typeof v === 'object' && v !== null) {
+                        const r = deepFindPrice(v, depth + 1);
+                        if (r) return r;
                     }
                 }
-                return '';
-            }""")
-            price_text = price_text.replace("\uffe1", "£")
-            # Match any currency: £, $, US $, or plain number
-            m = re.search(r"[£$]\s*(\d+\.?\d*)", price_text)
-            if not m:
-                m = re.search(r"US\s*\$\s*(\d+\.?\d*)", price_text)
-            if not m:
-                m = re.search(r"(\d+\.\d{2})", price_text)
-            if m and 0.50 < float(m.group(1)) < 500:
-                price = f"£{m.group(1)}"
+                return null;
+            }
+            for (const g of globals) {
+                if (g) {
+                    const p = deepFindPrice(g, 0);
+                    if (p && p > 0.30) {
+                        result.price = p.toString();
+                        result.method = 'global_data';
+                        break;
+                    }
+                }
+            }
 
-        # Strategy 3: Any currency amount in the page
-        if not price:
-            # Find all price amounts (£, $, US$, or in JSON values)
-            all_prices = re.findall(r"[£$]\s*(\d+\.\d{2})", content)
-            all_prices += re.findall(r"US\s*\$\s*(\d+\.\d{2})", content)
-            valid = sorted(set(float(p) for p in all_prices if 0.50 < float(p) < 500))
-            if valid:
-                price = f"£{valid[0]:.2f}"
+            // --- Method B: Search rendered DOM for price elements ---
+            if (!result.price) {
+                // Try specific selectors first
+                const selectors = [
+                    '[class*="snow-price--mainPrice"]',
+                    '[class*="price--currentPriceText"]',
+                    '[class*="price--current--"]',
+                    '[class*="product-price-value"]',
+                    '[class*="es--wrap--"]',
+                    '[class*="uniform-banner-box-price"]',
+                    '[data-pl="product-price"]',
+                ];
+                for (const sel of selectors) {
+                    try {
+                        const el = document.querySelector(sel);
+                        if (el) {
+                            const text = el.textContent.trim();
+                            const m = text.match(/(\d+[.,]\d{2})/);
+                            if (m && parseFloat(m[1]) > 0.30 && parseFloat(m[1]) < 9999) {
+                                result.price = m[1];
+                                result.method = 'dom_selector:' + sel.substring(0, 30);
+                                break;
+                            }
+                        }
+                    } catch(e) {}
+                }
+            }
+
+            // --- Method C: Broad DOM search - find ANY element with price class ---
+            if (!result.price) {
+                const allEls = document.querySelectorAll('[class*="price" i]');
+                for (const el of allEls) {
+                    const text = el.textContent.trim();
+                    if (text.length > 50) continue; // skip containers
+                    const lower = text.toLowerCase();
+                    if (lower.includes('off') || lower.includes('coupon') || lower.includes('save')
+                        || lower.includes('ship') || lower.includes('low price')) continue;
+                    const m = text.match(/(\d+[.,]\d{2})/);
+                    if (m && parseFloat(m[1]) > 0.30 && parseFloat(m[1]) < 9999) {
+                        result.price = m[1];
+                        result.method = 'dom_broad';
+                        break;
+                    }
+                }
+            }
+
+            // --- Shipping ---
+            try {
+                const shipEls = document.querySelectorAll('[class*="shipping" i], [class*="delivery" i], [class*="freight" i]');
+                for (const el of shipEls) {
+                    const text = el.textContent.toLowerCase();
+                    if (text.includes('free')) { result.shipping = '0'; break; }
+                    const m = text.match(/(\d+[.,]\d{2})/);
+                    if (m) { result.shipping = m[1]; break; }
+                }
+            } catch(e) {}
+
+            return result;
+        }""")
+
+        if js_result and js_result.get("price"):
+            val = js_result["price"].replace(",", ".")
+            try:
+                p = float(val)
+                if 0.30 < p < 9999:
+                    price = f"£{p:.2f}"
+                    shipping = js_result.get("shipping", "")
+            except (ValueError, TypeError):
+                pass
+    except Exception:
+        pass
+
+    # Strategy 1 (fallback): Regex search on rendered page HTML
+    if not price:
+        try:
+            content = await page.content()
+            content = content.replace("\uffe1", "£")
+
+            for pattern in [
+                r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                r'"activityPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                r'"salePrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                r'"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                r'"minPrice"\s*:\s*"(\d+\.?\d+)',
+                r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
+                r'"tradePrice"\s*:\s*"?(\d+\.?\d+)',
+                r'"[a-zA-Z]*[Pp]rice"\s*:\s*"?(\d+\.\d{2})',
+            ]:
+                m = re.search(pattern, content)
+                if m and 0.50 < float(m.group(1)) < 500:
+                    price = f"£{m.group(1)}"
+                    break
+
+            # Last resort: any $X.XX or £X.XX in the rendered page
+            if not price:
+                all_prices = re.findall(r"[£$]\s*(\d+\.\d{2})", content)
+                all_prices += re.findall(r"US\s*\$\s*(\d+\.\d{2})", content)
+                valid = sorted(set(float(p) for p in all_prices if 0.50 < float(p) < 500))
+                if valid:
+                    price = f"£{valid[0]:.2f}"
+        except Exception:
+            pass
     except Exception:
         pass
 
