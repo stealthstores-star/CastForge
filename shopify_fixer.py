@@ -34,15 +34,24 @@ def shopify_headers(token):
 def shopify_base():
     return f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
 
-# ── Normalisation for fuzzy matching ──
+# ── Normalisation ──
+def _strip_ali_suffix(text):
+    """Remove ' - AliExpress' and ' - AliExpress NN' suffixes."""
+    return re.sub(r"\s*-\s*AliExpress\s*\d*\s*$", "", text, flags=re.IGNORECASE)
+
 def normalise(text):
-    """Lowercase, strip emojis/punctuation/extra whitespace."""
+    """Lowercase, strip emojis/punctuation/quotes/empty parens/extra whitespace."""
     if not text:
         return ""
+    text = _strip_ali_suffix(text)
     # Remove emojis and special unicode
     text = "".join(c for c in text if unicodedata.category(c)[0] not in ("So", "Sk", "Sm"))
+    # Remove all quote characters: " ' " " ' ' « » etc
+    text = re.sub(r'["\'\u201c\u201d\u2018\u2019\u00ab\u00bb\u300c\u300d`]', ' ', text)
     # Remove punctuation except hyphens and slashes (preserve scales like 1/35)
     text = re.sub(r"[^\w\s/\-]", " ", text)
+    # Remove empty parentheses: () or ( )
+    text = re.sub(r"\(\s*\)", "", text)
     # Collapse whitespace
     text = re.sub(r"\s+", " ", text).strip().lower()
     return text
@@ -111,7 +120,8 @@ def fetch_all_products(token, fields="id,title,status,tags,images,variants"):
 STOPWORDS = {"resin", "scale", "model", "kit", "gk", "cast", "figure", "figures",
              "miniature", "statue", "bust", "diorama", "unpainted", "unassembled",
              "new", "hot", "sale", "free", "shipping", "quality", "high", "the",
-             "and", "for", "with", "from", "set", "pcs", "piece", "pieces"}
+             "and", "for", "with", "from", "set", "pcs", "piece", "pieces",
+             "aliexpress"}
 
 def _tokenise(text):
     """Split into lowercase content tokens, exclude stopwords and scale notations."""
@@ -542,7 +552,7 @@ def run(test_mode=False, poll=False):
         print(f"\n  Summary: matched={progress['matched']} unmatched={progress['unmatched']} errors={progress['errors']}")
 
         if test_mode:
-            matched_total = test_stats["exact"] + test_stats["normalised"] + test_stats["fuzzy"]
+            matched_total = test_stats["exact"] + test_stats["normalised"] + test_stats.get("token", 0) + test_stats.get("image_id", 0)
             total_imgs = test_stats["images_kept"] + test_stats["images_deleted"]
             avg_kept = test_stats["images_kept"] / max(matched_total, 1)
             avg_deleted = test_stats["images_deleted"] / max(matched_total, 1)
