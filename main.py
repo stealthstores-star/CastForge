@@ -1262,6 +1262,7 @@ def cmd_fix_scrape_prices(relogin=False):
 
 
 async def _run_price_scraper():
+    import asyncio
     from playwright.async_api import async_playwright
 
     print("\n══════════════════════════════════════")
