@@ -1411,8 +1411,25 @@ async def _price_tab_worker(context, items, products, progress, data, cp_path, t
             if shipping:
                 products[idx]["shipping"] = shipping
             progress["found"] += 1
+
+            # Print first success
+            if progress["found"] <= 2:
+                print(f"  FOUND: £{price} ship={shipping} — {url[-40:]}")
         else:
             progress["failed"] += 1
+
+            # Debug first 3 failures — dump page info
+            if progress["failed"] <= 3:
+                try:
+                    pg_title = await page.title()
+                    pg_url = page.url
+                    snippet = await page.evaluate("document.body?.innerText?.substring(0, 300) || 'empty'")
+                    print(f"  DEBUG FAIL #{progress['failed']}:")
+                    print(f"    URL: {pg_url[:80]}")
+                    print(f"    Title: {pg_title[:60]}")
+                    print(f"    Body: {snippet[:200]}")
+                except Exception:
+                    print(f"  DEBUG FAIL: couldn't read page")
 
         progress["done"] += 1
         done = progress["done"]
