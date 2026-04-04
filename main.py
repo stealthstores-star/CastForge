@@ -1586,7 +1586,7 @@ async def _run_price_scraper():
     # proxy causes session mismatch and AliExpress blocks the page from rendering
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            channel="msedge", headless=True,
+            channel="msedge", headless=False,
             args=["--disable-blink-features=AutomationControlled",
                   "--no-sandbox", "--disable-dev-shm-usage"],
         )
@@ -1627,7 +1627,7 @@ async def _run_price_scraper():
                 await browser.close()
                 await asyncio.sleep(2)
                 browser = await pw.chromium.launch(
-                    channel="msedge", headless=True,
+                    channel="msedge", headless=False,
                     args=["--disable-blink-features=AutomationControlled",
                           "--no-sandbox", "--disable-dev-shm-usage"],
                 )
@@ -2395,7 +2395,7 @@ async def _run_price_scraper_direct():
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            channel="msedge", headless=True,
+            channel="msedge", headless=False,
             args=["--disable-blink-features=AutomationControlled",
                   "--no-sandbox", "--disable-dev-shm-usage"],
         )
@@ -2583,7 +2583,7 @@ async def _run_price_scraper_direct():
                     await browser.close()
                     await asyncio.sleep(3)
                     browser = await pw.chromium.launch(
-                        channel="msedge", headless=True,
+                        channel="msedge", headless=False,
                         args=["--disable-blink-features=AutomationControlled",
                               "--no-sandbox", "--disable-dev-shm-usage"],
                     )
