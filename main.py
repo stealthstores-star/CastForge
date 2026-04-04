@@ -1429,10 +1429,11 @@ def cmd_fix_scrape_prices(relogin=False):
                 pg[0] = cxt[0].new_page()
 
             def is_capt():
+                # URL check FIRST — this is the #1 signal
+                u = pg[0].url
+                if "punish" in u or "x5sec" in u or "captcha" in u.lower():
+                    return True
                 try:
-                    u = pg[0].url.lower()
-                    if any(w in u for w in ["punish","x5sec","captcha"]):
-                        return True
                     body = (pg[0].query_selector("body").inner_text() or "").strip()
                     if len(body) < 500:
                         bl = body.lower()
@@ -1441,15 +1442,23 @@ def cmd_fix_scrape_prices(relogin=False):
                     for frame in pg[0].frames:
                         if "recaptcha" in (frame.url or "").lower():
                             return True
-                    return False
+                except: pass
+                return False
+
+            def handle_captcha(url):
+                """Rotate VPN, restart browser, retry the URL. Returns True if cleared."""
+                with lock:
+                    rotate_vpn_and_signal()
+                fresh_browser()
+                try: pg[0].goto(url, wait_until="commit", timeout=8000)
                 except: return False
+                return not is_capt()
 
             fresh_browser()
 
             for ci, (idx, url) in enumerate(work_items):
-                # If another worker triggered captcha, restart our browser too
                 if captcha_event.is_set():
-                    time.sleep(1 + worker_id)  # stagger restarts
+                    time.sleep(1 + worker_id)
                     fresh_browser()
                     captcha_event.clear()
 
@@ -1463,19 +1472,23 @@ def cmd_fix_scrape_prices(relogin=False):
                         try: pg[0].goto(url, wait_until="commit", timeout=8000)
                         except: continue
 
+                    # Check captcha after goto
                     if is_capt():
-                        with lock:
-                            rotate_vpn_and_signal()  # rotates VPN + signals ALL workers
-                        fresh_browser()  # restart this worker's browser
-                        try: pg[0].goto(url, wait_until="commit", timeout=8000)
-                        except: continue
-                        if is_capt(): continue
+                        if not handle_captcha(url): continue
 
                     try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=2000)
                     except: pass
 
                     price = pg[0].evaluate(PRICE_JS) or ""
                     ship = pg[0].evaluate(SHIP_JS) or ""
+
+                    # If price empty, check if we landed on captcha
+                    if not price and is_capt():
+                        if not handle_captcha(url): continue
+                        try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=2000)
+                        except: pass
+                        price = pg[0].evaluate(PRICE_JS) or ""
+                        ship = pg[0].evaluate(SHIP_JS) or ""
 
                     if price:
                         with lock:
