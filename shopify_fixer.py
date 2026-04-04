@@ -493,7 +493,10 @@ def run(test_mode=False, poll=False):
                     shop_tokens = _tokenise(shopify_title)
                     best_score, best_shared, best_raw = 0.0, 0, ""
                     for raw, toks in cache_tokens.items():
-                        score, shared = _jaccard(shop_tokens, toks)
+                        inter = shop_tokens & toks
+                        shared = len(inter)
+                        union = shop_tokens | toks
+                        score = shared / len(union) if union else 0.0
                         if score > best_score:
                             best_score, best_shared, best_raw = score, shared, raw
                     shop_only = sorted(shop_tokens - _tokenise(best_raw)) if best_raw else []
@@ -554,9 +557,10 @@ def run(test_mode=False, poll=False):
             else:
                 progress["matched"] += 1
                 if test_mode:
-                    print(f"  [{i+1}] ✓ match={match_type} | {ai_title[:45]} → {cat_handle}")
-                    print(f"       imgs: {len(all_images)} total, {len(good_images)} kept, {images_deleted} deleted")
-                    print(f"       variants: {len(product.get('variants', []))}")
+                    print(f"  [{i+1}] ✓ match={match_type} → {cat_handle}")
+                    print(f"       NEW TITLE: {ai_title}")
+                    print(f"       Admin: https://{config.SHOPIFY_STORE}/admin/products/{pid}")
+                    print(f"       imgs: {len(all_images)} total, {len(good_images)} kept, {images_deleted} deleted | variants: {len(product.get('variants', []))}")
                 elif (i + 1) % 10 == 0:
                     print(f"  [{i+1}/{len(todo)}] ✓ {ai_title[:50]} → {cat_handle}")
 
