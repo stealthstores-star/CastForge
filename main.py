@@ -1488,37 +1488,60 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
     for idx, url in items:
         try:
             # Intercept API responses that contain price data
-            price_data = {"price": "", "shipping": ""}
+            price_data = {"price": "", "shipping": "", "debug": ""}
+            _debug_printed = {"count": 0}
 
             async def _on_response(response):
                 try:
                     resp_url = response.url
-                    # Catch the detail API response that has price
-                    if ("api" in resp_url and "detail" in resp_url) or "pdp" in resp_url:
-                        if response.status == 200:
-                            try:
-                                body = await response.text()
-                                body = body.replace("\uffe1", "£")
-                                for pat in [
-                                    r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
-                                    r'"activityPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-                                    r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-                                    r'"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
-                                    r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
-                                ]:
-                                    m = re.search(pat, body)
-                                    if m and float(m.group(1)) > 0.1:
-                                        price_data["price"] = f"£{m.group(1)}"
-                                        break
+                    ct = response.headers.get("content-type", "")
+                    # Only look at JSON responses
+                    if "json" not in ct and "javascript" not in ct:
+                        return
+                    if response.status != 200:
+                        return
 
-                                # Shipping
-                                sm = re.search(r'"freightAmount"[^}]*?"value"\s*:\s*"?(\d+\.?\d*)', body)
-                                if sm:
-                                    price_data["shipping"] = sm.group(1)
-                                elif "freeShipping" in body or '"free"' in body.lower():
-                                    price_data["shipping"] = "0"
-                            except Exception:
-                                pass
+                    body = await response.text()
+                    if len(body) < 100:
+                        return
+
+                    body_lower = body.lower()
+
+                    # Debug: log first 3 API responses that contain "price"
+                    if "price" in body_lower and _debug_printed["count"] < 3:
+                        _debug_printed["count"] += 1
+                        # Find what price-like values exist
+                        prices_found = re.findall(r'"(?:min|max|sku|act|formatted|activity|discount)(?:Price|Amount|Cal)[^"]*"\s*:\s*"?([^",}{]{1,30})', body[:5000])
+                        print(f"\n  API DEBUG #{_debug_printed['count']}:")
+                        print(f"    URL: {resp_url[:80]}")
+                        print(f"    Body length: {len(body)}")
+                        print(f"    Price fields: {prices_found[:10]}")
+
+                    # Extract price
+                    if not price_data["price"]:
+                        for pat in [
+                            r'"formattedActivityPrice"\s*:\s*"([^"]+)"',
+                            r'"activityPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                            r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                            r'"formattedPrice"\s*:\s*"([^"]+)"',
+                            r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
+                        ]:
+                            m = re.search(pat, body)
+                            if m:
+                                val = m.group(1).replace("\uffe1", "£")
+                                num = re.search(r"(\d+\.?\d+)", val)
+                                if num and float(num.group(1)) > 1.50:
+                                    price_data["price"] = f"£{num.group(1)}"
+                                    price_data["debug"] = f"pattern={pat[:30]} url={resp_url[-40:]}"
+                                    break
+
+                        # Shipping
+                        if not price_data["shipping"]:
+                            sm = re.search(r'"freightAmount"[^}]*?"value"\s*:\s*"?(\d+\.?\d*)', body)
+                            if sm:
+                                price_data["shipping"] = sm.group(1)
+                            elif "freeShipping" in body:
+                                price_data["shipping"] = "0"
                 except Exception:
                     pass
 
@@ -1539,20 +1562,8 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                 found += 1
 
                 if progress["found"] <= 5:
-                    print(f"  FOUND: {price_data['price']} ship={price_data['shipping']} — {url[-40:]}")
-                # Debug: dump page when £1.00 found (wrong price)
-                if progress["found"] <= 2:
-                    content = await page.content()
-                    # Show what matched
-                    for pat in [r'"formattedActivityPrice"\s*:\s*"[^"]{0,20}"',
-                                 r'"minPrice"\s*:\s*"[^"]{0,20}"',
-                                 r'"skuCalPrice"\s*:\s*"[^"]{0,20}"']:
-                        ms = re.findall(pat, content[:50000])
-                        if ms:
-                            print(f"    MATCH: {ms[:3]}")
-                    # Show all £ context
-                    for m in re.finditer(r".{0,30}£.{0,20}", content[:30000]):
-                        print(f"    £ CONTEXT: {m.group()[:60]}")
+                    src = price_data.get("debug", "page_content")
+                    print(f"  FOUND: {price_data['price']} ship={price_data['shipping']} via={src}")
             else:
                 progress["failed"] += 1
 
@@ -1619,7 +1630,7 @@ async def _extract_price_from_page(page):
             r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
         ]:
             m = re.search(pattern, content)
-            if m and float(m.group(1)) > 0.01:
+            if m and float(m.group(1)) > 1.50:
                 price = f"£{m.group(1)}"
                 break
 
@@ -1644,7 +1655,7 @@ async def _extract_price_from_page(page):
             }""")
             price_text = price_text.replace("\uffe1", "£")
             m = re.search(r"£\s*(\d+\.?\d*)", price_text)
-            if m and float(m.group(1)) > 0.01:
+            if m and float(m.group(1)) > 1.50:
                 price = f"£{m.group(1)}"
 
         # Strategy 3: Any £X.XX in the page that's NOT in a coupon/promo context
