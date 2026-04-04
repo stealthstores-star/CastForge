@@ -1485,6 +1485,7 @@ def cmd_fix_scrape_prices(relogin=False):
                 cp_path.write_text(json.dumps(data, ensure_ascii=False))
 
     # Run with thread pool
+    from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=WORKERS) as executor:
         list(executor.map(_fetch_price, needs_price))
 
