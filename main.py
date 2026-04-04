@@ -1753,31 +1753,47 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
                     # Extract price
                     if not price_data["price"]:
-                        for pat in [
-                            r'"formattedActivityPrice"\s*:\s*"([^"]+)"',
-                            r'"activityPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-                            r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-                            r'"formattedPrice"\s*:\s*"([^"]+)"',
-                            r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
-                            # Current AliExpress field names (2025+)
-                            r'"salePrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-                            r'"salePrice"[^}]*?"formattedPrice"\s*:\s*"([^"]+)"',
-                            r'"price"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
-                            r'"price"[^}]*?"formattedPrice"\s*:\s*"([^"]+)"',
-                            r'"tradePrice"\s*:\s*"?(\d+\.?\d+)',
-                            r'"promotionPrice"\s*:\s*"?(\d+\.?\d+)',
-                            # Broader: any key ending in Price with a numeric value
-                            r'"[a-zA-Z]*[Pp]rice"\s*:\s*"(\d+\.?\d+)"',
-                            r'"[a-zA-Z]*[Pp]rice"\s*:\s*(\d+\.?\d+)[,}]',
+                        # First: try cent-based fields (AliExpress 2025+ mtop API)
+                        for cent_pat in [
+                            r'"priceCent"\s*:\s*"?(\d+)',
+                            r'"actPriceCent"\s*:\s*"?(\d+)',
+                            r'"activityPriceCent"\s*:\s*"?(\d+)',
+                            r'"discountPriceCent"\s*:\s*"?(\d+)',
+                            r'"salePriceCent"\s*:\s*"?(\d+)',
+                            r'"originalPriceCent"\s*:\s*"?(\d+)',
                         ]:
-                            m = re.search(pat, body)
+                            m = re.search(cent_pat, body)
                             if m:
-                                val = m.group(1).replace("\uffe1", "£").replace("US $", "").replace("US$", "").replace("$", "")
-                                num = re.search(r"(\d+\.?\d+)", val)
-                                if num and float(num.group(1)) > 0.50:
-                                    price_data["price"] = f"£{num.group(1)}"
-                                    price_data["debug"] = f"pattern={pat[:30]} url={resp_url[-40:]}"
+                                cents = int(m.group(1))
+                                if 50 <= cents < 50000:
+                                    price_data["price"] = f"£{cents / 100:.2f}"
+                                    price_data["debug"] = f"cents={cents} url={resp_url[-40:]}"
                                     break
+
+                        # Second: try dollar/formatted fields
+                        if not price_data["price"]:
+                            for pat in [
+                                r'"formattedActivityPrice"\s*:\s*"([^"]+)"',
+                                r'"activityPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                                r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                                r'"formattedPrice"\s*:\s*"([^"]+)"',
+                                r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
+                                r'"salePrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                                r'"salePrice"[^}]*?"formattedPrice"\s*:\s*"([^"]+)"',
+                                r'"price"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                                r'"tradePrice"\s*:\s*"?(\d+\.?\d+)',
+                                r'"promotionPrice"\s*:\s*"?(\d+\.?\d+)',
+                                r'"[a-zA-Z]*[Pp]rice"\s*:\s*"(\d+\.?\d+)"',
+                                r'"[a-zA-Z]*[Pp]rice"\s*:\s*(\d+\.?\d+)[,}]',
+                            ]:
+                                m = re.search(pat, body)
+                                if m:
+                                    val = m.group(1).replace("\uffe1", "£").replace("US $", "").replace("US$", "").replace("$", "")
+                                    num = re.search(r"(\d+\.?\d+)", val)
+                                    if num and float(num.group(1)) > 0.50:
+                                        price_data["price"] = f"£{num.group(1)}"
+                                        price_data["debug"] = f"pat url={resp_url[-40:]}"
+                                        break
 
                         # Shipping
                         if not price_data["shipping"]:
@@ -1791,7 +1807,7 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
             page.on("response", _on_response)
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(4000)  # wait for API calls to complete
+            await page.wait_for_timeout(6000)  # wait for mtop API to return price data
             page.remove_listener("response", _on_response)
 
             # Also try page content as fallback
@@ -1883,41 +1899,55 @@ async def _extract_price_from_page(page):
         result = await page.evaluate("""() => {
             const out = {price: '', shipping: ''};
 
-            // Get ALL visible text from the page body
-            const text = document.body ? document.body.innerText : '';
+            // Search page HTML for cent-based price fields (mtop API stores in page)
+            const html = document.documentElement.innerHTML;
 
-            // Find US $X.XX or $X.XX patterns in visible text
-            const patterns = [
-                /US\s*\$\s*(\d+\.\d{2})/g,
-                /USD\s*(\d+\.\d{2})/g,
-                /\$\s*(\d+\.\d{2})/g,
-                /£\s*(\d+\.\d{2})/g,
-                /€\s*(\d+\.\d{2})/g,
+            // Method 1: Cent fields (AliExpress 2025+ format)
+            const centPats = [
+                /"priceCent"\s*:\s*"?(\d+)/,
+                /"actPriceCent"\s*:\s*"?(\d+)/,
+                /"activityPriceCent"\s*:\s*"?(\d+)/,
+                /"discountPriceCent"\s*:\s*"?(\d+)/,
+                /"salePriceCent"\s*:\s*"?(\d+)/,
+                /"originalPriceCent"\s*:\s*"?(\d+)/,
             ];
-            const found = [];
-            for (const pat of patterns) {
-                let m;
-                while ((m = pat.exec(text)) !== null) {
-                    const v = parseFloat(m[1]);
-                    if (v >= 0.50 && v < 500) found.push(v);
+            for (const cp of centPats) {
+                const cm = html.match(cp);
+                if (cm) {
+                    const cents = parseInt(cm[1]);
+                    if (cents >= 50 && cents < 50000) {
+                        out.price = (cents / 100).toFixed(2);
+                        break;
+                    }
                 }
-                if (found.length > 0) break;
             }
 
-            if (found.length > 0) {
-                // Take the first valid price (usually the main product price)
-                out.price = found[0].toFixed(2);
-            } else {
-                // Fallback: search page HTML source for price values in JSON
-                const html = document.documentElement.innerHTML;
+            // Method 2: Visible text $X.XX
+            if (!out.price) {
+                const text = document.body ? document.body.innerText : '';
+                const patterns = [
+                    /US\s*\$\s*(\d+\.\d{2})/g,
+                    /USD\s*(\d+\.\d{2})/g,
+                    /\$\s*(\d+\.\d{2})/g,
+                    /£\s*(\d+\.\d{2})/g,
+                ];
+                for (const pat of patterns) {
+                    const m = pat.exec(text);
+                    if (m) {
+                        const v = parseFloat(m[1]);
+                        if (v >= 0.50 && v < 500) { out.price = v.toFixed(2); break; }
+                    }
+                }
+            }
+
+            // Method 3: JSON price fields in HTML
+            if (!out.price) {
                 const jsonPats = [
                     /"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.\d{2})/,
                     /"formattedPrice"\s*:\s*"[^"]*?(\d+\.\d{2})/,
-                    /"salePrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.\d{2})/,
                     /"minPrice"\s*:\s*"?(\d+\.\d{2})/,
                     /"skuCalPrice"\s*:\s*"?(\d+\.\d{2})/,
                     /"tradePrice"\s*:\s*"?(\d+\.\d{2})/,
-                    /"actSkuCalPrice"\s*:\s*"?(\d+\.\d{2})/,
                 ];
                 for (const jp of jsonPats) {
                     const jm = html.match(jp);
