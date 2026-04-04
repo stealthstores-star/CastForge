@@ -1752,19 +1752,10 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
     context = await browser.new_context(**ctx_kwargs)
 
-    # Block everything except essential JS for mtop API price calls
-    # This saves ~1.5MB per product vs loading full page
+    # Block images/CSS/fonts only — don't block any JS (mtop API needs it all)
     await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}",
                          lambda route: route.abort())
     await context.route("**/*.css", lambda route: route.abort())
-    # Block heavy non-essential JS (saves ~350KB per page load)
-    await context.route("**/page-header-ui/**", lambda route: route.abort())
-    # Block tracking/analytics JS
-    await context.route("**/*google*analytics*", lambda route: route.abort())
-    await context.route("**/*googletagmanager*", lambda route: route.abort())
-    await context.route("**/*facebook*", lambda route: route.abort())
-    await context.route("**/*hotjar*", lambda route: route.abort())
-    await context.route("**/*sentry*", lambda route: route.abort())
 
     page = await context.new_page()
     await page.add_init_script(stealth_js)
