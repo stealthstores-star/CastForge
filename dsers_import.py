@@ -5,8 +5,8 @@ DSers Bulk Importer — paste AliExpress URLs into DSers import list.
 Usage:
     python3 dsers_import.py
 
-Reads dsers_import_urls.txt, pastes each URL, clicks OK, waits 2s, next.
-Saves failed URLs to dsers_failed.txt and retries them at the end.
+Reads dsers_import_urls.txt. Watches the sidebar "Import list" badge count
+to verify each import. Failed URLs saved to dsers_failed.txt and retried.
 Resumes from dsers_progress.txt if interrupted.
 """
 import time
@@ -38,6 +38,37 @@ def save_progress(n):
     PROGRESS_FILE.write_text(str(n))
 
 
+def get_import_count(page):
+    """Read the number next to 'Import list' in the sidebar."""
+    try:
+        count = page.evaluate("""() => {
+            // Find the sidebar link that contains "Import list"
+            const links = document.querySelectorAll('a, li, div, span');
+            for (const el of links) {
+                const text = el.textContent || '';
+                if (text.includes('Import list')) {
+                    // Find the badge/number element inside or next to it
+                    const badges = el.querySelectorAll('span, em, b, strong, [class*="badge"], [class*="count"], [class*="num"]');
+                    for (const b of badges) {
+                        const t = b.textContent.trim();
+                        if (/^\d+$/.test(t)) return parseInt(t);
+                    }
+                    // Try: the number might be directly in the text
+                    const m = text.match(/Import list\\s*(\\d+)/);
+                    if (m) return parseInt(m[1]);
+                }
+            }
+            // Broader: any element right after "Import list" text
+            const all = document.body.innerText;
+            const m = all.match(/Import list\\s*(\\d+)/);
+            if (m) return parseInt(m[1]);
+            return -1;
+        }""")
+        return count
+    except Exception:
+        return -1
+
+
 def main():
     if not URLS_FILE.exists():
         print(f"  {URLS_FILE} not found.")
@@ -67,60 +98,72 @@ def main():
         page.goto(DSERS_IMPORT_PAGE, wait_until="domcontentloaded", timeout=30000)
         input("  >>> Press ENTER when DSers import list page is loaded... ")
 
+        # Read initial count to verify selector works
+        initial = get_import_count(page)
+        print(f"  Current import list count: {initial}")
+        if initial == -1:
+            print("  WARNING: Can't read badge count. Will try anyway.\n")
+        else:
+            print()
+
         input_sel = 'input[placeholder*="product link"]'
         failed = []
         done = start_from
+        imported = 0
         t0 = time.time()
 
-        def process_url(url):
-            """Paste URL, click OK, wait 2s. Returns True unless actual error."""
-            inp = page.query_selector(input_sel) or \
-                  page.query_selector('input[placeholder*="link"]') or \
-                  page.query_selector('input[type="text"]')
-            if not inp:
-                return False
-
-            inp.click()
-            inp.fill("")
-            inp.fill(url)
-            time.sleep(0.3)
-
-            ok_btn = page.query_selector('button:has-text("OK")') or \
-                     page.query_selector('button:has-text("Ok")')
-            if ok_btn:
-                ok_btn.click()
-            else:
-                inp.press("Enter")
-
-            time.sleep(2)
-
-            # Only count as failed if there's a visible error toast
-            try:
-                toast = page.query_selector('.ant-message-error, .ant-notification-notice-error, [class*="error-toast"]')
-                if toast and toast.is_visible():
-                    msg = (toast.inner_text() or "").strip()[:80]
-                    # "already exists" = duplicate, not a real error
-                    if "exist" in msg.lower() or "already" in msg.lower():
-                        return True
-                    return False
-            except Exception:
-                pass
-
-            return True
-
-        # Main pass
         for i in range(start_from, len(urls)):
             url = urls[i]
+
             try:
-                ok = process_url(url)
-                if not ok:
+                count_before = get_import_count(page)
+
+                # Find input, paste URL, click OK
+                inp = page.query_selector(input_sel) or \
+                      page.query_selector('input[placeholder*="link"]') or \
+                      page.query_selector('input[type="text"]')
+                if not inp:
                     failed.append(url)
+                    continue
+
+                inp.click()
+                inp.fill("")
+                inp.fill(url)
+                time.sleep(0.3)
+
+                ok_btn = page.query_selector('button:has-text("OK")') or \
+                         page.query_selector('button:has-text("Ok")')
+                if ok_btn:
+                    ok_btn.click()
+                else:
+                    inp.press("Enter")
+
+                # Wait up to 5s for count to go up by 1
+                success = False
+                if count_before >= 0:
+                    for _ in range(10):
+                        time.sleep(0.5)
+                        count_after = get_import_count(page)
+                        if count_after > count_before:
+                            success = True
+                            imported += 1
+                            break
+                else:
+                    # Can't read count, just wait 2s and assume ok
+                    time.sleep(2)
+                    success = True
+                    imported += 1
+
+                if not success:
+                    failed.append(url)
+
             except Exception as e:
                 failed.append(url)
                 if "closed" in str(e).lower() or "crashed" in str(e).lower():
                     print(f"\n  Browser closed at [{i+1}]. Run again to resume.")
                     save_progress(i)
-                    FAILED_FILE.write_text("\n".join(failed) + "\n")
+                    if failed:
+                        FAILED_FILE.write_text("\n".join(failed) + "\n")
                     sys.exit(1)
 
             done = i + 1
@@ -131,14 +174,15 @@ def main():
                 rate = (done - start_from) / max(elapsed, 1) * 60
                 remaining = len(urls) - done
                 eta = remaining / max(rate, 0.1)
-                print(f"  [{done}/{len(urls)}] {rate:.0f}/min | ETA {eta:.0f}m | failed={len(failed)}")
+                cur = get_import_count(page)
+                print(f"  [{done}/{len(urls)}] imported={imported} failed={len(failed)} badge={cur} | {rate:.0f}/min ETA {eta:.0f}m")
             elif done % 25 == 0:
-                print(f"  [{done}/{len(urls)}]")
+                print(f"  [{done}/{len(urls)}] imported={imported} failed={len(failed)}")
 
         # Save failed
         if failed:
             FAILED_FILE.write_text("\n".join(failed) + "\n")
-            print(f"\n  {len(failed)} failed URLs saved to {FAILED_FILE}")
+            print(f"\n  {len(failed)} failed URLs → {FAILED_FILE}")
 
         # Retry pass
         if failed:
@@ -146,8 +190,39 @@ def main():
             retry_failed = []
             for j, url in enumerate(failed):
                 try:
-                    ok = process_url(url)
-                    if not ok:
+                    count_before = get_import_count(page)
+
+                    inp = page.query_selector(input_sel) or \
+                          page.query_selector('input[placeholder*="link"]')
+                    if not inp:
+                        retry_failed.append(url)
+                        continue
+
+                    inp.click()
+                    inp.fill("")
+                    inp.fill(url)
+                    time.sleep(0.3)
+
+                    ok_btn = page.query_selector('button:has-text("OK")')
+                    if ok_btn:
+                        ok_btn.click()
+                    else:
+                        inp.press("Enter")
+
+                    # Longer wait on retry — 8 seconds
+                    success = False
+                    if count_before >= 0:
+                        for _ in range(16):
+                            time.sleep(0.5)
+                            if get_import_count(page) > count_before:
+                                success = True
+                                imported += 1
+                                break
+                    else:
+                        time.sleep(3)
+                        success = True
+
+                    if not success:
                         retry_failed.append(url)
                 except Exception:
                     retry_failed.append(url)
@@ -157,13 +232,15 @@ def main():
 
             if retry_failed:
                 FAILED_FILE.write_text("\n".join(retry_failed) + "\n")
-                print(f"  {len(retry_failed)} still failed after retry → {FAILED_FILE}")
+                print(f"  {len(retry_failed)} still failed → {FAILED_FILE}")
             else:
                 FAILED_FILE.unlink(missing_ok=True)
                 print(f"  All retries succeeded!")
 
         elapsed = time.time() - t0
-        print(f"\n  Done! {done}/{len(urls)} processed in {elapsed/60:.0f} min\n")
+        final = get_import_count(page)
+        print(f"\n  Done! {done}/{len(urls)} processed in {elapsed/60:.0f} min")
+        print(f"  Imported: {imported}, Failed: {len(failed)}, Badge: {final}\n")
         input("  Press ENTER to close browser... ")
         browser.close()
 
