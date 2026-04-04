@@ -1293,32 +1293,77 @@ def cmd_fix_scrape_prices(relogin=False):
         "Referer": "https://www.aliexpress.com/",
     }
 
+    import hashlib
+
     print(f"\n══════════════════════════════════════")
-    print(f"  CastForge Price Re-Scraper (SEO API)")
+    print(f"  CastForge Price Re-Scraper (mtop API)")
     print(f"══════════════════════════════════════\n")
     print(f"  Total products: {len(products)}")
     print(f"  Missing prices: {len(needs_price)}")
     print(f"  Workers: {WORKERS}")
-    est = len(needs_price) / (WORKERS * 10)
-    print(f"  Estimated: {est:.0f} minutes\n")
+    est = len(needs_price) / (WORKERS * 60)
+    print(f"  Estimated: {est:.0f} minutes (~55KB per product)\n")
 
-    # Quick test: try one product to check seodata works
-    print("  Testing direct connection + seodata API on first product...")
+    # Get mtop token from cookies
+    h5_tk = cookies.get("_m_h5_tk", "")
+    mtop_token = h5_tk.split("_")[0] if h5_tk else ""
+    if not mtop_token:
+        print("  ERROR: No _m_h5_tk cookie found. Run with --relogin to get fresh cookies.")
+        return
+    print(f"  mtop token: {mtop_token[:8]}...")
+
+    def _call_mtop(product_id):
+        """Call mtop API directly — no browser needed."""
+        timestamp = str(int(time.time() * 1000))
+        app_key = "12574478"
+        data = json.dumps({"productId": str(product_id), "pdpContext": "main"})
+        sign_str = f"{mtop_token}&{timestamp}&{app_key}&{data}"
+        sign = hashlib.md5(sign_str.encode()).hexdigest()
+
+        url = "https://acs.aliexpress.com/h5/mtop.aliexpress.pdp.pc.query/1.0/"
+        params = {
+            "jsv": "2.5.1",
+            "appKey": app_key,
+            "t": timestamp,
+            "sign": sign,
+            "api": "mtop.aliexpress.pdp.pc.query",
+            "v": "1.0",
+            "type": "jsonp",
+            "dataType": "jsonp",
+            "callback": "mtopjsonp1",
+            "data": data,
+        }
+        headers_mtop = {
+            "User-Agent": HEADERS["User-Agent"],
+            "Referer": f"https://www.aliexpress.com/item/{product_id}.html",
+            "Accept": "*/*",
+        }
+        r = requests.get(url, params=params, cookies=cookies, headers=headers_mtop,
+                        proxies=PROXY, timeout=15)
+        return r.text
+
+    # Quick test on first product
     test_idx, test_url = needs_price[0]
-    try:
-        test_r = requests.get(test_url, proxies=PROXY, headers=HEADERS, cookies=cookies,
-                              timeout=10, allow_redirects=True)
-        print(f"    Product page: {test_r.status_code}, {len(test_r.text)} bytes, final={test_r.url[:80]}")
-        test_m = re.search(r"/item/(\d+)\.html", test_r.url)
-        if test_m:
-            test_pid = test_m.group(1)
-            seo_r = requests.get(
-                f"https://www.aliexpress.com/aeglodetailweb/api/seo/seodata?productId={test_pid}",
-                proxies=PROXY, headers=HEADERS, cookies=cookies, timeout=10)
-            print(f"    SEO API: {seo_r.status_code}, {len(seo_r.text)} bytes")
-            print(f"    SEO body (first 500): {seo_r.text[:500]}")
-    except Exception as e:
-        print(f"    Test failed: {e}")
+    test_pid = re.search(r"/item/(\d+)\.html", test_url)
+    if test_pid:
+        test_pid = test_pid.group(1)
+        print(f"  Testing mtop API for product {test_pid}...")
+        try:
+            test_body = _call_mtop(test_pid)
+            print(f"    Response: {len(test_body)} bytes")
+            # Show price-related fields
+            price_fields = re.findall(r'"([^"]*[Pp]rice[^"]*)":\s*"?([^",}{]{1,30})', test_body[:10000])
+            print(f"    Price fields: {price_fields[:10]}")
+            cent_fields = re.findall(r'"(\w*[Cc]ent\w*)":\s*"?([^",}{]{1,20})', test_body[:10000])
+            print(f"    Cent fields: {cent_fields[:10]}")
+            # Check if session is valid
+            if "FAIL_SYS_TOKEN_EXOIRED" in test_body or "TOKEN_EXPIRED" in test_body.upper():
+                print("\n  ⚠ Session expired! Run: python3 main.py fix-scrape-prices --relogin\n")
+                return
+            if "FAIL_SYS" in test_body:
+                print(f"    API error: {test_body[:300]}")
+        except Exception as e:
+            print(f"    Test failed: {e}")
     print()
 
     import threading
@@ -1332,99 +1377,67 @@ def cmd_fix_scrape_prices(relogin=False):
         debug = progress["done"] < 5  # debug first 5
 
         try:
-            # Step 1: Follow redirect to get real product ID via GET (HEAD is unreliable with proxies)
-            try:
-                r = requests.get(url, proxies=PROXY, headers=HEADERS, cookies=cookies,
-                                 timeout=10, allow_redirects=True)
-                final_url = r.url
-                page_body = r.text
-                if debug:
-                    print(f"    DBG: {url[-40:]} → {r.status_code}, {len(r.text)}b, final={final_url[-50:]}")
-            except Exception as e:
-                with lock:
-                    progress["redirect_fail"] += 1
-                    progress["failed"] += 1
-                if debug:
-                    print(f"    DBG FAIL: {url[-40:]} → {type(e).__name__}: {str(e)[:60]}")
-                return
-
-            # Extract product ID from final URL
-            m = re.search(r"/item/(\d+)\.html", final_url)
-            if not m:
-                m = re.search(r"/item/(\d+)\.html", url)
+            # Extract product ID from URL (no HTTP request needed)
+            m = re.search(r"/item/(\d+)\.html", url)
             if not m:
                 with lock:
                     progress["failed"] += 1
                 return
-
             product_id = m.group(1)
 
-            # Step 2: Call seodata API
-            seo_url = f"https://www.aliexpress.com/aeglodetailweb/api/seo/seodata?productId={product_id}"
+            # Step 1: Call mtop API directly (~55KB, no browser)
             try:
-                r = requests.get(seo_url, proxies=PROXY, headers=HEADERS, cookies=cookies, timeout=10)
+                body = _call_mtop(product_id)
                 if debug:
-                    print(f"    DBG SEO: {r.status_code}, {len(r.text)}b, body[:200]={r.text[:200]}")
-                if r.status_code == 200 and len(r.text) > 100:
-                    body = r.text
-                    # Try cent-based fields first (AliExpress 2025+ format)
-                    for cent_pat in [
-                        r'"priceCent"\s*:\s*"?(\d+)',
-                        r'"actPriceCent"\s*:\s*"?(\d+)',
-                        r'"discountPriceCent"\s*:\s*"?(\d+)',
-                        r'"salePriceCent"\s*:\s*"?(\d+)',
-                        r'"originalPriceCent"\s*:\s*"?(\d+)',
-                    ]:
-                        pm = re.search(cent_pat, body)
-                        if pm:
-                            cents = int(pm.group(1))
-                            if 50 <= cents < 50000:
-                                price = f"£{cents / 100:.2f}"
-                                with lock:
-                                    progress["seo_ok"] += 1
-                                break
-                    # Then try dollar/formatted fields
-                    if not price:
-                        for pattern in [
-                            r'"lowPrice"\s*:\s*"?(\d+\.?\d*)',
-                            r'"highPrice"\s*:\s*"?(\d+\.?\d*)',
-                            r'"price"\s*:\s*"?(\d+\.?\d*)',
-                            r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
-                            r'"minPrice"\s*:\s*"?(\d+\.?\d*)',
-                            r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
-                        ]:
-                            pm = re.search(pattern, body)
-                            if pm:
-                                val = float(pm.group(1))
-                                if 0.01 < val < 500:
-                                    price = f"£{val:.2f}"
-                                    with lock:
-                                        progress["seo_ok"] += 1
-                                    break
+                    pf = re.findall(r'"(\w*[Pp]rice\w*)":\s*"?([^",}{]{1,20})', body[:10000])
+                    cf = re.findall(r'"(\w*[Cc]ent\w*)":\s*"?([^",}{]{1,20})', body[:10000])
+                    print(f"    DBG mtop {product_id}: {len(body)}b prices={pf[:5]} cents={cf[:5]}")
 
-                    ship_m = re.search(r'"freightAmount"\s*:\s*"?(\d+\.?\d*)', body)
-                    if ship_m:
-                        shipping = ship_m.group(1)
-                    elif "free" in body.lower()[:5000] and "shipping" in body.lower()[:5000]:
-                        shipping = "0"
-            except Exception:
-                pass
-
-            # Step 3: If seodata failed, try parsing the product page HTML we already have
-            if not price and page_body:
-                body = page_body.replace("\uffe1", "£")
-                # Try cent fields in page HTML
+                # Extract price from cent fields
                 for cent_pat in [
                     r'"priceCent"\s*:\s*"?(\d+)',
+                    r'"actPriceCent"\s*:\s*"?(\d+)',
                     r'"discountPriceCent"\s*:\s*"?(\d+)',
+                    r'"salePriceCent"\s*:\s*"?(\d+)',
                     r'"originalPriceCent"\s*:\s*"?(\d+)',
                 ]:
-                    pm = re.search(cent_pat, body[:80000])
+                    pm = re.search(cent_pat, body)
                     if pm:
                         cents = int(pm.group(1))
                         if 50 <= cents < 50000:
                             price = f"£{cents / 100:.2f}"
+                            with lock:
+                                progress["seo_ok"] += 1
                             break
+
+                # Try formatted price fields
+                if not price:
+                    for pattern in [
+                        r'"salePriceString"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                        r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                        r'"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                        r'"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                        r'"lowPrice"\s*:\s*"?(\d+\.?\d+)',
+                    ]:
+                        pm = re.search(pattern, body)
+                        if pm:
+                            val = float(pm.group(1))
+                            if 0.50 < val < 500:
+                                price = f"£{val:.2f}"
+                                with lock:
+                                    progress["seo_ok"] += 1
+                                break
+
+                # Shipping
+                if "freeShipping" in body or '"freightFree":true' in body:
+                    shipping = "0"
+                else:
+                    ship_m = re.search(r'"freightAmount"[^}]*?"value"\s*:\s*"?(\d+\.?\d*)', body)
+                    if ship_m:
+                        shipping = ship_m.group(1)
+            except Exception as e:
+                if debug:
+                    print(f"    DBG mtop FAIL {product_id}: {type(e).__name__}: {str(e)[:60]}")
                 # Then try formatted fields
                 if not price:
                     for pattern in [
