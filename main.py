@@ -1250,17 +1250,208 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices: Playwright + proxy (3 contexts, fresh session)."""
-    # Always re-login if session is older than 2 hours
-    state_age = (time.time() - ALI_STATE_FILE.stat().st_mtime) if ALI_STATE_FILE.exists() else 99999
-    if relogin or not ALI_STATE_FILE.exists() or state_age > 7200:
-        print("  Session expired or missing — launching browser to re-login...")
-        from playwright.sync_api import sync_playwright as sync_pw
-        with sync_pw() as p:
-            _ensure_ali_login(p)
+    """Re-scrape prices using the same approach as the working title scraper."""
+    from playwright.sync_api import sync_playwright
+    from scraper import is_captcha, handle_captcha
 
-    import asyncio
-    asyncio.run(_run_price_scraper())
+    cp_path = Path("scrape_checkpoint.json")
+    if not cp_path.exists():
+        print("  No scrape_checkpoint.json found.")
+        return
+
+    data = json.loads(cp_path.read_text())
+    products = data.get("products", [])
+
+    needs_price = []
+    for i, p in enumerate(products):
+        price = p.get("product_price", "")
+        if not price or _parse_price(price) <= 0:
+            url = p.get("product_url") or p.get("source_url", "")
+            if url:
+                needs_price.append((i, url))
+
+    print(f"\n══════════════════════════════════════")
+    print(f"  CastForge Price Re-Scraper")
+    print(f"══════════════════════════════════════\n")
+    print(f"  Total products: {len(products)}")
+    print(f"  Missing prices: {len(needs_price)}")
+
+    if not needs_price:
+        print("  All products have prices!")
+        return
+
+    PRICE_JS = """
+    () => {
+        let price = '';
+        // Strategy A: Price containers with ￡ or £
+        const priceSels = [
+            '[class*="price--current"]', '[class*="product-price-current"]',
+            '[class*="snow-price"]', '[class*="price-current"]',
+            '[class*="uniform-banner-box-price"]',
+            '[class*="sale-price"]', '[class*="salePrice"]',
+            '[class*="price"]',
+        ];
+        for (const sel of priceSels) {
+            const els = document.querySelectorAll(sel);
+            for (const el of els) {
+                if (!el.offsetParent) continue;
+                const t = el.innerText.replace(/\\s+/g, '').trim();
+                const m = t.match(/[£￡$€]\\d+[.,]\\d{2}/);
+                if (m) return m[0].replace('￡', '£');
+            }
+        }
+        // Strategy B: ALL visible elements
+        const allEls = document.querySelectorAll('span, div, strong, b');
+        for (const el of allEls) {
+            if (!el.offsetParent) continue;
+            const t = el.innerText.replace(/\\s+/g, '').trim();
+            if (t.length > 30) continue;
+            const m = t.match(/[£￡$€]\\d+[.,]\\d{2}/);
+            if (m) {
+                const rect = el.getBoundingClientRect();
+                if (rect.top > 0 && rect.top < 800) return m[0].replace('￡', '£');
+            }
+        }
+        // Strategy C: JSON data in scripts
+        const scripts = document.querySelectorAll('script');
+        for (const s of scripts) {
+            const t = s.textContent || '';
+            const patterns = [
+                /"formattedActivityPrice"\\s*:\\s*"([^"]+)"/,
+                /"formattedPrice"\\s*:\\s*"([^"]+)"/,
+            ];
+            for (const pat of patterns) {
+                const m = t.match(pat);
+                if (m) return m[1].replace('￡', '£');
+            }
+            const m2 = t.match(/"minAmount"\\s*:\\s*{\\s*"value"\\s*:\\s*([\\d.]+)/);
+            if (m2) return '£' + m2[1];
+        }
+        return '';
+    }
+    """
+
+    SHIP_JS = """
+    () => {
+        const shipSels = [
+            '[class*="shipping"]', '[class*="Shipping"]',
+            '[class*="delivery"]', '[class*="dynamic-shipping"]',
+        ];
+        for (const sel of shipSels) {
+            try {
+                const el = document.querySelector(sel);
+                if (!el) continue;
+                const t = el.innerText.toLowerCase();
+                if (t.includes('free')) return 'Free';
+                const m = t.match(/[£$€]\\s*([\\d.]+)/);
+                if (m) return m[1];
+            } catch(e) {}
+        }
+        const body = document.body.innerText || '';
+        if (/shipping[:\\s]*free/i.test(body)) return 'Free';
+        return '';
+    }
+    """
+
+    found = 0
+    failed = 0
+    start_time = time.time()
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(
+            headless=False, channel="msedge",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        ctx = browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            locale="en-GB",
+        )
+        ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+        page = ctx.new_page()
+
+        # Login
+        print("\n  Please log in to AliExpress in the browser window...")
+        try:
+            page.goto("https://login.aliexpress.com/", wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            page.goto("https://www.aliexpress.com/", wait_until="domcontentloaded", timeout=30000)
+
+        while True:
+            cur = page.url.lower()
+            if not any(w in cur for w in ["login", "passport", "signin"]):
+                break
+            print("  Waiting for login...")
+            page.wait_for_timeout(3000)
+
+        print("  Login detected! Starting price scrape...\n")
+
+        for i, (idx, url) in enumerate(needs_price):
+            try:
+                page.goto(url, wait_until="commit", timeout=12000)
+                time.sleep(0.3)
+            except Exception:
+                failed += 1
+                continue
+
+            # CAPTCHA check
+            try:
+                if is_captcha(page):
+                    print(f"  CAPTCHA! Solve in browser...")
+                    while is_captcha(page):
+                        page.wait_for_timeout(3000)
+                    page.goto(url, wait_until="commit", timeout=12000)
+                    time.sleep(0.5)
+            except Exception:
+                pass
+
+            # Wait for content
+            try:
+                page.wait_for_selector('img[src*="alicdn"], [class*="gallery"]', timeout=5000)
+            except Exception:
+                time.sleep(1)
+
+            # Extract price
+            try:
+                price_text = page.evaluate(PRICE_JS)
+            except Exception:
+                price_text = ""
+
+            # Extract shipping
+            shipping = ""
+            try:
+                shipping = page.evaluate(SHIP_JS)
+            except Exception:
+                pass
+
+            if price_text:
+                products[idx]["product_price"] = price_text
+                if shipping:
+                    products[idx]["shipping"] = "0" if shipping == "Free" else shipping
+                found += 1
+                if found <= 20:
+                    print(f"  ✓ [{i+1}/{len(needs_price)}] {price_text} ship={shipping}")
+            else:
+                failed += 1
+
+            # Progress
+            if (i + 1) % 50 == 0:
+                elapsed = time.time() - start_time
+                rate = (i + 1) / elapsed * 60
+                print(f"  [{i+1}/{len(needs_price)}] found={found} failed={failed} | {rate:.0f}/min")
+
+            # Save checkpoint every 100
+            if (i + 1) % 100 == 0:
+                data["products"] = products
+                cp_path.write_text(json.dumps(data, ensure_ascii=False))
+
+        browser.close()
+
+    # Final save
+    data["products"] = products
+    cp_path.write_text(json.dumps(data, ensure_ascii=False))
+    elapsed = time.time() - start_time
+    print(f"\n  Done in {elapsed/60:.0f} min: {found} found, {failed} failed\n")
+    return
 
     # Load cookies from login state
     cookies = {}
