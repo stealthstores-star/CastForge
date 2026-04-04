@@ -1420,9 +1420,9 @@ def cmd_fix_scrape_prices(relogin=False):
                 Object.defineProperty(navigator, 'languages', { get: () => ['en-GB','en'] });
                 window.chrome = { runtime: {} };
             """)
+            # Block images/fonts/video only — keep CSS (needed for price visibility)
             ctx[0].route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}",
                          lambda route: route.abort())
-            ctx[0].route("**/*.css", lambda route: route.abort())
             page[0] = ctx[0].new_page()
             print(f"  New IP #{session_num[0]} (seed={seed})")
 
@@ -1456,7 +1456,21 @@ def cmd_fix_scrape_prices(relogin=False):
                         new_ip()
                         products_on_ip = 0
 
-                    page[0].goto(url, wait_until="domcontentloaded", timeout=15000)
+                    try:
+                        page[0].goto(url, wait_until="domcontentloaded", timeout=15000)
+                    except Exception as nav_err:
+                        # Proxy tunnel failed — get new IP and retry
+                        if "TUNNEL" in str(nav_err).upper() or "ERR_" in str(nav_err).upper():
+                            new_ip()
+                            products_on_ip = 0
+                            try:
+                                page[0].goto(url, wait_until="domcontentloaded", timeout=15000)
+                            except:
+                                failed += 1
+                                continue
+                        else:
+                            failed += 1
+                            continue
                     products_on_ip += 1
 
                     if is_captcha():
