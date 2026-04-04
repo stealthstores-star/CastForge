@@ -1250,14 +1250,14 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices via seodata API (HTTP requests, 60 threads, no browser)."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    # Login to get fresh cookies if needed
+    """Re-scrape prices: 60 Playwright contexts + proxy + login state."""
     if relogin or not ALI_STATE_FILE.exists():
         from playwright.sync_api import sync_playwright as sync_pw
         with sync_pw() as p:
             _ensure_ali_login(p)
+
+    import asyncio
+    asyncio.run(_run_price_scraper())
 
     # Load cookies from login state
     cookies = {}
