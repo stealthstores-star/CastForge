@@ -1250,7 +1250,7 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices: 60 Playwright contexts + proxy + login state."""
+    """Re-scrape prices: 8 Playwright contexts + proxy + login state."""
     if relogin or not ALI_STATE_FILE.exists():
         from playwright.sync_api import sync_playwright as sync_pw
         with sync_pw() as p:
@@ -1489,12 +1489,12 @@ async def _run_price_scraper():
     from scraper import STEALTH_JS, USER_AGENTS
     import random
 
-    CONTEXTS = 60
-    BATCH_PER_CTX = 50
+    CONTEXTS = 8
+    BATCH_PER_CTX = 250
     BROWSER_RESTART = 1500
 
     print("\n══════════════════════════════════════")
-    print("  CastForge Price Re-Scraper (60 contexts)")
+    print("  CastForge Price Re-Scraper (8 contexts)")
     print("══════════════════════════════════════\n")
 
     session_path = str(ALI_STATE_FILE) if ALI_STATE_FILE.exists() else None
