@@ -1742,12 +1742,12 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                     # Debug: log first 3 API responses that contain "price"
                     if "price" in body_lower and _debug_printed["count"] < 3:
                         _debug_printed["count"] += 1
-                        # Find what price-like values exist
-                        prices_found = re.findall(r'"(?:min|max|sku|act|formatted|activity|discount)(?:Price|Amount|Cal)[^"]*"\s*:\s*"?([^",}{]{1,30})', body[:5000])
+                        # Find ALL key:value pairs containing "price" (case-insensitive)
+                        prices_found = re.findall(r'"([^"]*[Pp]rice[^"]*)":\s*"?([^",}{]{1,30})', body[:20000])
                         print(f"\n  API DEBUG #{_debug_printed['count']}:")
                         print(f"    URL: {resp_url[:80]}")
                         print(f"    Body length: {len(body)}")
-                        print(f"    Price fields: {prices_found[:10]}")
+                        print(f"    Price fields: {prices_found[:15]}")
 
                     # Extract price
                     if not price_data["price"]:
@@ -1757,12 +1757,22 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                             r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
                             r'"formattedPrice"\s*:\s*"([^"]+)"',
                             r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
+                            # Current AliExpress field names (2025+)
+                            r'"salePrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                            r'"salePrice"[^}]*?"formattedPrice"\s*:\s*"([^"]+)"',
+                            r'"price"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                            r'"price"[^}]*?"formattedPrice"\s*:\s*"([^"]+)"',
+                            r'"tradePrice"\s*:\s*"?(\d+\.?\d+)',
+                            r'"promotionPrice"\s*:\s*"?(\d+\.?\d+)',
+                            # Broader: any key ending in Price with a numeric value
+                            r'"[a-zA-Z]*[Pp]rice"\s*:\s*"(\d+\.?\d+)"',
+                            r'"[a-zA-Z]*[Pp]rice"\s*:\s*(\d+\.?\d+)[,}]',
                         ]:
                             m = re.search(pat, body)
                             if m:
-                                val = m.group(1).replace("\uffe1", "£")
+                                val = m.group(1).replace("\uffe1", "£").replace("US $", "").replace("US$", "").replace("$", "")
                                 num = re.search(r"(\d+\.?\d+)", val)
-                                if num and float(num.group(1)) > 1.50:
+                                if num and float(num.group(1)) > 0.50:
                                     price_data["price"] = f"£{num.group(1)}"
                                     price_data["debug"] = f"pattern={pat[:30]} url={resp_url[-40:]}"
                                     break
@@ -1853,16 +1863,24 @@ async def _extract_price_from_page(page):
         # Strategy 1: Look for price in embedded __INIT_DATA__ or API response JSON
         # AliExpress embeds price data in script tags even on CSR pages
         for pattern in [
-            r'"formattedActivityPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
-            r'"activityPrice"\s*:\s*\{[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d*)',
-            r'"discountPrice"\s*:\s*\{[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d*)',
-            r'"formattedPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
-            r'"minPrice"\s*:\s*"(\d+\.?\d*)',
-            r'"skuCalPrice"\s*:\s*"(\d+\.?\d*)',
-            r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
+            r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+            r'"activityPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+            r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+            r'"salePrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+            r'"salePrice"[^}]*?"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+            r'"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+            r'"price"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+            r'"price"[^}]*?"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+            r'"minPrice"\s*:\s*"(\d+\.?\d+)',
+            r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
+            r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d+)',
+            r'"tradePrice"\s*:\s*"?(\d+\.?\d+)',
+            r'"promotionPrice"\s*:\s*"?(\d+\.?\d+)',
+            # Broad catch: any *Price field with a numeric value
+            r'"[a-zA-Z]*[Pp]rice"\s*:\s*"?(\d+\.\d{2})',
         ]:
             m = re.search(pattern, content)
-            if m and float(m.group(1)) > 1.50:
+            if m and 0.50 < float(m.group(1)) < 500:
                 price = f"£{m.group(1)}"
                 break
 
@@ -1886,15 +1904,21 @@ async def _extract_price_from_page(page):
                 return '';
             }""")
             price_text = price_text.replace("\uffe1", "£")
-            m = re.search(r"£\s*(\d+\.?\d*)", price_text)
-            if m and float(m.group(1)) > 1.50:
+            # Match any currency: £, $, US $, or plain number
+            m = re.search(r"[£$]\s*(\d+\.?\d*)", price_text)
+            if not m:
+                m = re.search(r"US\s*\$\s*(\d+\.?\d*)", price_text)
+            if not m:
+                m = re.search(r"(\d+\.\d{2})", price_text)
+            if m and 0.50 < float(m.group(1)) < 500:
                 price = f"£{m.group(1)}"
 
-        # Strategy 3: Any £X.XX in the page that's NOT in a coupon/promo context
+        # Strategy 3: Any currency amount in the page
         if not price:
-            # Find all £ amounts, take smallest > 0 (usually the item price, not coupon thresholds)
-            all_prices = re.findall(r"£\s*(\d+\.\d{2})", content)
-            valid = sorted(set(float(p) for p in all_prices if 0.5 < float(p) < 500))
+            # Find all price amounts (£, $, US$, or in JSON values)
+            all_prices = re.findall(r"[£$]\s*(\d+\.\d{2})", content)
+            all_prices += re.findall(r"US\s*\$\s*(\d+\.\d{2})", content)
+            valid = sorted(set(float(p) for p in all_prices if 0.50 < float(p) < 500))
             if valid:
                 price = f"£{valid[0]:.2f}"
     except Exception:
