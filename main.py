@@ -1252,6 +1252,7 @@ def _ensure_ali_login(pw):
 def cmd_fix_scrape_prices(relogin=False):
     """Re-scrape prices using the same approach as the working title scraper."""
     from playwright.sync_api import sync_playwright
+    import random
 
     cp_path = Path("scrape_checkpoint.json")
     if not cp_path.exists():
