@@ -1229,6 +1229,166 @@ def cmd_review():
         print()
 
 
+def cmd_fix_scrape_prices():
+    """Re-scrape prices for products missing them in checkpoint. 60 threads via proxy."""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    PROXY = "http://jpo1c9lb5mytbj0t:GnXsjzZq15h0WEdY_country-us@geo.iproyal.com:12321"
+    WORKERS = 60
+    SAVE_EVERY = 500
+
+    print("\n══════════════════════════════════════")
+    print("  CastForge Price Re-Scraper")
+    print("══════════════════════════════════════\n")
+
+    cp_path = Path("scrape_checkpoint.json")
+    if not cp_path.exists():
+        print("  No scrape_checkpoint.json found.")
+        return
+
+    data = json.loads(cp_path.read_text())
+    products = data.get("products", [])
+
+    needs_price = []
+    for i, p in enumerate(products):
+        price = p.get("product_price", "")
+        if not price or _parse_price(price) <= 0:
+            url = p.get("product_url") or p.get("source_url", "")
+            if url:
+                needs_price.append((i, url))
+
+    print(f"  Total products: {len(products)}")
+    print(f"  Missing prices: {len(needs_price)}")
+    print(f"  Workers: {WORKERS} (proxy: IPRoyal rotating)")
+
+    if not needs_price:
+        print("  All products have prices!")
+        return
+
+    print(f"  Estimated: {len(needs_price) / (WORKERS * 4):.0f} minutes\n")
+
+    lock = threading.Lock()
+    progress = {"done": 0, "found": 0, "failed": 0, "start": time.time()}
+
+    def _scrape_price(item):
+        idx, url = item
+        proxies = {"http": PROXY, "https": PROXY}
+        headers_req = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept-Language": "en-GB,en;q=0.9",
+            "Range": "bytes=0-15000",  # Only fetch first 15KB — meta/price in <head>
+        }
+
+        price = ""
+        shipping = ""
+
+        for attempt in range(2):
+            try:
+                resp = requests.get(url, headers=headers_req, proxies=proxies,
+                                     timeout=15, allow_redirects=True)
+                if resp.status_code not in (200, 206):
+                    continue
+
+                text = resp.text
+
+                # 1. og:title — often has price
+                m = re.search(r'og:title["\s]+content="([^"]+)"', text)
+                if m:
+                    pm = re.search(r'[\uffe1\xa3]([\d.]+)', m.group(1))
+                    if pm:
+                        price = f"\u00a3{pm.group(1)}"
+
+                # 2. minPrice / formatedAmount in JSON
+                if not price:
+                    for pattern in [
+                        r'"minPrice"\s*:\s*"?([\d.]+)"?',
+                        r'"formatedAmount"\s*:\s*"[\uffe1\xa3]?([\d.]+)"',
+                        r'"activityPrice"\s*:\s*\{[^}]*"minPrice"\s*:\s*"?([\d.]+)"?',
+                        r'"discountPrice"\s*:\s*\{[^}]*"minPrice"\s*:\s*"?([\d.]+)"?',
+                    ]:
+                        m = re.search(pattern, text)
+                        if m:
+                            price = f"\u00a3{m.group(1)}"
+                            break
+
+                # 3. Raw regex for ￡X.XX or £X.XX
+                if not price:
+                    m = re.search(r'[\uffe1\xa3]\s*(\d+\.\d{2})', text)
+                    if m:
+                        price = f"\u00a3{m.group(1)}"
+
+                # Shipping
+                sm = re.search(r'"freightAmount"\s*:\s*\{[^}]*"value"\s*:\s*"?([\d.]+)"?', text)
+                if not sm:
+                    sm = re.search(r'"shippingFee"\s*:\s*"?([\d.]+)"?', text)
+                if sm:
+                    val = float(sm.group(1))
+                    shipping = str(val) if val > 0 else "0"
+                elif re.search(r'free\s+shipping', text, re.IGNORECASE):
+                    if not re.search(r'free shipping over|free shipping on orders', text, re.IGNORECASE):
+                        shipping = "0"
+
+                if price:
+                    break
+
+            except Exception:
+                if attempt == 0:
+                    time.sleep(1)
+                continue
+
+        with lock:
+            progress["done"] += 1
+            if price:
+                products[idx]["product_price"] = price
+                if shipping:
+                    products[idx]["shipping"] = shipping
+                progress["found"] += 1
+            else:
+                progress["failed"] += 1
+
+            done = progress["done"]
+            if done % 100 == 0 or done == len(needs_price):
+                elapsed = time.time() - progress["start"]
+                rate = done / max(elapsed, 1) * 60
+                eta = (len(needs_price) - done) / max(rate, 1)
+                print(f"  [{done}/{len(needs_price)}] "
+                      f"Found {progress['found']}, Failed {progress['failed']} "
+                      f"| {rate:.0f}/min | ETA: {eta:.0f} min")
+
+            if done % SAVE_EVERY == 0:
+                data["products"] = products
+                cp_path.write_text(json.dumps(data, ensure_ascii=False))
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as executor:
+        list(executor.map(_scrape_price, needs_price))
+
+    # Final save
+    data["products"] = products
+    cp_path.write_text(json.dumps(data, ensure_ascii=False))
+
+    print(f"\n  Done: {progress['found']} prices found, {progress['failed']} failed")
+    print(f"  Checkpoint saved")
+
+    # Regenerate all_products.csv
+    print(f"\n  Regenerating all_products.csv...")
+    import csv as csv_mod
+    fieldnames = [
+        "id", "product_title", "product_price", "product_original_price",
+        "product_discount", "product_url", "product_image", "product_images",
+        "product_rating", "store_name", "store_url", "store_id",
+        "total_sales", "ship_from", "store_member_id", "trade_info",
+        "shipping", "launch_time", "company_name", "source_url",
+        "variations", "variation_images",
+    ]
+    with open("all_products.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv_mod.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for p in products:
+            writer.writerow(p)
+    print(f"  Saved all_products.csv ({len(products)} products)")
+
+
 def cmd_dedup_shopify():
     """Deduplicate Shopify products by title. Keep lowest ID, delete dupes."""
     from uploader import get_shopify_token
@@ -1884,6 +2044,8 @@ if __name__ == "__main__":
         cmd_fix_prices_fast(file_args[0] if file_args else None)
     elif command == "dedup-shopify":
         cmd_dedup_shopify()
+    elif command == "fix-scrape-prices":
+        cmd_fix_scrape_prices()
     elif command == "upload-failed":
         cmd_upload_failed()
     else:
