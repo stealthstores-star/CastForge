@@ -1419,8 +1419,14 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
     for idx, url in items:
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(3000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+
+            # Wait for price element to render
+            try:
+                await page.wait_for_selector("[class*='price'], [class*='Price']", timeout=8000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(2000)
 
             price, shipping = await _extract_price_from_page(page)
 
