@@ -1284,11 +1284,8 @@ def cmd_fix_scrape_prices(relogin=False):
             if url:
                 needs_price.append((i, url))
 
-    WORKERS = 60
-    PROXY = {
-        "http": "http://jpo1c9lb5mytbj0t:GnXsjzZq15h0WEdY_country-us@geo.iproyal.com:12321",
-        "https": "http://jpo1c9lb5mytbj0t:GnXsjzZq15h0WEdY_country-us@geo.iproyal.com:12321",
-    }
+    WORKERS = 10  # conservative to avoid captcha on direct connection
+    PROXY = None  # direct connection — no proxy (saves data)
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -1305,8 +1302,8 @@ def cmd_fix_scrape_prices(relogin=False):
     est = len(needs_price) / (WORKERS * 10)
     print(f"  Estimated: {est:.0f} minutes\n")
 
-    # Quick test: try one product to check proxy + seodata work
-    print("  Testing proxy + seodata API on first product...")
+    # Quick test: try one product to check seodata works
+    print("  Testing direct connection + seodata API on first product...")
     test_idx, test_url = needs_price[0]
     try:
         test_r = requests.get(test_url, proxies=PROXY, headers=HEADERS, cookies=cookies,
@@ -1431,6 +1428,9 @@ def cmd_fix_scrape_prices(relogin=False):
         else:
             with lock:
                 progress["failed"] += 1
+
+        # Small delay to avoid rate limiting on direct connection
+        time.sleep(0.3)
 
         with lock:
             progress["done"] += 1
