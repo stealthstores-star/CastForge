@@ -1229,6 +1229,236 @@ def cmd_review():
         print()
 
 
+def cmd_dedup_shopify():
+    """Deduplicate Shopify products by title. Keep lowest ID, delete dupes."""
+    from uploader import get_shopify_token
+    from concurrent.futures import ThreadPoolExecutor
+
+    print("\n══════════════════════════════════════")
+    print("  CastForge Shopify Deduplicator")
+    print("══════════════════════════════════════\n")
+
+    token = get_shopify_token()
+    headers = {"X-Shopify-Access-Token": token}
+    base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+
+    # Fetch ALL products
+    products = []
+    url = f"{base}/products.json?limit=250&fields=id,title"
+    while url:
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 429:
+            time.sleep(float(r.headers.get("Retry-After", 2)))
+            continue
+        products.extend(r.json().get("products", []))
+        link = r.headers.get("Link", "")
+        url = None
+        if 'rel="next"' in link:
+            for part in link.split(","):
+                if 'rel="next"' in part:
+                    url = part.split("<")[1].split(">")[0]
+
+    print(f"  Found {len(products)} total products")
+
+    # Group by title
+    by_title = {}
+    for p in products:
+        title = p["title"]
+        if title not in by_title:
+            by_title[title] = []
+        by_title[title].append(p["id"])
+
+    # Find dupes (keep lowest ID)
+    to_delete = []
+    for title, ids in by_title.items():
+        if len(ids) > 1:
+            ids.sort()
+            to_delete.extend(ids[1:])  # keep first (lowest), delete rest
+
+    print(f"  Duplicates to delete: {len(to_delete)}")
+    if not to_delete:
+        print("  No duplicates found!")
+        return
+
+    deleted = [0]
+    lock = __import__("threading").Lock()
+
+    def _delete_one(pid):
+        while True:
+            r = requests.delete(f"{base}/products/{pid}.json",
+                                headers=headers, timeout=30)
+            if r.status_code == 429:
+                time.sleep(float(r.headers.get("Retry-After", 2)))
+                continue
+            break
+        with lock:
+            deleted[0] += 1
+            if deleted[0] % 50 == 0 or deleted[0] == len(to_delete):
+                print(f"    [{deleted[0]}/{len(to_delete)}] deleted")
+        time.sleep(0.3)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(_delete_one, to_delete))
+
+    print(f"  Done: {deleted[0]} duplicates deleted")
+
+
+def cmd_fix_prices_fast(csv_path=None):
+    """Fast price fix using 2 threads. Matches via source URL tag."""
+    from uploader import get_shopify_token
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    print("\n══════════════════════════════════════")
+    print("  CastForge Price Fixer (2 threads)")
+    print("══════════════════════════════════════\n")
+
+    # Build price lookup from source data
+    source_products = []
+    if csv_path:
+        print(f"  Loading prices from {csv_path}")
+        import csv as csv_mod
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv_mod.DictReader(f):
+                source_products.append(dict(row))
+    else:
+        cp = Path("scrape_checkpoint.json")
+        if cp.exists():
+            print("  Loading prices from scrape_checkpoint.json")
+            data = json.loads(cp.read_text())
+            source_products = data.get("products", [])
+        else:
+            print("  No source data. Usage: python3 main.py fix-prices <source.csv>")
+            return
+
+    price_lookup = {}
+    for sp in source_products:
+        url = sp.get("product_url") or sp.get("source_url", "")
+        if url:
+            price_lookup[url] = (
+                _parse_price(sp.get("product_price", "")),
+                _parse_price(sp.get("shipping", "0")),
+            )
+
+    has_price = sum(1 for p, s in price_lookup.values() if p > 0)
+    print(f"  Source products: {len(price_lookup)} ({has_price} with actual prices)\n")
+
+    # Fetch all Shopify products
+    token = get_shopify_token()
+    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
+    base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+
+    products = []
+    url = f"{base}/products.json?limit=250&fields=id,title,tags,variants"
+    while url:
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 429:
+            time.sleep(float(r.headers.get("Retry-After", 2)))
+            continue
+        products.extend(r.json().get("products", []))
+        link = r.headers.get("Link", "")
+        url = None
+        if 'rel="next"' in link:
+            for part in link.split(","):
+                if 'rel="next"' in part:
+                    url = part.split("<")[1].split(">")[0]
+
+    print(f"  Shopify products: {len(products)}")
+
+    # Build update queue
+    updates = []
+    for prod in products:
+        source_url = ""
+        for tag in (prod.get("tags", "") or "").split(","):
+            tag = tag.strip()
+            if tag.startswith("source:"):
+                source_url = tag[7:]
+                break
+
+        if not source_url or source_url not in price_lookup:
+            continue
+
+        price_gbp, ship_gbp = price_lookup[source_url]
+        if price_gbp <= 0:
+            continue
+
+        sell_usd, compare_usd = calculate_price(price_gbp, ship_gbp)
+        variant = prod.get("variants", [{}])[0]
+        variant_id = variant.get("id")
+        current_price = float(variant.get("price", "0"))
+
+        if variant_id and abs(current_price - sell_usd) > 0.01:
+            updates.append((variant_id, sell_usd, compare_usd, prod["title"][:40]))
+
+    print(f"  Products to update: {len(updates)}\n")
+    if not updates:
+        print("  Nothing to update!")
+        return
+
+    updated = [0]
+    failed = [0]
+    lock = threading.Lock()
+
+    def _update_one(item):
+        vid, price, compare, title = item
+        try:
+            r = requests.put(
+                f"{base}/variants/{vid}.json",
+                headers=headers, timeout=30,
+                json={"variant": {"id": vid, "price": f"{price:.2f}",
+                                   "compare_at_price": f"{compare:.2f}"}},
+            )
+            if r.status_code == 429:
+                time.sleep(float(r.headers.get("Retry-After", 2)))
+                r = requests.put(
+                    f"{base}/variants/{vid}.json",
+                    headers=headers, timeout=30,
+                    json={"variant": {"id": vid, "price": f"{price:.2f}",
+                                       "compare_at_price": f"{compare:.2f}"}},
+                )
+            with lock:
+                if r.status_code == 200:
+                    updated[0] += 1
+                else:
+                    failed[0] += 1
+                done = updated[0] + failed[0]
+                if done % 50 == 0 or done == len(updates):
+                    print(f"    [{done}/{len(updates)}] {updated[0]} OK, {failed[0]} failed")
+        except Exception:
+            with lock:
+                failed[0] += 1
+        time.sleep(0.25)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(_update_one, updates))
+
+    print(f"\n  Done: {updated[0]} prices updated, {failed[0]} failed")
+
+
+def cmd_upload_failed():
+    """Upload products from failed_uploads.csv."""
+    failed_path = Path("failed_uploads.csv")
+    if not failed_path.exists():
+        print("No failed_uploads.csv found.")
+        return
+
+    print("\n══════════════════════════════════════")
+    print("  CastForge Failed Upload Retry")
+    print("══════════════════════════════════════\n")
+
+    # Load failed products — these need to be re-processed from source
+    import csv as csv_mod
+    failed_titles = set()
+    with open(failed_path, newline="", encoding="utf-8") as f:
+        for row in csv_mod.DictReader(f):
+            failed_titles.add(row.get("title", "")[:80])
+
+    print(f"  Failed products to retry: {len(failed_titles)}")
+    print("  To retry: re-run the upload command. Failed products will be")
+    print("  re-attempted since they're not in upload_progress.json.")
+    print("  Usage: python3 main.py upload all_products.csv --resume")
+
+
 def cmd_fix_images():
     """Two-pass image fixer for existing Shopify products."""
     from uploader import get_shopify_token
@@ -1651,7 +1881,11 @@ if __name__ == "__main__":
     elif command == "fix-shopify-titles":
         cmd_fix_shopify_titles()
     elif command == "fix-prices":
-        cmd_fix_prices(file_args[0] if file_args else None)
+        cmd_fix_prices_fast(file_args[0] if file_args else None)
+    elif command == "dedup-shopify":
+        cmd_dedup_shopify()
+    elif command == "upload-failed":
+        cmd_upload_failed()
     else:
         print(f"Unknown command: {command}")
         print(USAGE)
