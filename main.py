@@ -1281,10 +1281,10 @@ def cmd_fix_scrape_prices(relogin=False):
         print("  All products have prices!")
         return
 
-    # Uses Mullvad VPN (flat rate, unlimited bandwidth, zero proxy cost)
-    # Rotates IP by calling `mullvad reconnect`
-    NUM_WORKERS = 3
-    PER_IP = 9999  # NO proactive rotation — only on captcha
+    # Direct connection — no VPN, no proxy. Residential IP clears captcha in ~60s.
+    import subprocess
+    subprocess.run(["mullvad", "disconnect"], capture_output=True)
+    time.sleep(1)
 
     UAS = [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -1347,41 +1347,15 @@ def cmd_fix_scrape_prices(relogin=False):
         return '';
     }"""
 
-    lock = threading.Lock()
     found = [0]
     failed = [0]
-    captcha_rotations = [0]
-    captcha_event = threading.Event()  # signals ALL workers to restart
+    captchas = [0]
     start = time.time()
 
-    import subprocess
+    print(f"  Mode: 1 browser, direct connection, 1.5s delay")
+    print(f"  Captcha recovery: close browser → wait 60s → fresh browser\n")
 
-    def rotate_vpn_and_signal():
-        """Rotate Mullvad VPN to random worldwide server, signal all workers to restart."""
-        captcha_rotations[0] += 1
-        print(f"\n  !! CAPTCHA #{captcha_rotations[0]} — rotating VPN + restarting all browsers...")
-        try:
-            subprocess.run(["mullvad", "reconnect"], timeout=5, capture_output=True)
-            time.sleep(3)
-            r = subprocess.run(["mullvad", "status"], timeout=5, capture_output=True, text=True)
-            print(f"  VPN: {r.stdout.strip().split(chr(10))[0] if r.stdout else 'unknown'}")
-        except Exception as e:
-            print(f"  VPN rotate failed: {e}")
-        captcha_event.set()
-
-    # Connect Mullvad — any server worldwide for max IP diversity
-    print("  Connecting Mullvad VPN (random server)...")
-    subprocess.run(["mullvad", "relay", "set", "tunnel-protocol", "wireguard"], capture_output=True)
-    subprocess.run(["mullvad", "connect"], capture_output=True)
-    time.sleep(3)
-    r = subprocess.run(["mullvad", "status"], capture_output=True, text=True)
-    print(f"  {r.stdout.strip().split(chr(10))[0]}")
-
-    print(f"\n  Workers: {NUM_WORKERS} browsers (Mullvad VPN, zero data cost)")
-    print(f"  IP rotation: every {PER_IP} products + on captcha")
-    print(f"  Bandwidth: FREE (Mullvad flat rate)\n")
-
-    # Step 1: Login (headful, through VPN)
+    # Login
     from playwright.sync_api import sync_playwright as _sync_pw
     with _sync_pw() as pw:
         print("  Log in to AliExpress...")
@@ -1398,149 +1372,124 @@ def cmd_fix_scrape_prices(relogin=False):
         p.close(); c.close(); b.close()
     print("  Login saved!\n")
 
-    # Step 2: Worker function — each thread gets own browser
-    def _worker(worker_id, work_items):
-        from playwright.sync_api import sync_playwright as _wp
-        w_found = 0
-        ip_num = [0]
+    from playwright.sync_api import sync_playwright as _sp2
+    with _sp2() as pw:
+        brow = [None]; cxt = [None]; pg = [None]
 
-        with _wp() as pw:
-            brow = [None]; cxt = [None]; pg = [None]
+        def fresh_browser():
+            for x in [pg, cxt, brow]:
+                try: x[0].close()
+                except: pass
+            brow[0] = pw.chromium.launch(
+                headless=False, channel="msedge",
+                args=["--disable-blink-features=AutomationControlled"])
+            cxt[0] = brow[0].new_context(
+                viewport=random.choice(VPS), locale="en-GB",
+                user_agent=random.choice(UAS),
+                storage_state=str(ALI_STATE_FILE))
+            cxt[0].add_init_script("""
+                Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
+                Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});
+                window.chrome={runtime:{}};
+            """)
+            cxt[0].route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}",
+                         lambda route: route.abort())
+            pg[0] = cxt[0].new_page()
 
-            def fresh_browser(rotate=False):
-                ip_num[0] += 1
-                for x in [pg, cxt, brow]:
-                    try: x[0].close()
-                    except: pass
-                # Only rotate VPN on captcha (all workers share 1 IP)
-                if rotate:
-                    with lock:
-                        rotate_vpn()
-                brow[0] = pw.chromium.launch(
-                    headless=False, channel="msedge",
-                    args=["--disable-blink-features=AutomationControlled","--window-position=2000,2000"])
-                cxt[0] = brow[0].new_context(
-                    viewport=random.choice(VPS), locale="en-GB",
-                    user_agent=random.choice(UAS),
-                    storage_state=str(ALI_STATE_FILE))
-                cxt[0].add_init_script("""
-                    Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
-                    Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});
-                    window.chrome={runtime:{}};
-                """)
-                cxt[0].route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}",
-                             lambda route: route.abort())
-                pg[0] = cxt[0].new_page()
+        def is_capt():
+            try:
+                u = pg[0].url.lower()
+                return "punish" in u or "x5sec" in u
+            except: return False
 
-            def is_capt():
-                try:
-                    u = pg[0].url.lower()
-                    return "punish" in u or "x5sec" in u
-                except: return False
-
-            def handle_captcha(url):
-                """Rotate VPN, restart browser, retry the URL. Returns True if cleared."""
-                with lock:
-                    rotate_vpn_and_signal()
-                fresh_browser()
-                try: pg[0].goto(url, wait_until="commit", timeout=5000)
-                except: return False
-                return not is_capt()
-
+        def handle_captcha():
+            captchas[0] += 1
+            print(f"\n  !! CAPTCHA #{captchas[0]} — closing browser, waiting 60s for flag to clear...")
+            for x in [pg, cxt, brow]:
+                try: x[0].close()
+                except: pass
+            time.sleep(60)
+            print(f"  Launching fresh browser...")
             fresh_browser()
 
-            for ci, (idx, url) in enumerate(work_items):
-                if captcha_event.is_set():
-                    time.sleep(1 + worker_id)
-                    fresh_browser()
-                    captcha_event.clear()
+        fresh_browser()
 
-                with lock:
-                    if products[idx].get("product_price") and _parse_price(products[idx]["product_price"]) > 0:
-                        continue
+        # Retry loop
+        for pass_num in range(1, 4):
+            missing = [(i,u) for i,u in needs_price
+                       if not products[i].get("product_price") or _parse_price(products[i].get("product_price","")) <= 0]
+            if not missing:
+                print("\n  All prices found!"); break
+            if pass_num > 1:
+                print(f"\n  ── Retry pass {pass_num}: {len(missing)} still missing ──")
+                fresh_browser()
+
+            pass_found = 0
+            for ci, (idx, url) in enumerate(missing):
+                if products[idx].get("product_price") and _parse_price(products[idx]["product_price"]) > 0:
+                    continue
                 try:
-                    try: pg[0].goto(url, wait_until="commit", timeout=5000)
+                    try: pg[0].goto(url, wait_until="commit", timeout=10000)
                     except:
                         fresh_browser()
-                        try: pg[0].goto(url, wait_until="commit", timeout=5000)
+                        try: pg[0].goto(url, wait_until="commit", timeout=10000)
                         except: continue
 
-                    # Check captcha after goto
                     if is_capt():
-                        if not handle_captcha(url): continue
+                        handle_captcha()
+                        try: pg[0].goto(url, wait_until="commit", timeout=10000)
+                        except: continue
+                        if is_capt(): continue
 
-                    try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=2000)
+                    try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=3000)
                     except: pass
 
                     price = pg[0].evaluate(PRICE_JS) or ""
                     ship = pg[0].evaluate(SHIP_JS) or ""
 
-                    # If price empty, check if we landed on captcha
                     if not price and is_capt():
-                        if not handle_captcha(url): continue
-                        try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=2000)
+                        handle_captcha()
+                        try: pg[0].goto(url, wait_until="commit", timeout=10000)
+                        except: continue
+                        try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=3000)
                         except: pass
                         price = pg[0].evaluate(PRICE_JS) or ""
                         ship = pg[0].evaluate(SHIP_JS) or ""
 
                     if price:
-                        with lock:
-                            products[idx]["product_price"] = price
-                            if ship: products[idx]["shipping"] = "0" if ship == "Free" else ship
-                            found[0] += 1; w_found += 1
-                            if found[0] <= 50:
-                                print(f"  ✓ W{worker_id} [{found[0]}] {price} ship={ship} — {url[-35:]}")
+                        products[idx]["product_price"] = price
+                        if ship: products[idx]["shipping"] = "0" if ship == "Free" else ship
+                        found[0] += 1; pass_found += 1
+                        if found[0] <= 50 or pass_found <= 10:
+                            print(f"  ✓ [{found[0]}] {price} ship={ship} — {url[-40:]}")
                     else:
-                        with lock: failed[0] += 1
+                        failed[0] += 1
 
-                    time.sleep(0.5)
-                except:
-                    with lock: failed[0] += 1
+                    time.sleep(1.5)
+                except Exception as e:
+                    failed[0] += 1
                     try: pg[0].url
                     except: fresh_browser()
 
                 if (ci+1) % 25 == 0:
-                    with lock:
-                        el = time.time() - start
-                        td = found[0] + failed[0]
-                        rate = td / max(el, 1) * 60
-                        eta = (len(needs_price) - td) / max(rate, 1)
-                        print(f"  [{td}/{len(needs_price)}] found={found[0]} captchas={captcha_rotations[0]} | {rate:.0f}/min ETA {eta:.0f}m")
-                    # Checkpoint
+                    el = time.time() - start
+                    td = found[0] + failed[0]
+                    rate = td / max(el, 1) * 60
+                    eta = (len(needs_price) - td) / max(rate, 1)
+                    print(f"  [{td}/{len(needs_price)}] found={found[0]} captchas={captchas[0]} | {rate:.0f}/min ETA {eta:.0f}m")
                     data["products"] = products
                     try: cp_path.write_text(json.dumps(data, ensure_ascii=False))
                     except: pass
 
-            for x in [pg, cxt, brow]:
-                try: x[0].close()
-                except: pass
-        return w_found
+            data["products"] = products
+            cp_path.write_text(json.dumps(data, ensure_ascii=False))
+            print(f"\n  Pass {pass_num}: +{pass_found} prices (total: {found[0]})")
+            if pass_found == 0:
+                print("  No progress — stopping."); break
 
-    # Step 3: Run with retries
-    for pass_num in range(1, 4):
-        missing = [(i,u) for i,u in needs_price
-                   if not products[i].get("product_price") or _parse_price(products[i].get("product_price","")) <= 0]
-        if not missing:
-            print("\n  All prices found!"); break
-        if pass_num > 1:
-            print(f"\n  ── Retry pass {pass_num}: {len(missing)} still missing ──")
-
-        cs = len(missing) // NUM_WORKERS + 1
-        chunks = [(i, missing[i*cs:(i+1)*cs]) for i in range(NUM_WORKERS) if missing[i*cs:(i+1)*cs]]
-        print(f"  Pass {pass_num}: {len(missing)} products across {len(chunks)} workers\n")
-
-        pf = found[0]
-        with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
-            futs = {pool.submit(_worker, wid, ch): wid for wid, ch in chunks}
-            for f in as_completed(futs):
-                try: f.result()
-                except Exception as e: print(f"  Worker error: {e}")
-
-        data["products"] = products
-        cp_path.write_text(json.dumps(data, ensure_ascii=False))
-        print(f"\n  Pass {pass_num} done: +{found[0]-pf} prices (total: {found[0]})")
-        if found[0] - pf == 0:
-            print("  No progress — stopping."); break
+        for x in [pg, cxt, brow]:
+            try: x[0].close()
+            except: pass
 
     data["products"] = products
     cp_path.write_text(json.dumps(data, ensure_ascii=False))
