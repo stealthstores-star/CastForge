@@ -124,30 +124,23 @@ STOPWORDS = {"resin", "scale", "model", "kit", "gk", "cast", "figure", "figures"
              "aliexpress"}
 
 def _tokenise(text):
-    """Split into lowercase content tokens, exclude stopwords and scale notations."""
+    """Split into lowercase content tokens, exclude stopwords. Strip leading punct from each token."""
     text = normalise(text)
     tokens = set()
     for w in re.split(r"[\s/\-]+", text):
+        w = re.sub(r"^[^\w]+", "", w)  # strip leading punct (& → , . → etc)
         if len(w) < 2:
             continue
         if w in STOPWORDS:
             continue
         if re.match(r"^\d+$", w) and len(w) < 4:
-            continue  # skip bare short numbers
+            continue
         tokens.add(w)
     return tokens
 
-def _jaccard(a, b):
-    """Jaccard similarity between two content token sets."""
-    if not a or not b:
-        return 0.0, 0
-    inter = a & b
-    union = a | b
-    return len(inter) / len(union), len(inter)
-
 def match_product(shopify_title, ai_cache, cache_normalised, cache_tokens=None,
                   shopify_images=None, scrape_data=None):
-    """Match by exact → normalised → token overlap → image-ID."""
+    """Match by exact → normalised → subset coverage → Jaccard fallback → image-ID."""
     # 1. Exact match
     if shopify_title in ai_cache:
         return shopify_title, ai_cache[shopify_title], "exact"
@@ -158,17 +151,34 @@ def match_product(shopify_title, ai_cache, cache_normalised, cache_tokens=None,
         raw = cache_normalised[norm]
         return raw, ai_cache[raw], "normalised"
 
-    # 3. Token overlap (Jaccard) — min 0.80 similarity AND min 8 shared content tokens
+    # 3. Asymmetric subset coverage: ≥90% of Shopify tokens exist in cache entry, AND ≥5 shared
     if cache_tokens:
         shop_tokens = _tokenise(shopify_title)
-        best_score, best_raw = 0.0, None
-        for raw_title, raw_tokens in cache_tokens.items():
-            score, shared = _jaccard(shop_tokens, raw_tokens)
-            if score >= 0.80 and shared >= 8 and score > best_score:
-                best_score = score
-                best_raw = raw_title
-        if best_raw:
-            return best_raw, ai_cache[best_raw], f"token({best_score:.0%})"
+        if shop_tokens:
+            best_coverage, best_shared, best_raw = 0.0, 0, None
+            best_jaccard, best_jaccard_raw = 0.0, None
+
+            for raw_title, raw_tokens in cache_tokens.items():
+                if not raw_tokens:
+                    continue
+                inter = shop_tokens & raw_tokens
+                shared = len(inter)
+                coverage = shared / len(shop_tokens)  # what % of Shopify tokens are in cache
+                union = shop_tokens | raw_tokens
+                jaccard = shared / len(union)
+
+                # Primary: subset coverage
+                if coverage >= 0.90 and shared >= 5 and coverage > best_coverage:
+                    best_coverage, best_shared, best_raw = coverage, shared, raw_title
+
+                # Fallback: Jaccard for when Shopify has extra tokens
+                if jaccard >= 0.80 and shared >= 5 and jaccard > best_jaccard:
+                    best_jaccard, best_jaccard_raw = jaccard, raw_title
+
+            if best_raw:
+                return best_raw, ai_cache[best_raw], f"subset({best_coverage:.0%},{best_shared})"
+            if best_jaccard_raw:
+                return best_jaccard_raw, ai_cache[best_jaccard_raw], f"jaccard({best_jaccard:.0%})"
 
     # 4. Image-ID match: extract AliExpress product ID from alicdn.com image URLs
     if shopify_images and scrape_data:
@@ -335,26 +345,38 @@ def fix_product(product, ai_title, category_handle, parent_handle, description,
         errors.append(f"Update error: {e}")
     time.sleep(0.5)
 
-    # 3. Set inventory to 10 for all variants
-    for variant in product.get("variants", []):
-        vid = variant.get("id")
-        iid = variant.get("inventory_item_id")
-        if not iid:
-            continue
-        # Get location ID (first time only)
-        try:
-            lr = requests.get(f"{base}/locations.json", headers=headers, timeout=15)
-            if lr.status_code == 200:
-                locations = lr.json().get("locations", [])
-                if locations:
-                    loc_id = locations[0]["id"]
-                    # Set inventory level
-                    requests.post(f"{base}/inventory_levels/set.json", headers=headers,
-                                json={"location_id": loc_id, "inventory_item_id": iid, "available": 10},
-                                timeout=15)
-        except Exception as e:
-            errors.append(f"Inventory error: {e}")
-        time.sleep(0.3)
+    # 3. Set inventory to 10 for all variants via inventory_levels/set.json
+    # Get location ID once
+    loc_id = None
+    try:
+        lr = requests.get(f"{base}/locations.json", headers=headers, timeout=15)
+        if lr.status_code == 200:
+            locations = lr.json().get("locations", [])
+            if locations:
+                loc_id = locations[0]["id"]
+    except Exception as e:
+        errors.append(f"Location fetch error: {e}")
+
+    if loc_id:
+        for variant in product.get("variants", []):
+            iid = variant.get("inventory_item_id")
+            if not iid:
+                continue
+            try:
+                # Enable tracking first
+                requests.put(f"{base}/inventory_items/{iid}.json", headers=headers,
+                           json={"inventory_item": {"id": iid, "tracked": True}},
+                           timeout=15)
+                time.sleep(0.3)
+                # Set available quantity to 10
+                ir = requests.post(f"{base}/inventory_levels/set.json", headers=headers,
+                                 json={"location_id": loc_id, "inventory_item_id": iid, "available": 10},
+                                 timeout=15)
+                if ir.status_code not in (200, 201):
+                    errors.append(f"Inventory set failed for variant {variant.get('id')}: {ir.status_code}")
+            except Exception as e:
+                errors.append(f"Inventory error variant {variant.get('id')}: {e}")
+            time.sleep(0.3)
 
     # 4. Assign to collections
     if category_handle and collection_map:
@@ -438,7 +460,7 @@ def run(test_mode=False, poll=False):
             print(f"    many images:   {sum(1 for p in todo if len(p.get('images',[])) > 3)}")
             print(f"    no images:     {sum(1 for p in todo if len(p.get('images',[])) == 0)}")
             print(f"    edge titles:   {sum(1 for p in todo if len(p.get('title','')) > 200)}\n")
-            test_stats = {"exact": 0, "normalised": 0, "token": 0, "image_id": 0, "unmatched": 0,
+            test_stats = {"exact": 0, "normalised": 0, "subset": 0, "jaccard": 0, "image_id": 0, "unmatched": 0,
                           "images_kept": 0, "images_deleted": 0, "api_errors": 0}
 
         if not todo:
@@ -484,7 +506,7 @@ def run(test_mode=False, poll=False):
 
             raw_title, ai_title, match_type = match
             if test_mode:
-                stat_key = "token" if match_type.startswith("token") else match_type
+                stat_key = "subset" if match_type.startswith("subset") else "jaccard" if match_type.startswith("jaccard") else match_type
                 test_stats[stat_key] = test_stats.get(stat_key, 0) + 1
 
             # Categorise
@@ -552,7 +574,7 @@ def run(test_mode=False, poll=False):
         print(f"\n  Summary: matched={progress['matched']} unmatched={progress['unmatched']} errors={progress['errors']}")
 
         if test_mode:
-            matched_total = test_stats["exact"] + test_stats["normalised"] + test_stats.get("token", 0) + test_stats.get("image_id", 0)
+            matched_total = test_stats["exact"] + test_stats["normalised"] + test_stats.get("subset", 0) + test_stats.get("jaccard", 0) + test_stats.get("image_id", 0)
             total_imgs = test_stats["images_kept"] + test_stats["images_deleted"]
             avg_kept = test_stats["images_kept"] / max(matched_total, 1)
             avg_deleted = test_stats["images_deleted"] / max(matched_total, 1)
@@ -560,7 +582,8 @@ def run(test_mode=False, poll=False):
             print(f"  Matching:")
             print(f"    Exact match:      {test_stats['exact']}")
             print(f"    Normalised match: {test_stats['normalised']}")
-            print(f"    Token overlap:    {test_stats['token']}")
+            print(f"    Subset coverage:  {test_stats.get('subset', 0)}")
+            print(f"    Jaccard fallback: {test_stats.get('jaccard', 0)}")
             print(f"    Image ID match:   {test_stats['image_id']}")
             print(f"    Unmatched:        {test_stats['unmatched']}")
             print(f"  Images:")
