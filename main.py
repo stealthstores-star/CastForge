@@ -1250,7 +1250,7 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices: direct browser + login, 15 contexts, run overnight."""
+    """Re-scrape prices: intercept mtop API response, 5 contexts, login state."""
     if relogin or not ALI_STATE_FILE.exists():
         from playwright.sync_api import sync_playwright as sync_pw
         with sync_pw() as p:
@@ -1842,18 +1842,20 @@ async def _scrape_single_price(page, url, debug_count=None):
 
 
 async def _run_price_scraper_direct():
-    """Direct browser (no proxy), 15 contexts, logged in. Prices render via JS."""
+    """Intercept mtop.aliexpress.pdp.pc.query API response to extract prices.
+    No DOM parsing needed — prices come from the JSON API response directly.
+    Uses 5 contexts with login state, ~10 products/min per context."""
     import asyncio
     from playwright.async_api import async_playwright
     from scraper import STEALTH_JS, USER_AGENTS
     import random
 
-    CONTEXTS = 15
-    BATCH_PER_CTX = 100
-    BROWSER_RESTART = 1500
+    CONTEXTS = 5
+    BATCH_PER_CTX = 200
+    BROWSER_RESTART = 2000
 
     print("\n══════════════════════════════════════")
-    print("  CastForge Price Re-Scraper (Direct Browser)")
+    print("  CastForge Price Re-Scraper (API Intercept)")
     print("══════════════════════════════════════\n")
 
     session_path = str(ALI_STATE_FILE) if ALI_STATE_FILE.exists() else None
@@ -1879,13 +1881,112 @@ async def _run_price_scraper_direct():
 
     print(f"  Total products: {len(products)}")
     print(f"  Missing prices: {len(needs_price)}")
-    print(f"  Contexts: {CONTEXTS} (direct, no proxy, logged in)")
-    est = len(needs_price) / (CONTEXTS * 6)  # ~6/min per context
-    print(f"  Estimated: {est:.0f} minutes (~{CONTEXTS * 6}/min)")
-    print(f"  Run overnight if needed — checkpoints every cycle\n")
+    print(f"  Contexts: {CONTEXTS} (direct, login state, API intercept)")
+    est = len(needs_price) / (CONTEXTS * 10)
+    print(f"  Estimated: {est:.0f} minutes (~{CONTEXTS * 10}/min)")
+    print()
 
-    progress = {"done": 0, "found": 0, "failed": 0, "start": time.time()}
+    progress = {"done": 0, "found": 0, "failed": 0, "captcha": 0, "start": time.time()}
     products_done = 0
+
+    def _extract_price_from_api(body):
+        """Extract price + shipping from mtop API JSON response."""
+        price = ""
+        shipping = ""
+        try:
+            # The API wraps JSON in a callback sometimes, strip it
+            text = body.strip()
+            # Find JSON object
+            start = text.find("{")
+            if start > 0:
+                text = text[start:]
+            end = text.rfind("}")
+            if end > 0:
+                text = text[:end + 1]
+
+            api_data = json.loads(text)
+
+            # Navigate the nested structure to find price data
+            # Common paths in mtop.aliexpress.pdp.pc.query response:
+            # data > priceComponent > skuPriceList > [0] > skuCalPrice
+            # data > priceComponent > formattedActivityPrice
+            # data > priceComponent > discountPrice > minPrice
+            # data > result > item > sku > skuPriceList
+
+            def _deep_find(obj, keys, depth=0):
+                """Recursively search for price fields in nested JSON."""
+                if depth > 12 or not obj:
+                    return {}
+                results = {}
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        kl = k.lower()
+                        if kl in keys:
+                            results[kl] = v
+                        if isinstance(v, (dict, list)):
+                            results.update(_deep_find(v, keys, depth + 1))
+                elif isinstance(obj, list):
+                    for item in obj[:10]:  # limit list traversal
+                        results.update(_deep_find(item, keys, depth + 1))
+                return results
+
+            price_keys = {
+                "formattedactivityprice", "activityprice",
+                "skucalprice", "actskucalprice",
+                "formattedprice", "minprice", "minactivityprice",
+                "discountprice", "saleprice", "salepriceamount",
+            }
+            ship_keys = {
+                "freightamount", "shippingfee", "shippingprice",
+                "displayamount", "freightprice",
+            }
+
+            found = _deep_find(api_data, price_keys | ship_keys)
+
+            # Try price fields in priority order
+            for key in ["formattedactivityprice", "actskucalprice", "skucalprice",
+                        "minactivityprice", "minprice", "formattedprice",
+                        "activityprice", "discountprice", "saleprice"]:
+                val = found.get(key)
+                if val is None:
+                    continue
+                # Handle nested dict like {"minPrice": "3.03", "maxPrice": "8.99"}
+                if isinstance(val, dict):
+                    val = val.get("minPrice") or val.get("formattedPrice") or next(iter(val.values()), None)
+                if val is None:
+                    continue
+                val_str = str(val).replace("\uffe1", "£").replace("￡", "£")
+                # Extract numeric price
+                m = re.search(r"[£]?\s*(\d+\.?\d*)", val_str)
+                if m:
+                    p = float(m.group(1))
+                    # salepriceamount might be in cents (e.g. "1219" = 12.19)
+                    if p > 500 and key == "salepriceamount":
+                        p = p / 100.0
+                    if 0.01 < p < 500:
+                        price = f"£{p:.2f}"
+                        break
+
+            # Shipping
+            for key in ["freightamount", "displayamount", "shippingfee",
+                        "shippingprice", "freightprice"]:
+                val = found.get(key)
+                if val is None:
+                    continue
+                val_str = str(val).replace("\uffe1", "£").replace("￡", "£")
+                if "free" in val_str.lower():
+                    shipping = "0"
+                    break
+                m = re.search(r"(\d+\.?\d*)", val_str)
+                if m:
+                    s = float(m.group(1))
+                    if 0 <= s < 50:
+                        shipping = f"{s:.2f}"
+                        break
+
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+        return price, shipping
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
@@ -1916,63 +2017,77 @@ async def _run_price_scraper_direct():
                 found = 0
 
                 for idx, url in chunk:
+                    price = ""
+                    shipping = ""
+
+                    # Set up API intercept for this navigation
+                    api_responses = []
+
+                    async def _capture_response(response):
+                        resp_url = response.url
+                        # Capture the main product data API
+                        if "mtop.aliexpress" in resp_url and "query" in resp_url:
+                            try:
+                                body = await response.text()
+                                if len(body) > 1000:  # main API is ~170KB
+                                    api_responses.append(body)
+                            except Exception:
+                                pass
+                        # Also capture SEO data API (has price as fallback)
+                        elif "seodata" in resp_url.lower() or "seo/seodata" in resp_url:
+                            try:
+                                body = await response.text()
+                                if "price" in body.lower()[:5000]:
+                                    api_responses.append(body)
+                            except Exception:
+                                pass
+
+                    page.on("response", _capture_response)
+
                     try:
-                        await page.goto(url, wait_until="load", timeout=20000)
-                        await page.wait_for_timeout(5000)
+                        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                        # Wait for API calls to complete (much faster than full render)
+                        await page.wait_for_timeout(4000)
 
-                        # Extract price from rendered page
-                        price_text = await page.evaluate("""() => {
-                            const selectors = [
-                                '[class*="snow-price--mainPrice"]',
-                                '[class*="es--wrap--erdmPRe"]',
-                                '[class*="price--current--"]',
-                                '[class*="product-price-value"]',
-                            ];
-                            for (const sel of selectors) {
-                                const el = document.querySelector(sel);
-                                if (el) {
-                                    const t = el.textContent.trim();
-                                    if (!t.includes('off') && !t.includes('coupon'))
-                                        return t;
-                                }
-                            }
-                            // Walk all text nodes for £
-                            const walk = document.createTreeWalker(
-                                document.body, NodeFilter.SHOW_TEXT);
-                            while (walk.nextNode()) {
-                                const t = walk.currentNode.textContent.trim();
-                                if (t.match(/^[£￡]\\s*\\d+\\.\\d{2}$/) && !t.includes('off'))
-                                    return t;
-                            }
-                            return '';
-                        }""")
+                        # Check for captcha
+                        if "unusual traffic" in (await page.title()).lower():
+                            progress["captcha"] += 1
+                            if progress["captcha"] <= 3:
+                                print(f"  CAPTCHA detected! ({progress['captcha']}x)")
+                            if progress["captcha"] >= 10:
+                                print(f"  Too many captchas — IP likely flagged. Stopping.")
+                                page.remove_listener("response", _capture_response)
+                                await page.close()
+                                await ctx.close()
+                                return found
 
-                        price = ""
-                        price_text = price_text.replace("\uffe1", "£")
-                        m = re.search(r"£\s*(\d+\.?\d+)", price_text)
-                        if m and float(m.group(1)) > 1.50:
-                            price = f"£{m.group(1)}"
+                        # Parse intercepted API responses
+                        for body in api_responses:
+                            p_price, p_ship = _extract_price_from_api(body)
+                            if p_price and not price:
+                                price = p_price
+                            if p_ship and not shipping:
+                                shipping = p_ship
+                            if price:
+                                break
 
-                        # Shipping
-                        shipping = ""
-                        try:
-                            ship = await page.evaluate("""() => {
-                                const els = document.querySelectorAll('[class*="shipping"], [class*="delivery"]');
-                                for (const el of els) {
-                                    const t = el.textContent.toLowerCase();
-                                    if (t.includes('free shipping') && !t.includes('over'))
-                                        return 'free';
-                                    const m = t.match(/[£￡]\\s*(\\d+\\.\\d{2})/);
-                                    if (m && t.includes('ship')) return m[1];
-                                }
-                                return '';
-                            }""")
-                            if ship == "free":
-                                shipping = "0"
-                            elif ship:
-                                shipping = ship
-                        except Exception:
-                            pass
+                        # Fallback: check page content for embedded JSON price data
+                        if not price:
+                            try:
+                                content = await page.content()
+                                content = content.replace("\uffe1", "£")
+                                for pattern in [
+                                    r'"formattedActivityPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
+                                    r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                                    r'"skuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                                    r'"minPrice"\s*:\s*"(\d+\.?\d*)',
+                                ]:
+                                    m = re.search(pattern, content)
+                                    if m and 0.01 < float(m.group(1)) < 500:
+                                        price = f"£{float(m.group(1)):.2f}"
+                                        break
+                            except Exception:
+                                pass
 
                         if price:
                             products[idx]["product_price"] = price
@@ -1980,22 +2095,28 @@ async def _run_price_scraper_direct():
                                 products[idx]["shipping"] = shipping
                             progress["found"] += 1
                             found += 1
-                            if progress["found"] <= 5:
+                            if progress["found"] <= 10:
                                 print(f"  FOUND: {price} ship={shipping} — {url[-40:]}")
                         else:
                             progress["failed"] += 1
 
-                    except Exception:
+                    except Exception as e:
                         progress["failed"] += 1
+                        if progress["done"] < 5:
+                            print(f"  Error: {type(e).__name__}: {str(e)[:80]}")
 
+                    page.remove_listener("response", _capture_response)
                     progress["done"] += 1
+
                     if progress["done"] % 50 == 0:
                         elapsed = time.time() - progress["start"]
                         rate = progress["done"] / max(elapsed, 1) * 60
                         remaining = len(needs_price) - progress["done"]
                         eta = remaining / max(rate, 1)
+                        pct = progress["found"] / max(progress["done"], 1) * 100
                         print(f"  [{progress['done']}/{len(needs_price)}] "
-                              f"Found {progress['found']}, Failed {progress['failed']} "
+                              f"Found {progress['found']} ({pct:.0f}%), "
+                              f"Failed {progress['failed']}, Captcha {progress['captcha']} "
                               f"| {rate:.0f}/min | ETA: {eta:.0f} min")
 
                 await page.close()
