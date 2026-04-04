@@ -30,4 +30,6 @@ ai_title_cache.json
 brand_image_cache.json
 ali_session.json
 ali_cookies.json
+ali_state.json
+price_scrape_failed.csv
 *_failed.txt
