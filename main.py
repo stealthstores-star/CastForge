@@ -1541,7 +1541,7 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                 if progress["found"] <= 5:
                     print(f"  FOUND: {price_data['price']} ship={price_data['shipping']} — {url[-40:]}")
                 # Debug: dump page when £1.00 found (wrong price)
-                if progress["found"] <= 2 and worker_id == 0:
+                if progress["found"] <= 2:
                     content = await page.content()
                     # Show what matched
                     for pat in [r'"formattedActivityPrice"\s*:\s*"[^"]{0,20}"',
@@ -1557,7 +1557,7 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                 progress["failed"] += 1
 
                 # Debug: dump EVERYTHING for first failure from worker 0
-                if progress["failed"] <= 1 and worker_id == 0:
+                if progress["failed"] <= 1:
                     try:
                         title = await page.title()
                         pg_url = page.url
