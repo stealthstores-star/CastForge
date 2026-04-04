@@ -1305,6 +1305,25 @@ def cmd_fix_scrape_prices(relogin=False):
     est = len(needs_price) / (WORKERS * 10)
     print(f"  Estimated: {est:.0f} minutes\n")
 
+    # Quick test: try one product to check proxy + seodata work
+    print("  Testing proxy + seodata API on first product...")
+    test_idx, test_url = needs_price[0]
+    try:
+        test_r = requests.get(test_url, proxies=PROXY, headers=HEADERS, cookies=cookies,
+                              timeout=10, allow_redirects=True)
+        print(f"    Product page: {test_r.status_code}, {len(test_r.text)} bytes, final={test_r.url[:80]}")
+        test_m = re.search(r"/item/(\d+)\.html", test_r.url)
+        if test_m:
+            test_pid = test_m.group(1)
+            seo_r = requests.get(
+                f"https://www.aliexpress.com/aeglodetailweb/api/seo/seodata?productId={test_pid}",
+                proxies=PROXY, headers=HEADERS, cookies=cookies, timeout=10)
+            print(f"    SEO API: {seo_r.status_code}, {len(seo_r.text)} bytes")
+            print(f"    SEO body (first 500): {seo_r.text[:500]}")
+    except Exception as e:
+        print(f"    Test failed: {e}")
+    print()
+
     import threading
     lock = threading.Lock()
     progress = {"done": 0, "found": 0, "failed": 0, "seo_ok": 0, "redirect_fail": 0, "start": time.time()}
@@ -1313,32 +1332,28 @@ def cmd_fix_scrape_prices(relogin=False):
         idx, url = item
         price = ""
         shipping = ""
+        debug = progress["done"] < 5  # debug first 5
 
         try:
-            # Step 1: Follow redirect to get real product ID
-            session = requests.Session()
-            session.headers.update(HEADERS)
-            session.cookies.update(cookies)
-
-            # HEAD request to follow redirects cheaply
+            # Step 1: Follow redirect to get real product ID via GET (HEAD is unreliable with proxies)
             try:
-                r = session.head(url, proxies=PROXY, timeout=10, allow_redirects=True)
+                r = requests.get(url, proxies=PROXY, headers=HEADERS, cookies=cookies,
+                                 timeout=10, allow_redirects=True)
                 final_url = r.url
-            except Exception:
-                # Fallback: try GET
-                try:
-                    r = session.get(url, proxies=PROXY, timeout=10, allow_redirects=True)
-                    final_url = r.url
-                except Exception:
-                    with lock:
-                        progress["redirect_fail"] += 1
-                        progress["failed"] += 1
-                    return
+                page_body = r.text
+                if debug:
+                    print(f"    DBG: {url[-40:]} → {r.status_code}, {len(r.text)}b, final={final_url[-50:]}")
+            except Exception as e:
+                with lock:
+                    progress["redirect_fail"] += 1
+                    progress["failed"] += 1
+                if debug:
+                    print(f"    DBG FAIL: {url[-40:]} → {type(e).__name__}: {str(e)[:60]}")
+                return
 
             # Extract product ID from final URL
             m = re.search(r"/item/(\d+)\.html", final_url)
             if not m:
-                # Try original URL
                 m = re.search(r"/item/(\d+)\.html", url)
             if not m:
                 with lock:
@@ -1350,11 +1365,11 @@ def cmd_fix_scrape_prices(relogin=False):
             # Step 2: Call seodata API
             seo_url = f"https://www.aliexpress.com/aeglodetailweb/api/seo/seodata?productId={product_id}"
             try:
-                r = session.get(seo_url, proxies=PROXY, timeout=10)
+                r = requests.get(seo_url, proxies=PROXY, headers=HEADERS, cookies=cookies, timeout=10)
+                if debug:
+                    print(f"    DBG SEO: {r.status_code}, {len(r.text)}b, body[:200]={r.text[:200]}")
                 if r.status_code == 200 and len(r.text) > 100:
                     body = r.text
-                    # Parse price from seodata JSON
-                    # Look for structured data with price
                     for pattern in [
                         r'"lowPrice"\s*:\s*"?(\d+\.?\d*)',
                         r'"highPrice"\s*:\s*"?(\d+\.?\d*)',
@@ -1372,7 +1387,6 @@ def cmd_fix_scrape_prices(relogin=False):
                                     progress["seo_ok"] += 1
                                 break
 
-                    # Shipping from seodata
                     ship_m = re.search(r'"freightAmount"\s*:\s*"?(\d+\.?\d*)', body)
                     if ship_m:
                         shipping = ship_m.group(1)
@@ -1381,35 +1395,27 @@ def cmd_fix_scrape_prices(relogin=False):
             except Exception:
                 pass
 
-            # Step 3: If seodata failed, try parsing the product page HTML
-            if not price:
-                try:
-                    r = session.get(final_url, proxies=PROXY, timeout=10)
-                    body = r.text
-                    body = body.replace("\uffe1", "£")
+            # Step 3: If seodata failed, try parsing the product page HTML we already have
+            if not price and page_body:
+                body = page_body.replace("\uffe1", "£")
+                for pattern in [
+                    r'"formattedActivityPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
+                    r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                    r'"skuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                    r'"minPrice"\s*:\s*"(\d+\.?\d*)',
+                    r'"lowPrice"\s*:\s*"(\d+\.?\d*)',
+                ]:
+                    pm = re.search(pattern, body[:50000])
+                    if pm:
+                        val = float(pm.group(1))
+                        if 0.01 < val < 500:
+                            price = f"£{val:.2f}"
+                            break
 
-                    # Look for price in embedded JSON/script tags
-                    for pattern in [
-                        r'"formattedActivityPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
-                        r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
-                        r'"skuCalPrice"\s*:\s*"(\d+\.?\d*)',
-                        r'"minPrice"\s*:\s*"(\d+\.?\d*)',
-                        r'"lowPrice"\s*:\s*"(\d+\.?\d*)',
-                    ]:
-                        pm = re.search(pattern, body[:50000])
-                        if pm:
-                            val = float(pm.group(1))
-                            if 0.01 < val < 500:
-                                price = f"£{val:.2f}"
-                                break
-
-                    # Shipping from page
-                    if not shipping:
-                        ship_m = re.search(r'"freightAmount"\s*:\s*"?(\d+\.?\d*)', body[:50000])
-                        if ship_m:
-                            shipping = ship_m.group(1)
-                except Exception:
-                    pass
+                if not shipping:
+                    ship_m = re.search(r'"freightAmount"\s*:\s*"?(\d+\.?\d*)', body[:50000])
+                    if ship_m:
+                        shipping = ship_m.group(1)
 
         except Exception:
             pass
@@ -1429,14 +1435,15 @@ def cmd_fix_scrape_prices(relogin=False):
         with lock:
             progress["done"] += 1
             d = progress["done"]
-        if d % 100 == 0:
+        if d % 50 == 0 or d <= 10:
             elapsed = time.time() - progress["start"]
             rate = d / max(elapsed, 1) * 60
             remaining = len(needs_price) - d
             eta = remaining / max(rate, 1)
             pct = progress["found"] / max(d, 1) * 100
             print(f"  [{d}/{len(needs_price)}] Found {progress['found']} ({pct:.0f}%), "
-                  f"Failed {progress['failed']}, SEO API hits {progress['seo_ok']} "
+                  f"Failed {progress['failed']}, SEO hits {progress['seo_ok']}, "
+                  f"Redir fail {progress['redirect_fail']} "
                   f"| {rate:.0f}/min | ETA: {eta:.0f} min")
 
         # Checkpoint every 500
