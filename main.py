@@ -1373,13 +1373,32 @@ def cmd_fix_scrape_prices(relogin=False):
         lp.close(); lc.close(); lb.close()
         print("  Login saved!\n")
 
+        UAS = [
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0",
+        ]
+        VPS = [
+            {"width":1920,"height":1080}, {"width":1440,"height":900},
+            {"width":1366,"height":768}, {"width":1536,"height":864},
+            {"width":1280,"height":800}, {"width":1600,"height":900},
+            {"width":2560,"height":1440},
+        ]
+
         browser = [None]
         ctx = [None]
         page = [None]
 
         def new_ip():
+            """Close everything, launch brand new browser with new IP + new fingerprint."""
             session_num[0] += 1
             seed = f"s{session_num[0]}r{random.randint(1000,9999)}"
+            ua = random.choice(UAS)
+            vp = random.choice(VPS)
             for x in [page, ctx, browser]:
                 try: x[0].close()
                 except: pass
@@ -1390,9 +1409,17 @@ def cmd_fix_scrape_prices(relogin=False):
                 args=["--disable-blink-features=AutomationControlled",
                       "--window-position=2000,2000"])
             ctx[0] = browser[0].new_context(
-                viewport={"width":1366,"height":768}, locale="en-GB",
+                viewport=vp, locale="en-GB",
+                user_agent=ua,
+                color_scheme=random.choice(["light","dark"]),
+                device_scale_factor=random.choice([1, 1.5, 2]),
                 storage_state=str(ALI_STATE_FILE))
-            ctx[0].add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
+            ctx[0].add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-GB','en'] });
+                window.chrome = { runtime: {} };
+            """)
             ctx[0].route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}",
                          lambda route: route.abort())
             ctx[0].route("**/*.css", lambda route: route.abort())
