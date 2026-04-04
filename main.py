@@ -1447,15 +1447,16 @@ def cmd_fix_scrape_prices(relogin=False):
         login_browser.close()
         print("  Login saved! Starting proxy scrape with 5 tabs...\n")
 
-        # Now launch headless browser with proxy for actual scraping
+        # Launch browser with proxy (headful — headless gets detected/crashes)
         browser = pw.chromium.launch(
-            headless=True, channel="msedge",
+            headless=False, channel="msedge",
             proxy={
                 "server": PROXY_BASE["server"],
                 "username": PROXY_BASE["username"],
                 "password": PROXY_PASS_TEMPLATE.format(seed="main"),
             },
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+            args=["--disable-blink-features=AutomationControlled",
+                  "--window-position=2000,2000"],  # off-screen so it doesn't bother you
         )
 
         # Create NUM_TABS contexts, each with different fingerprint + proxy session
@@ -1564,6 +1565,7 @@ def cmd_fix_scrape_prices(relogin=False):
             tab_idx = 0
 
             for i, (idx, url) in enumerate(still_missing):
+              try:
                 tab_page = tabs[tab_idx % NUM_TABS]
                 tab_ctx_idx = tab_idx % NUM_TABS
 
@@ -1581,7 +1583,6 @@ def cmd_fix_scrape_prices(relogin=False):
                     new_ctx, new_page = _make_tab(browser, tab_ctx_idx + captcha_count[0] * 100)
                     ctxs[tab_ctx_idx] = new_ctx
                     tabs[tab_ctx_idx] = new_page
-                    # Retry on new IP
                     result = _scrape_one(new_page, url)
                     if result is None:
                         failed += 1
@@ -1603,18 +1604,31 @@ def cmd_fix_scrape_prices(relogin=False):
 
                 tab_idx += 1
 
-                # Progress
                 if (i + 1) % 50 == 0:
                     elapsed = time.time() - start_time
                     rate = (i + 1) / max(elapsed - (pass_num - 1) * 10, 1) * 60
                     print(f"  [{i+1}/{len(still_missing)}] found={found} pass_found={pass_found} captchas={captcha_count[0]} | {rate:.0f}/min")
 
-                # Save checkpoint every 200
                 if (i + 1) % 200 == 0:
                     data["products"] = products
                     cp_path.write_text(json.dumps(data, ensure_ascii=False))
 
                 time.sleep(random.uniform(0.3, 0.8))
+
+              except Exception as loop_err:
+                print(f"  ERROR on product {i+1}: {type(loop_err).__name__}: {str(loop_err)[:100]}")
+                failed += 1
+                try:
+                    tabs[tab_idx % NUM_TABS].url
+                except Exception:
+                    print(f"  Tab {tab_idx % NUM_TABS} dead — recreating...")
+                    try:
+                        new_ctx, new_page = _make_tab(browser, tab_idx + 999)
+                        ctxs[tab_idx % NUM_TABS] = new_ctx
+                        tabs[tab_idx % NUM_TABS] = new_page
+                    except Exception as re_err:
+                        print(f"  Tab recreation failed: {re_err}")
+                tab_idx += 1
 
             # Checkpoint after each pass
             data["products"] = products
