@@ -1429,7 +1429,9 @@ def cmd_fix_scrape_prices(relogin=False):
                 try:
                     u = pg[0].url.lower()
                     t = (pg[0].query_selector("body").inner_text() or "")[:500].lower()
-                    return "captcha" in u or "punch" in u or "robot" in t or "verify" in t
+                    return ("captcha" in u or "punch" in u or "sec.aliexpress" in u
+                            or "robot" in t or "verify" in t or "unusual traffic" in t
+                            or "unusual" in t or "detected" in t)
                 except: return False
 
             fresh_browser()
