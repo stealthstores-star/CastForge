@@ -3444,6 +3444,88 @@ Flags:
   --fast    Skip image processing (use original images as-is)
 """
 
+def cmd_export_urls():
+    """Export AliExpress URLs for Importify + mapping file for title preservation."""
+    import csv
+
+    cp_path = Path("scrape_checkpoint.json")
+    if not cp_path.exists():
+        print("  No scrape_checkpoint.json found.")
+        return
+
+    data = json.loads(cp_path.read_text())
+    products = data.get("products", [])
+
+    # Load AI title cache (keyed by raw AliExpress title)
+    title_cache = {}
+    tc_path = Path("ai_title_cache.json")
+    if tc_path.exists():
+        title_cache = json.loads(tc_path.read_text())
+        print(f"  Loaded {len(title_cache)} AI titles from ai_title_cache.json")
+
+    print(f"\n══════════════════════════════════════")
+    print(f"  CastForge URL Export for Importify")
+    print(f"══════════════════════════════════════\n")
+
+    # 1. Export clean URL list (one per line)
+    urls_out = Path("importify_urls.txt")
+    seen = set()
+    url_count = 0
+    with open(urls_out, "w") as f:
+        for p in products:
+            url = p.get("product_url", "")
+            if not url:
+                continue
+            # Normalize to canonical format
+            m = re.search(r"/item/(\d+)\.html", url)
+            if m:
+                canonical = f"https://www.aliexpress.com/item/{m.group(1)}.html"
+                if canonical not in seen:
+                    seen.add(canonical)
+                    f.write(canonical + "\n")
+                    url_count += 1
+    print(f"  ✓ {url_count} URLs → {urls_out}")
+
+    # 2. Export mapping file: product_id, raw_title, ai_title, category, url
+    mapping_out = Path("product_mapping.csv")
+    map_count = 0
+    with open(mapping_out, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["product_id", "raw_title", "ai_title", "category", "url", "price"])
+        for p in products:
+            pid = p.get("id", "")
+            raw_title = p.get("product_title", "")
+            url = p.get("product_url", "")
+            price = p.get("product_price", "")
+            category = p.get("category", p.get("_category", ""))
+
+            # Look up AI title from cache (keyed by raw title)
+            ai_title = title_cache.get(raw_title, "")
+
+            if pid and url:
+                writer.writerow([pid, raw_title, ai_title, category, url, price])
+                map_count += 1
+    print(f"  ✓ {map_count} products → {mapping_out}")
+
+    # 3. Summary
+    titles_matched = sum(1 for p in products if title_cache.get(p.get("product_title", ""), ""))
+    print(f"\n  Summary:")
+    print(f"    Products with URLs:     {url_count}")
+    print(f"    Products in mapping:    {map_count}")
+    print(f"    AI titles cached:       {len(title_cache)}")
+    print(f"    Products with AI title: {titles_matched}")
+    print(f"\n  Protected files (DO NOT DELETE):")
+    print(f"    ai_title_cache.json   — {len(title_cache)} AI-generated titles")
+    print(f"    scrape_checkpoint.json — {len(products)} products")
+    if Path("upload_log.json").exists():
+        print(f"    upload_log.json       — upload history")
+    print(f"\n  Next steps:")
+    print(f"    1. python3 main.py nuke              — delete all Shopify listings")
+    print(f"    2. Import importify_urls.txt via Importify")
+    print(f"    3. python3 main.py fix-shopify-titles — apply AI titles from cache")
+    print()
+
+
 COMMANDS_WITH_FILE = ("comply", "comply-images", "upload", "export", "process-images", "stats", "scrape")
 
 if __name__ == "__main__":
@@ -3512,6 +3594,8 @@ if __name__ == "__main__":
         cmd_fix_scrape_prices(relogin="--relogin" in args)
     elif command == "upload-failed":
         cmd_upload_failed()
+    elif command == "export-urls":
+        cmd_export_urls()
     else:
         print(f"Unknown command: {command}")
         print(USAGE)
