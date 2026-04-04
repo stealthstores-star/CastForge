@@ -1230,7 +1230,7 @@ def cmd_review():
 
 
 ALI_STATE_FILE = Path("ali_state.json")
-PRICE_TABS = 10
+PRICE_TABS = 3
 PRICE_SAVE_EVERY = 200
 
 
@@ -1307,14 +1307,16 @@ async def _run_price_scraper():
         browser = await pw.chromium.launch(
             channel="msedge", headless=True,
             proxy={
-                "server": "socks5://geo.iproyal.com:12321",
+                "server": "http://geo.iproyal.com:12321",
                 "username": "jpo1c9lb5mytbj0t",
                 "password": "GnXsjzZq15h0WEdY_country-us",
             },
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox",
+                  "--ignore-certificate-errors"],
         )
         context = await browser.new_context(
             storage_state=str(ALI_STATE_FILE),
+            ignore_https_errors=True,
         )
         # Block images, CSS, fonts, media — only need HTML + JS for price
         await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}", lambda route: route.abort())
@@ -1448,10 +1450,19 @@ async def _price_tab_worker(context, items, products, progress, data, cp_path, t
 async def _scrape_single_price(page, url, debug_count=None):
     """Navigate to one product page, extract price + shipping. Returns (price, shipping, is_captcha, error)."""
     try:
-        resp = await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        # Retry once on tunnel failure
+        for _attempt in range(2):
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                break
+            except Exception as nav_err:
+                if "TUNNEL" in str(nav_err) and _attempt == 0:
+                    await page.wait_for_timeout(2000)
+                    continue
+                raise
 
         # Wait for price to render — the price is JS-rendered
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(5000)
 
         # Also try waiting for a price-like element
         try:
