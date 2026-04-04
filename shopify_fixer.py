@@ -151,34 +151,29 @@ def match_product(shopify_title, ai_cache, cache_normalised, cache_tokens=None,
         raw = cache_normalised[norm]
         return raw, ai_cache[raw], "normalised"
 
-    # 3. Asymmetric subset coverage: ≥90% of Shopify tokens exist in cache entry, AND ≥5 shared
+    # 3. Bidirectional subset coverage: either direction ≥85%, ≥5 shared
     if cache_tokens:
         shop_tokens = _tokenise(shopify_title)
         if shop_tokens:
-            best_coverage, best_shared, best_raw = 0.0, 0, None
-            best_jaccard, best_jaccard_raw = 0.0, None
+            best_score, best_shared, best_raw, best_dir = 0.0, 0, None, ""
 
             for raw_title, raw_tokens in cache_tokens.items():
                 if not raw_tokens:
                     continue
                 inter = shop_tokens & raw_tokens
                 shared = len(inter)
-                coverage = shared / len(shop_tokens)  # what % of Shopify tokens are in cache
-                union = shop_tokens | raw_tokens
-                jaccard = shared / len(union)
+                if shared < 5:
+                    continue
+                fwd = shared / len(shop_tokens)   # % of Shopify tokens in cache
+                rev = shared / len(raw_tokens)     # % of cache tokens in Shopify
+                best_dir_score = max(fwd, rev)
+                direction = f"fwd({fwd:.0%})" if fwd >= rev else f"rev({rev:.0%})"
 
-                # Primary: subset coverage
-                if coverage >= 0.90 and shared >= 5 and coverage > best_coverage:
-                    best_coverage, best_shared, best_raw = coverage, shared, raw_title
-
-                # Fallback: Jaccard for when Shopify has extra tokens
-                if jaccard >= 0.80 and shared >= 5 and jaccard > best_jaccard:
-                    best_jaccard, best_jaccard_raw = jaccard, raw_title
+                if best_dir_score >= 0.85 and best_dir_score > best_score:
+                    best_score, best_shared, best_raw, best_dir = best_dir_score, shared, raw_title, direction
 
             if best_raw:
-                return best_raw, ai_cache[best_raw], f"subset({best_coverage:.0%},{best_shared})"
-            if best_jaccard_raw:
-                return best_jaccard_raw, ai_cache[best_jaccard_raw], f"jaccard({best_jaccard:.0%})"
+                return best_raw, ai_cache[best_raw], f"subset-{best_dir},{best_shared}"
 
     # 4. Image-ID match: extract AliExpress product ID from alicdn.com image URLs
     if shopify_images and scrape_data:
