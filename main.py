@@ -1283,8 +1283,8 @@ def cmd_fix_scrape_prices(relogin=False):
 
     # Uses Mullvad VPN (flat rate, unlimited bandwidth, zero proxy cost)
     # Rotates IP by calling `mullvad reconnect`
-    NUM_WORKERS = 15  # M4 Max can handle it
-    PER_IP = 9999  # don't rotate VPN proactively — only on captcha (all workers share 1 IP)
+    NUM_WORKERS = 8
+    PER_IP = 9999  # only rotate VPN on captcha
 
     UAS = [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -1432,6 +1432,8 @@ def cmd_fix_scrape_prices(relogin=False):
                     return "captcha" in u or "punch" in u or "robot" in t or "verify" in t
                 except: return False
 
+            # Stagger worker starts so they don't all hit AliExpress at once
+            time.sleep(worker_id * 2)
             fresh_browser()
             on_ip = 0
 
@@ -1472,6 +1474,8 @@ def cmd_fix_scrape_prices(relogin=False):
                                 print(f"  ✓ W{worker_id} [{found[0]}] {price} ship={ship} — {url[-35:]}")
                     else:
                         with lock: failed[0] += 1
+
+                    time.sleep(random.uniform(0.5, 1.0))
                 except:
                     with lock: failed[0] += 1
                     try: pg[0].url
