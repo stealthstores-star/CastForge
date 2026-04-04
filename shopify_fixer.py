@@ -213,7 +213,7 @@ def _resize_for_vision(url):
         return None
 
 def classify_images(image_urls, api_key):
-    """Classify images as product_photo or not. Resizes to 512x512 in memory for API only."""
+    """Classify images. Resizes to 512x512 in memory for API only."""
     if not image_urls:
         return []
 
@@ -221,7 +221,7 @@ def classify_images(image_urls, api_key):
     for i in range(0, len(image_urls), 5):
         batch = image_urls[i:i+5]
         content = []
-        valid_batch = []  # track which URLs we actually sent
+        valid_batch = []
 
         for j, url in enumerate(batch):
             b64 = _resize_for_vision(url)
@@ -230,20 +230,13 @@ def classify_images(image_urls, api_key):
                 content.append({"type": "text", "text": f"Image {len(valid_batch)+1}:"})
                 valid_batch.append(url)
             else:
-                results.append((url, "other"))  # can't download = skip
+                results.append((url, "other"))
 
         if not valid_batch:
             continue
 
-        content.append({"type": "text", "text": """Classify each image as exactly one of:
-- product_photo (actual product image, clear photo of the item)
-- review_photo (customer review, usually low quality)
-- size_chart (sizing/measurement diagram)
-- emoji_sticker (emoji, sticker, cartoon graphic)
-- logo_watermark (store logo, watermark, branding)
-- other
-
-Reply with ONLY classifications, one per line: "1: product_photo" """})
+        content.append({"type": "text", "text": """Classify this image. ONE word only: product_photo, text_panel, review_photo, size_chart, logo, packaging, other.
+Rules: if >40% of image is text/watermark → text_panel, NEVER product_photo. Reply one per line: "1: product_photo" """})
 
         try:
             r = requests.post("https://api.anthropic.com/v1/messages",
@@ -270,30 +263,45 @@ Reply with ONLY classifications, one per line: "1: product_photo" """})
 
     return results
 
+# ── Generate AI title via vision ──
+def generate_ai_title(image_urls, fallback_title, api_key):
+    """Generate clean product title from first 1-2 product images using Haiku vision."""
+    content = []
+    for url in image_urls[:2]:
+        b64 = _resize_for_vision(url)
+        if b64:
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}})
+
+    if not content:
+        return fallback_title
+
+    content.append({"type": "text", "text": f"""Look at this product image and write a clean, SEO-friendly product title for an e-commerce store selling resin models, miniatures, and hobby kits. Include: specific subject (e.g. 'Viking Warrior', 'WWII Tiger Tank', 'Cyber Succubus'), scale if visible, material ('Resin'), and type ('Figure', 'Bust', 'Kit', 'Miniature'). 60-80 chars max. No filler words, no '1/10 Cast Resin Model Assembly Kit GK Unpainted Needs To Be Assembled' junk. The original listing title was: {fallback_title[:100]}. Reply with ONLY the title text, nothing else."""})
+
+    try:
+        r = requests.post("https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 100,
+                  "messages": [{"role": "user", "content": content}]},
+            timeout=30)
+        if r.status_code == 200:
+            title = r.json()["content"][0]["text"].strip().strip('"').strip("'")
+            if 10 < len(title) < 100:
+                return title
+    except Exception:
+        pass
+    return fallback_title
+
 # ── Generate description ──
 def generate_description(title, category, api_key):
-    """Generate ~100-150 word SEO product description using Haiku."""
+    """Generate ~120 word SEO product description using Haiku."""
     try:
         r = requests.post("https://api.anthropic.com/v1/messages",
             headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
             json={"model": "claude-haiku-4-5-20251001", "max_tokens": 300,
-                  "messages": [{"role": "user", "content": f"""Write a 100-150 word product description for an online store listing.
-Product: {title}
-Category: {category}
-Requirements:
-- Benefit-led, not feature-led
-- SEO-friendly with natural keyword usage
-- Professional tone, no hype or exclamation marks
-- Mention material (resin), assembly required, painting needed
-- Include a line about shipping
-- Do NOT mention AliExpress, China, or dropshipping
-- HTML format with <p> tags only, no headers
-
-Reply with ONLY the HTML description, nothing else."""}]},
+                  "messages": [{"role": "user", "content": f"""Write a 120-word product description for {title}. Category: {category}. Include: specific details from the title, target hobbyist, assembly requirements, one concrete use case. Avoid 'elevate your collection', 'perfect for enthusiasts', 'exceptional craftsmanship'. 2 paragraphs, HTML <p> tags only, no code fences."""}]},
             timeout=30)
         if r.status_code == 200:
             desc = r.json()["content"][0]["text"].strip()
-            # Strip markdown code fences
             desc = re.sub(r"^```html?\s*\n?", "", desc)
             desc = re.sub(r"\n?```\s*$", "", desc)
             return desc.strip()
@@ -303,7 +311,7 @@ Reply with ONLY the HTML description, nothing else."""}]},
 
 # ── Update a single Shopify product ──
 def fix_product(product, ai_title, category_handle, parent_handle, description,
-                good_images, token, collection_map):
+                good_images, token, collection_map, test_mode=False):
     """Apply all fixes to a Shopify product."""
     headers = shopify_headers(token)
     base = shopify_base()
@@ -369,11 +377,13 @@ def fix_product(product, ai_title, category_handle, parent_handle, description,
                            timeout=15)
                 time.sleep(0.3)
                 # Set available quantity to 10
+                inv_payload = {"location_id": loc_id, "inventory_item_id": iid, "available": 10}
                 ir = requests.post(f"{base}/inventory_levels/set.json", headers=headers,
-                                 json={"location_id": loc_id, "inventory_item_id": iid, "available": 10},
-                                 timeout=15)
+                                 json=inv_payload, timeout=15)
+                if test_mode:
+                    print(f"       INV variant={variant.get('id')} iid={iid}: {ir.status_code} {ir.text[:150]}")
                 if ir.status_code not in (200, 201):
-                    errors.append(f"Inventory set failed for variant {variant.get('id')}: {ir.status_code}")
+                    errors.append(f"Inventory set failed for variant {variant.get('id')}: {ir.status_code} {ir.text[:100]}")
             except Exception as e:
                 errors.append(f"Inventory error variant {variant.get('id')}: {e}")
             time.sleep(0.3)
@@ -507,13 +517,10 @@ def run(test_mode=False, poll=False):
                     print(f"       Token overlap: {best_score:.0%} | Shared: {best_shared} | Shop-only: {shop_only[:8]} | Cache-only: {cache_only[:8]}")
                 continue
 
-            raw_title, ai_title, match_type = match
+            raw_title, cached_title, match_type = match
             if test_mode:
                 stat_key = "subset" if match_type.startswith("subset") else "jaccard" if match_type.startswith("jaccard") else match_type
                 test_stats[stat_key] = test_stats.get(stat_key, 0) + 1
-
-            # Categorise
-            cat_handle, _, parent_handle = categorize(ai_title)
 
             # Get images from scrape data
             scrape_product = scrape_data.get(raw_title) or scrape_data.get(normalise(raw_title))
@@ -527,25 +534,31 @@ def run(test_mode=False, poll=False):
             shopify_images = [img.get("src", "") for img in product.get("images", []) if img.get("src")]
             all_images = list(dict.fromkeys(shopify_images + extra_images))  # dedupe, preserve order
 
-            good_images = all_images  # default: keep all
+            good_images = all_images
             images_deleted = 0
             if all_images:
-                classified = classify_images(all_images[:15], api_key)  # max 15 images
+                classified = classify_images(all_images[:15], api_key)
                 good_images = [url for url, cls in classified if cls == "product_photo"]
                 images_deleted = len(classified) - len(good_images)
                 if not good_images:
-                    good_images = all_images[:5]  # fallback: keep first 5
+                    good_images = all_images[:5]
                     images_deleted = 0
                 if test_mode:
                     test_stats["images_kept"] += len(good_images)
                     test_stats["images_deleted"] += images_deleted
+
+            # Generate AI title via vision (using first 1-2 product images)
+            ai_title = generate_ai_title(good_images, cached_title, api_key)
+
+            # Re-categorise using the new AI title
+            cat_handle, _, parent_handle = categorize(ai_title)
 
             # Generate description
             desc = generate_description(ai_title, cat_handle, api_key)
 
             # Apply fixes
             errs = fix_product(product, ai_title, cat_handle, parent_handle, desc,
-                              good_images, token, collection_map)
+                              good_images, token, collection_map, test_mode=test_mode)
 
             processed_set.add(pid)
             progress["processed_ids"].append(pid)
