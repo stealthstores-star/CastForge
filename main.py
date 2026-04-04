@@ -1250,14 +1250,14 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices: 8 Playwright contexts + proxy + login state."""
+    """Re-scrape prices: direct HTTP + SEO API (low bandwidth)."""
     if relogin or not ALI_STATE_FILE.exists():
         from playwright.sync_api import sync_playwright as sync_pw
         with sync_pw() as p:
             _ensure_ali_login(p)
 
-    import asyncio
-    asyncio.run(_run_price_scraper())
+    # Skip Playwright browser — go straight to lightweight HTTP approach
+    # (Playwright wastes ~1MB/product through proxy; HTTP uses ~10KB/product)
 
     # Load cookies from login state
     cookies = {}
@@ -1367,22 +1367,40 @@ def cmd_fix_scrape_prices(relogin=False):
                     print(f"    DBG SEO: {r.status_code}, {len(r.text)}b, body[:200]={r.text[:200]}")
                 if r.status_code == 200 and len(r.text) > 100:
                     body = r.text
-                    for pattern in [
-                        r'"lowPrice"\s*:\s*"?(\d+\.?\d*)',
-                        r'"highPrice"\s*:\s*"?(\d+\.?\d*)',
-                        r'"price"\s*:\s*"?(\d+\.?\d*)',
-                        r'"formattedActivityPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
-                        r'"minPrice"\s*:\s*"?(\d+\.?\d*)',
-                        r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                    # Try cent-based fields first (AliExpress 2025+ format)
+                    for cent_pat in [
+                        r'"priceCent"\s*:\s*"?(\d+)',
+                        r'"actPriceCent"\s*:\s*"?(\d+)',
+                        r'"discountPriceCent"\s*:\s*"?(\d+)',
+                        r'"salePriceCent"\s*:\s*"?(\d+)',
+                        r'"originalPriceCent"\s*:\s*"?(\d+)',
                     ]:
-                        pm = re.search(pattern, body)
+                        pm = re.search(cent_pat, body)
                         if pm:
-                            val = float(pm.group(1))
-                            if 0.01 < val < 500:
-                                price = f"£{val:.2f}"
+                            cents = int(pm.group(1))
+                            if 50 <= cents < 50000:
+                                price = f"£{cents / 100:.2f}"
                                 with lock:
                                     progress["seo_ok"] += 1
                                 break
+                    # Then try dollar/formatted fields
+                    if not price:
+                        for pattern in [
+                            r'"lowPrice"\s*:\s*"?(\d+\.?\d*)',
+                            r'"highPrice"\s*:\s*"?(\d+\.?\d*)',
+                            r'"price"\s*:\s*"?(\d+\.?\d*)',
+                            r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                            r'"minPrice"\s*:\s*"?(\d+\.?\d*)',
+                            r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                        ]:
+                            pm = re.search(pattern, body)
+                            if pm:
+                                val = float(pm.group(1))
+                                if 0.01 < val < 500:
+                                    price = f"£{val:.2f}"
+                                    with lock:
+                                        progress["seo_ok"] += 1
+                                    break
 
                     ship_m = re.search(r'"freightAmount"\s*:\s*"?(\d+\.?\d*)', body)
                     if ship_m:
@@ -1395,19 +1413,33 @@ def cmd_fix_scrape_prices(relogin=False):
             # Step 3: If seodata failed, try parsing the product page HTML we already have
             if not price and page_body:
                 body = page_body.replace("\uffe1", "£")
-                for pattern in [
-                    r'"formattedActivityPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
-                    r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
-                    r'"skuCalPrice"\s*:\s*"(\d+\.?\d*)',
-                    r'"minPrice"\s*:\s*"(\d+\.?\d*)',
-                    r'"lowPrice"\s*:\s*"(\d+\.?\d*)',
+                # Try cent fields in page HTML
+                for cent_pat in [
+                    r'"priceCent"\s*:\s*"?(\d+)',
+                    r'"discountPriceCent"\s*:\s*"?(\d+)',
+                    r'"originalPriceCent"\s*:\s*"?(\d+)',
                 ]:
-                    pm = re.search(pattern, body[:50000])
+                    pm = re.search(cent_pat, body[:80000])
                     if pm:
-                        val = float(pm.group(1))
-                        if 0.01 < val < 500:
-                            price = f"£{val:.2f}"
+                        cents = int(pm.group(1))
+                        if 50 <= cents < 50000:
+                            price = f"£{cents / 100:.2f}"
                             break
+                # Then try formatted fields
+                if not price:
+                    for pattern in [
+                        r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                        r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                        r'"skuCalPrice"\s*:\s*"(\d+\.?\d*)',
+                        r'"minPrice"\s*:\s*"(\d+\.?\d*)',
+                        r'"lowPrice"\s*:\s*"(\d+\.?\d*)',
+                    ]:
+                        pm = re.search(pattern, body[:80000])
+                        if pm:
+                            val = float(pm.group(1))
+                            if 0.01 < val < 500:
+                                price = f"£{val:.2f}"
+                                break
 
                 if not shipping:
                     ship_m = re.search(r'"freightAmount"\s*:\s*"?(\d+\.?\d*)', body[:50000])
