@@ -130,8 +130,36 @@ def main():
 
         print("  Opening DSers...")
         page.goto(DSERS_IMPORT_PAGE, wait_until="domcontentloaded", timeout=30000)
-        auto_login(page)
-        time.sleep(2)
+        time.sleep(3)
+
+        # Login first if needed — before touching any input fields
+        login_url = page.url.lower()
+        if "login" in login_url or "sign" in login_url:
+            print("  Login page detected — logging in...")
+            # Clear any pre-filled text in email field
+            email_input = page.query_selector('input[type="email"], input[type="text"]')
+            pass_input = page.query_selector('input[type="password"]')
+            if email_input and pass_input:
+                email_input.click()
+                email_input.fill("")
+                email_input.fill(DSERS_EMAIL)
+                time.sleep(0.3)
+                pass_input.click()
+                pass_input.fill(DSERS_PASS)
+                time.sleep(0.3)
+                login_btn = page.query_selector('button:has-text("LOG IN"), button:has-text("Log in"), button[type="submit"]')
+                if login_btn:
+                    login_btn.click()
+                else:
+                    pass_input.press("Enter")
+                print("  Waiting for login...")
+                time.sleep(5)
+                # Navigate to import list after login
+                page.goto(DSERS_IMPORT_PAGE, wait_until="domcontentloaded", timeout=30000)
+                time.sleep(3)
+            print("  Logged in!\n")
+        else:
+            print("  Already logged in.\n")
 
         # Test badge selector
         count = page.evaluate(GET_COUNT_JS)
