@@ -1281,11 +1281,10 @@ def cmd_fix_scrape_prices(relogin=False):
         print("  All products have prices!")
         return
 
-    PROXY_SERVER = "http://geo.iproyal.com:12321"
-    PROXY_USER = "jpo1c9lb5mytbj0t"
-    PROXY_PASS = "GnXsjzZq15h0WEdY_country-gb_session-{seed}"
-    NUM_WORKERS = 10
-    PER_IP = 150
+    # Uses Mullvad VPN (flat rate, unlimited bandwidth, zero proxy cost)
+    # Rotates IP by calling `mullvad reconnect`
+    NUM_WORKERS = 5  # fewer workers since all share one VPN connection
+    PER_IP = 80  # reconnect VPN every 80 products per worker
 
     UAS = [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -1350,11 +1349,32 @@ def cmd_fix_scrape_prices(relogin=False):
     captcha_rotations = [0]
     start = time.time()
 
-    print(f"  Workers: {NUM_WORKERS} parallel browsers")
-    print(f"  IP rotation: every {PER_IP} products + on captcha")
-    print(f"  Est: ~3.5 GB, ~2 hours\n")
+    import subprocess
 
-    # Step 1: Login (headful, direct connection)
+    def rotate_vpn():
+        """Rotate Mullvad VPN to get a new IP. Free, instant."""
+        try:
+            subprocess.run(["mullvad", "reconnect"], timeout=5, capture_output=True)
+            time.sleep(3)  # wait for new connection
+            r = subprocess.run(["mullvad", "status"], timeout=5, capture_output=True, text=True)
+            status = r.stdout.strip().split('\n')[0] if r.stdout else "unknown"
+            print(f"  VPN rotated: {status}")
+        except Exception as e:
+            print(f"  VPN rotate failed: {e}")
+
+    # Connect Mullvad to GB server
+    print("  Connecting Mullvad VPN to GB...")
+    subprocess.run(["mullvad", "relay", "set", "location", "gb"], capture_output=True)
+    subprocess.run(["mullvad", "connect"], capture_output=True)
+    time.sleep(3)
+    r = subprocess.run(["mullvad", "status"], capture_output=True, text=True)
+    print(f"  {r.stdout.strip().split(chr(10))[0]}")
+
+    print(f"\n  Workers: {NUM_WORKERS} browsers (Mullvad VPN, zero data cost)")
+    print(f"  IP rotation: every {PER_IP} products + on captcha")
+    print(f"  Bandwidth: FREE (Mullvad flat rate)\n")
+
+    # Step 1: Login (headful, through VPN)
     from playwright.sync_api import sync_playwright as _sync_pw
     with _sync_pw() as pw:
         print("  Log in to AliExpress...")
@@ -1382,14 +1402,14 @@ def cmd_fix_scrape_prices(relogin=False):
 
             def fresh_browser():
                 ip_num[0] += 1
-                seed = f"w{worker_id}n{ip_num[0]}r{random.randint(1000,9999)}"
                 for x in [pg, cxt, brow]:
                     try: x[0].close()
                     except: pass
+                # Rotate Mullvad VPN for new UK IP (free, no proxy needed)
+                with lock:
+                    rotate_vpn()
                 brow[0] = pw.chromium.launch(
                     headless=False, channel="msedge",
-                    proxy={"server":PROXY_SERVER,"username":PROXY_USER,
-                           "password":PROXY_PASS.format(seed=seed)},
                     args=["--disable-blink-features=AutomationControlled","--window-position=2000,2000"])
                 cxt[0] = brow[0].new_context(
                     viewport=random.choice(VPS), locale="en-GB",
