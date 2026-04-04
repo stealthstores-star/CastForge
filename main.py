@@ -2057,8 +2057,6 @@ async def _extract_price_from_page(page):
                     price = f"£{valid[0]:.2f}"
         except Exception:
             pass
-    except Exception:
-        pass
 
     # Shipping
     try:
