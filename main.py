@@ -1229,18 +1229,64 @@ def cmd_review():
         print()
 
 
-def cmd_fix_scrape_prices():
-    """Re-scrape prices for products missing them in checkpoint. 60 threads via proxy."""
+ALI_COOKIES_FILE = Path("ali_cookies.json")
+
+
+def _capture_ali_login():
+    """Open visible browser for user to log in, save cookies."""
+    from playwright.sync_api import sync_playwright
+
+    print("  Opening browser for AliExpress login...")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 900},
+            locale="en-GB",
+        )
+        page = context.new_page()
+        page.goto("https://www.aliexpress.com/", wait_until="domcontentloaded")
+
+        input("\n  Please log in to AliExpress. Press Enter when done... ")
+
+        cookies = context.cookies()
+        ALI_COOKIES_FILE.write_text(json.dumps(cookies, indent=2))
+        print(f"  Saved {len(cookies)} cookies to {ALI_COOKIES_FILE}")
+
+        context.close()
+        browser.close()
+
+
+def _load_ali_cookies():
+    """Load cookies from ali_cookies.json and convert to requests dict format."""
+    if not ALI_COOKIES_FILE.exists():
+        return {}
+    cookies_list = json.loads(ALI_COOKIES_FILE.read_text())
+    return {c["name"]: c["value"] for c in cookies_list}
+
+
+def cmd_fix_scrape_prices(relogin=False):
+    """Re-scrape prices with login cookies + proxy. 60 threads."""
     from concurrent.futures import ThreadPoolExecutor
     import threading
 
-    PROXY = "http://jpo1c9lb5mytbj0t:GnXsjzZq15h0WEdY_country-us@geo.iproyal.com:12321"
+    PROXY = "http://jpo1c9lb5mytbj0t:GnXsjzZq15h0WEdY@geo.iproyal.com:12321"
     WORKERS = 60
     SAVE_EVERY = 500
 
     print("\n══════════════════════════════════════")
     print("  CastForge Price Re-Scraper")
     print("══════════════════════════════════════\n")
+
+    # Step 1: Login if needed
+    if relogin or not ALI_COOKIES_FILE.exists():
+        _capture_ali_login()
+
+    cookies = _load_ali_cookies()
+    if not cookies:
+        print("  No cookies found. Run with --relogin.")
+        return
+
+    print(f"  Loaded {len(cookies)} cookies from {ALI_COOKIES_FILE}")
 
     cp_path = Path("scrape_checkpoint.json")
     if not cp_path.exists():
@@ -1260,7 +1306,7 @@ def cmd_fix_scrape_prices():
 
     print(f"  Total products: {len(products)}")
     print(f"  Missing prices: {len(needs_price)}")
-    print(f"  Workers: {WORKERS} (proxy: IPRoyal rotating)")
+    print(f"  Workers: {WORKERS} (proxy + cookies)")
 
     if not needs_price:
         print("  All products have prices!")
@@ -1275,9 +1321,8 @@ def cmd_fix_scrape_prices():
         idx, url = item
         proxies = {"http": PROXY, "https": PROXY}
         headers_req = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-GB,en;q=0.9",
-            "Range": "bytes=0-15000",  # Only fetch first 15KB — meta/price in <head>
         }
 
         price = ""
@@ -1286,7 +1331,8 @@ def cmd_fix_scrape_prices():
         for attempt in range(2):
             try:
                 resp = requests.get(url, headers=headers_req, proxies=proxies,
-                                     timeout=15, allow_redirects=True)
+                                     cookies=cookies, timeout=15,
+                                     allow_redirects=True)
                 if resp.status_code not in (200, 206):
                     continue
 
@@ -2045,7 +2091,7 @@ if __name__ == "__main__":
     elif command == "dedup-shopify":
         cmd_dedup_shopify()
     elif command == "fix-scrape-prices":
-        cmd_fix_scrape_prices()
+        cmd_fix_scrape_prices(relogin="--relogin" in args)
     elif command == "upload-failed":
         cmd_upload_failed()
     else:
