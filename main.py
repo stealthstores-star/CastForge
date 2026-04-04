@@ -1703,10 +1703,19 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
     context = await browser.new_context(**ctx_kwargs)
 
-    # Block images/CSS/fonts to save bandwidth
+    # Block everything except essential JS for mtop API price calls
+    # This saves ~1.5MB per product vs loading full page
     await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}",
                          lambda route: route.abort())
     await context.route("**/*.css", lambda route: route.abort())
+    # Block heavy non-essential JS (saves ~350KB per page load)
+    await context.route("**/page-header-ui/**", lambda route: route.abort())
+    # Block tracking/analytics JS
+    await context.route("**/*google*analytics*", lambda route: route.abort())
+    await context.route("**/*googletagmanager*", lambda route: route.abort())
+    await context.route("**/*facebook*", lambda route: route.abort())
+    await context.route("**/*hotjar*", lambda route: route.abort())
+    await context.route("**/*sentry*", lambda route: route.abort())
 
     page = await context.new_page()
     await page.add_init_script(stealth_js)
@@ -1806,16 +1815,37 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                     pass
 
             page.on("response", _on_response)
-            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
 
-            # Wait specifically for the mtop price API instead of a blind timeout
+            # Wait for the mtop price API (the ONLY source of price data)
             try:
-                await page.wait_for_response(
-                    lambda r: "mtop.aliexpress.pdp.pc.query" in r.url,
-                    timeout=15000
+                resp = await page.wait_for_response(
+                    lambda r: "mtop.aliexpress.pdp" in r.url,
+                    timeout=20000
                 )
-                # Give response handler a moment to process it
-                await page.wait_for_timeout(500)
+                # Process the mtop response directly here as backup
+                try:
+                    mtop_body = await resp.text()
+                    if not price_data["price"]:
+                        for cent_pat in [
+                            r'"priceCent"\s*:\s*"?(\d+)',
+                            r'"actPriceCent"\s*:\s*"?(\d+)',
+                            r'"discountPriceCent"\s*:\s*"?(\d+)',
+                            r'"salePriceCent"\s*:\s*"?(\d+)',
+                            r'"originalPriceCent"\s*:\s*"?(\d+)',
+                        ]:
+                            m = re.search(cent_pat, mtop_body)
+                            if m:
+                                cents = int(m.group(1))
+                                if 50 <= cents < 50000:
+                                    price_data["price"] = f"£{cents / 100:.2f}"
+                                    price_data["debug"] = f"direct_cents={cents}"
+                                    break
+                        if not price_data["shipping"] and "freeShipping" in mtop_body:
+                            price_data["shipping"] = "0"
+                except Exception:
+                    pass
+                await page.wait_for_timeout(300)
             except Exception:
                 pass  # timeout — try fallback
 
