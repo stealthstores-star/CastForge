@@ -1287,7 +1287,7 @@ def cmd_fix_scrape_prices(relogin=False):
     PROXY_SERVER = "http://geo.iproyal.com:12321"
     PROXY_USER = "jpo1c9lb5mytbj0t"
     PROXY_PASS = "GnXsjzZq15h0WEdY_country-gb_session-{seed}"
-    PER_IP = 25  # new IP every 25 products
+    PER_IP = 40  # new IP every 40 products (fewer restarts = less bandwidth)
 
     # Same price JS as the working scraper.py
     PRICE_JS = """() => {
@@ -1329,19 +1329,47 @@ def cmd_fix_scrape_prices(relogin=False):
     }"""
 
     SHIP_JS = """() => {
+        // Strategy 1: DOM selectors
         const sels = ['[class*="shipping-value"]','[class*="dynamic-shipping"] [class*="price"]',
             '[class*="shipping-cost"]','[data-pl="product-shipping"]','[class*="dynamic-shipping"]',
-            '[class*="Shipping"]'];
+            '[class*="service-commitment"]','[class*="Shipping"]','[class*="shipping"]'];
         for (const sel of sels) {
             try {
                 const el = document.querySelector(sel);
                 if (!el) continue;
-                const t = el.innerText.trim(), lo = t.toLowerCase();
-                if (lo==='free'||lo==='free shipping') return 'Free';
-                if (/free\\s*shipp/i.test(t) && !/buy\\s+\\d+/i.test(t) && !/over|above/i.test(t)) return 'Free';
-                const m = t.match(/[£$€]\\s*([\\d.]+)/);
-                if (m) return parseFloat(m[1])===0?'Free':m[1];
+                const t = el.innerText.trim();
+                // Look for "Shipping: £X.XX" or "Shipping: Free"
+                const shipPrice = t.match(/[Ss]hipping[:\\s]*[£$€]\\s*([\\d,.]+)/);
+                if (shipPrice) {
+                    const v = parseFloat(shipPrice[1].replace(',',''));
+                    return v === 0 ? 'Free' : shipPrice[1].replace(',','');
+                }
+                // Check for "Free shipping" (not conditional)
+                if (/^free$/i.test(t.trim()) || /^free\\s*shipping$/i.test(t.trim())) return 'Free';
+                if (/free\\s*shipp/i.test(t) && !/over|above|orders/i.test(t) && t.length < 50) return 'Free';
+                // Any currency amount in a shipping-specific element
+                const m = t.match(/[£$€]\\s*([\\d,.]+)/);
+                if (m && t.length < 80) {
+                    const v = parseFloat(m[1].replace(',',''));
+                    return v === 0 ? 'Free' : m[1].replace(',','');
+                }
             } catch(e){}
+        }
+        // Strategy 2: Search visible page text for "Shipping: £X.XX"
+        const body = document.body ? document.body.innerText : '';
+        const sm = body.match(/[Ss]hipping[:\\s]*[£$€]\\s*([\\d,.]+)/);
+        if (sm) {
+            const v = parseFloat(sm[1].replace(',',''));
+            return v === 0 ? 'Free' : sm[1].replace(',','');
+        }
+        if (/[Ss]hipping[:\\s]*[Ff]ree/i.test(body) && !/over|above/i.test(body.substring(body.search(/[Ss]hipping[:\\s]*[Ff]ree/), body.search(/[Ss]hipping[:\\s]*[Ff]ree/) + 80))) return 'Free';
+        // Strategy 3: JSON data
+        const scripts = document.querySelectorAll('script');
+        for (const s of scripts) {
+            const t = s.textContent||'';
+            const fm = t.match(/"freightAmount"\\s*:\\s*\\{\\s*"value"\\s*:\\s*([\\d.]+)/);
+            if (fm) return parseFloat(fm[1])===0?'Free':fm[1];
+            if (/"isFreeship"\\s*:\\s*true/i.test(t)) return 'Free';
         }
         return '';
     }"""
@@ -1485,7 +1513,7 @@ def cmd_fix_scrape_prices(relogin=False):
                     # Wait for product title (confirms real product loaded)
                     try:
                         page[0].wait_for_selector(
-                            'h1[data-pl="product-title"], h1[class*="title"]', timeout=8000)
+                            'h1[data-pl="product-title"], h1[class*="title"]', timeout=5000)
                     except:
                         failed += 1
                         continue
@@ -1512,7 +1540,7 @@ def cmd_fix_scrape_prices(relogin=False):
                         data["products"] = products
                         cp_path.write_text(json.dumps(data, ensure_ascii=False))
 
-                    time.sleep(random.uniform(1.0, 2.0))
+                    time.sleep(random.uniform(0.5, 1.2))
 
                 except Exception as e:
                     print(f"  Error {i+1}: {type(e).__name__}: {str(e)[:80]}")
