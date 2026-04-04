@@ -1237,7 +1237,14 @@ PRICE_SAVE_EVERY = 200
 def _ensure_ali_login(pw):
     """Login flow: open headed Edge, user logs in, save state."""
     print("  Opening Edge for AliExpress login...")
-    browser = pw.chromium.launch(channel="msedge", headless=False)
+    browser = pw.chromium.launch(
+        channel="msedge", headless=False,
+        proxy={
+            "server": "http://geo.iproyal.com:12321",
+            "username": "jpo1c9lb5mytbj0t",
+            "password": "GnXsjzZq15h0WEdY",
+        },
+    )
     context = browser.new_context(viewport={"width": 1280, "height": 900}, locale="en-GB")
     page = context.new_page()
     page.goto("https://www.aliexpress.com/", wait_until="domcontentloaded")
