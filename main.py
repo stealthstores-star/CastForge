@@ -1422,22 +1422,22 @@ def cmd_fix_scrape_prices(relogin=False):
                     if on_ip >= PER_IP:
                         fresh_browser(); on_ip = 0
 
-                    try: pg[0].goto(url, wait_until="commit", timeout=12000)
+                    try: pg[0].goto(url, wait_until="commit", timeout=8000)
                     except:
                         fresh_browser(); on_ip = 0
-                        try: pg[0].goto(url, wait_until="commit", timeout=12000)
+                        try: pg[0].goto(url, wait_until="commit", timeout=8000)
                         except: continue
 
                     on_ip += 1
                     if is_capt():
                         with lock: captcha_rotations[0] += 1
                         fresh_browser(); on_ip = 0
-                        try: pg[0].goto(url, wait_until="commit", timeout=12000)
+                        try: pg[0].goto(url, wait_until="commit", timeout=8000)
                         except: continue
                         if is_capt(): continue
 
-                    try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=5000)
-                    except: continue
+                    try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=3000)
+                    except: pass  # try price extraction anyway
 
                     price = pg[0].evaluate(PRICE_JS) or ""
                     ship = pg[0].evaluate(SHIP_JS) or ""
@@ -1452,7 +1452,7 @@ def cmd_fix_scrape_prices(relogin=False):
                     else:
                         with lock: failed[0] += 1
 
-                    time.sleep(random.uniform(0.3, 0.8))
+                    time.sleep(random.uniform(0.2, 0.5))
                 except:
                     with lock: failed[0] += 1
                     try: pg[0].url
