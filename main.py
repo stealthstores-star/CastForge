@@ -1283,8 +1283,8 @@ def cmd_fix_scrape_prices(relogin=False):
 
     # Uses Mullvad VPN (flat rate, unlimited bandwidth, zero proxy cost)
     # Rotates IP by calling `mullvad reconnect`
-    NUM_WORKERS = 5
-    PER_IP = 80  # new browser + fingerprint every 80 (NO VPN rotate unless captcha)
+    NUM_WORKERS = 2
+    PER_IP = 9999  # NO proactive rotation — only on captcha
 
     UAS = [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -1347,20 +1347,23 @@ def cmd_fix_scrape_prices(relogin=False):
     found = [0]
     failed = [0]
     captcha_rotations = [0]
+    captcha_event = threading.Event()  # signals ALL workers to restart
     start = time.time()
 
     import subprocess
 
-    def rotate_vpn():
-        """Rotate Mullvad VPN to get a new IP. Free, instant."""
+    def rotate_vpn_and_signal():
+        """Rotate Mullvad VPN, signal all workers to restart browsers."""
+        captcha_rotations[0] += 1
+        print(f"\n  !! CAPTCHA #{captcha_rotations[0]} — rotating VPN + restarting all browsers...")
         try:
             subprocess.run(["mullvad", "reconnect"], timeout=5, capture_output=True)
-            time.sleep(3)  # wait for new connection
+            time.sleep(3)
             r = subprocess.run(["mullvad", "status"], timeout=5, capture_output=True, text=True)
-            status = r.stdout.strip().split('\n')[0] if r.stdout else "unknown"
-            print(f"  VPN rotated: {status}")
+            print(f"  VPN: {r.stdout.strip().split(chr(10))[0] if r.stdout else 'unknown'}")
         except Exception as e:
             print(f"  VPN rotate failed: {e}")
+        captcha_event.set()  # tell all workers to restart
 
     # Connect Mullvad to GB server
     print("  Connecting Mullvad VPN to GB...")
@@ -1428,33 +1431,38 @@ def cmd_fix_scrape_prices(relogin=False):
             def is_capt():
                 try:
                     u = pg[0].url.lower()
-                    if any(w in u for w in ["captcha","punish","punch","tmd","sec.aliexpress","x5sec"]):
+                    if any(w in u for w in ["captcha","punish","punch","tmd","sec.aliexpress",
+                                            "x5sec","x5secdata","unusual"]):
                         return True
-                    t = (pg[0].query_selector("body").inner_text() or "")[:800].lower()
-                    return any(w in t for w in ["robot","verify","unusual","captcha","detected unusual","check if you"])
-                except: return True  # if we can't even read the page, assume captcha
+                    t = (pg[0].query_selector("body").inner_text() or "")[:1000].lower()
+                    return any(w in t for w in ["robot","verify","unusual traffic",
+                                                "sorry, we have detected","captcha",
+                                                "check if you are"])
+                except: return True
 
             fresh_browser()
-            on_ip = 0
 
             for ci, (idx, url) in enumerate(work_items):
+                # If another worker triggered captcha, restart our browser too
+                if captcha_event.is_set():
+                    time.sleep(1 + worker_id)  # stagger restarts
+                    fresh_browser()
+                    captcha_event.clear()
+
                 with lock:
                     if products[idx].get("product_price") and _parse_price(products[idx]["product_price"]) > 0:
                         continue
                 try:
-                    if on_ip >= PER_IP:
-                        fresh_browser(); on_ip = 0
-
                     try: pg[0].goto(url, wait_until="commit", timeout=8000)
                     except:
-                        fresh_browser(); on_ip = 0
+                        fresh_browser()
                         try: pg[0].goto(url, wait_until="commit", timeout=8000)
                         except: continue
 
-                    on_ip += 1
                     if is_capt():
-                        with lock: captcha_rotations[0] += 1
-                        fresh_browser(rotate=True); on_ip = 0
+                        with lock:
+                            rotate_vpn_and_signal()  # rotates VPN + signals ALL workers
+                        fresh_browser()  # restart this worker's browser
                         try: pg[0].goto(url, wait_until="commit", timeout=8000)
                         except: continue
                         if is_capt(): continue
@@ -1470,16 +1478,16 @@ def cmd_fix_scrape_prices(relogin=False):
                             products[idx]["product_price"] = price
                             if ship: products[idx]["shipping"] = "0" if ship == "Free" else ship
                             found[0] += 1; w_found += 1
-                            if found[0] <= 30:
+                            if found[0] <= 50:
                                 print(f"  ✓ W{worker_id} [{found[0]}] {price} ship={ship} — {url[-35:]}")
                     else:
                         with lock: failed[0] += 1
 
-                    time.sleep(random.uniform(0.3, 0.6))
+                    time.sleep(1.0)  # 1 second delay between requests
                 except:
                     with lock: failed[0] += 1
                     try: pg[0].url
-                    except: fresh_browser(); on_ip = 0
+                    except: fresh_browser()
 
                 if (ci+1) % 25 == 0:
                     with lock:
