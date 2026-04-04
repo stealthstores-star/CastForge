@@ -1249,8 +1249,12 @@ def _ensure_ali_login(pw):
     browser.close()
 
 
+def cmd_fix_scrape_prices_OLD(relogin=False):
+    """OLD VERSION — replaced by simpler single-tab approach below."""
+    pass
+
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices using the same approach as the working title scraper."""
+    """Re-scrape prices: 1 tab, proxy with auto IP rotation every 25 products."""
     from playwright.sync_api import sync_playwright
     import random
 
@@ -1279,6 +1283,219 @@ def cmd_fix_scrape_prices(relogin=False):
     if not needs_price:
         print("  All products have prices!")
         return
+
+    PROXY_SERVER = "http://geo.iproyal.com:12321"
+    PROXY_USER = "jpo1c9lb5mytbj0t"
+    PROXY_PASS = "GnXsjzZq15h0WEdY_country-gb_session-{seed}"
+    PER_IP = 25  # new IP every 25 products
+
+    # Same price JS as the working scraper.py
+    PRICE_JS = """() => {
+        const sels = ['[class*="price--current"]','[class*="product-price-current"]',
+            '[class*="snow-price"]','[class*="uniform-banner-box-price"]',
+            '[class*="sale-price"]','[class*="salePrice"]','[class*="price"]'];
+        for (const sel of sels) {
+            const els = document.querySelectorAll(sel);
+            for (const el of els) {
+                if (!el.offsetParent) continue;
+                const rect = el.getBoundingClientRect();
+                if (rect.top < 0 || rect.top > 600) continue;
+                const t = el.innerText.replace(/\\s+/g,'').trim();
+                const m = t.match(/[£￡$€]\\d+[.,]\\d{2}/);
+                if (m) return m[0].replace('￡','£');
+            }
+        }
+        const all = document.querySelectorAll('span,div,strong,b');
+        for (const el of all) {
+            if (!el.offsetParent) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.top < 0 || rect.top > 600) continue;
+            const t = el.innerText.replace(/\\s+/g,'').trim();
+            if (t.length > 30) continue;
+            const m = t.match(/[£￡$€]\\d+[.,]\\d{2}/);
+            if (m) return m[0].replace('￡','£');
+        }
+        const scripts = document.querySelectorAll('script');
+        for (const s of scripts) {
+            const t = s.textContent||'';
+            for (const p of [/"formattedActivityPrice"\\s*:\\s*"([^"]+)"/,/"formattedPrice"\\s*:\\s*"([^"]+)"/]) {
+                const m = t.match(p);
+                if (m) return m[1].replace('￡','£');
+            }
+            const m2 = t.match(/"minAmount"\\s*:\\s*{\\s*"value"\\s*:\\s*([\\d.]+)/);
+            if (m2) return '£'+m2[1];
+        }
+        return '';
+    }"""
+
+    SHIP_JS = """() => {
+        const sels = ['[class*="shipping-value"]','[class*="dynamic-shipping"] [class*="price"]',
+            '[class*="shipping-cost"]','[data-pl="product-shipping"]','[class*="dynamic-shipping"]',
+            '[class*="Shipping"]'];
+        for (const sel of sels) {
+            try {
+                const el = document.querySelector(sel);
+                if (!el) continue;
+                const t = el.innerText.trim(), lo = t.toLowerCase();
+                if (lo==='free'||lo==='free shipping') return 'Free';
+                if (/free\\s*shipp/i.test(t) && !/buy\\s+\\d+/i.test(t) && !/over|above/i.test(t)) return 'Free';
+                const m = t.match(/[£$€]\\s*([\\d.]+)/);
+                if (m) return parseFloat(m[1])===0?'Free':m[1];
+            } catch(e){}
+        }
+        return '';
+    }"""
+
+    found = 0
+    failed = 0
+    start = time.time()
+    session_num = [0]
+
+    print(f"  Mode: 1 tab, new proxy IP every {PER_IP} products")
+    print(f"  Est: ~{len(needs_price)*0.15/1000:.1f} GB bandwidth\n")
+
+    with sync_playwright() as pw:
+        # Login on direct connection
+        print("  Log in to AliExpress in the browser...")
+        lb = pw.chromium.launch(headless=False, channel="msedge",
+                                args=["--disable-blink-features=AutomationControlled"])
+        lc = lb.new_context(viewport={"width":1280,"height":800}, locale="en-GB")
+        lc.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
+        lp = lc.new_page()
+        try:
+            lp.goto("https://login.aliexpress.com/", wait_until="domcontentloaded", timeout=30000)
+        except:
+            lp.goto("https://www.aliexpress.com/", wait_until="domcontentloaded", timeout=30000)
+        while any(w in lp.url.lower() for w in ["login","passport","signin"]):
+            print("  Waiting for login...")
+            lp.wait_for_timeout(3000)
+        lc.storage_state(path=str(ALI_STATE_FILE))
+        lp.close(); lc.close(); lb.close()
+        print("  Login saved!\n")
+
+        browser = [None]
+        ctx = [None]
+        page = [None]
+
+        def new_ip():
+            session_num[0] += 1
+            seed = f"s{session_num[0]}r{random.randint(1000,9999)}"
+            for x in [page, ctx, browser]:
+                try: x[0].close()
+                except: pass
+            browser[0] = pw.chromium.launch(
+                headless=False, channel="msedge",
+                proxy={"server":PROXY_SERVER,"username":PROXY_USER,
+                       "password":PROXY_PASS.format(seed=seed)},
+                args=["--disable-blink-features=AutomationControlled",
+                      "--window-position=2000,2000"])
+            ctx[0] = browser[0].new_context(
+                viewport={"width":1366,"height":768}, locale="en-GB",
+                storage_state=str(ALI_STATE_FILE))
+            ctx[0].add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
+            ctx[0].route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}",
+                         lambda route: route.abort())
+            ctx[0].route("**/*.css", lambda route: route.abort())
+            page[0] = ctx[0].new_page()
+            print(f"  New IP #{session_num[0]} (seed={seed})")
+
+        def is_captcha():
+            try:
+                u = page[0].url.lower()
+                t = (page[0].query_selector("body").inner_text() or "")[:500].lower()
+                return "captcha" in u or "punch" in u or "robot" in t or "verify" in t
+            except: return False
+
+        new_ip()
+        products_on_ip = 0
+
+        # Retry loop
+        for pass_num in range(1, 6):
+            missing = [(i,u) for i,u in needs_price
+                       if not products[i].get("product_price") or _parse_price(products[i].get("product_price","")) <= 0]
+            if not missing:
+                print("\n  All prices found!")
+                break
+            if pass_num > 1:
+                print(f"\n  ── Retry pass {pass_num}: {len(missing)} still missing ──")
+                new_ip()
+                products_on_ip = 0
+
+            pass_found = 0
+            for i, (idx, url) in enumerate(missing):
+                try:
+                    # Rotate IP every PER_IP products
+                    if products_on_ip >= PER_IP:
+                        new_ip()
+                        products_on_ip = 0
+
+                    page[0].goto(url, wait_until="domcontentloaded", timeout=15000)
+                    products_on_ip += 1
+
+                    if is_captcha():
+                        print(f"  Captcha at product {i+1} — new IP...")
+                        new_ip()
+                        products_on_ip = 0
+                        page[0].goto(url, wait_until="domcontentloaded", timeout=15000)
+                        if is_captcha():
+                            failed += 1
+                            continue
+
+                    # Wait for product title (confirms real product loaded)
+                    try:
+                        page[0].wait_for_selector(
+                            'h1[data-pl="product-title"], h1[class*="title"]', timeout=8000)
+                    except:
+                        failed += 1
+                        continue
+
+                    price = page[0].evaluate(PRICE_JS) or ""
+                    ship = page[0].evaluate(SHIP_JS) or ""
+
+                    if price:
+                        products[idx]["product_price"] = price
+                        if ship:
+                            products[idx]["shipping"] = "0" if ship == "Free" else ship
+                        found += 1
+                        pass_found += 1
+                        if found <= 30 or pass_found <= 5:
+                            print(f"  ✓ [{i+1}/{len(missing)}] {price} ship={ship} — {url[-40:]}")
+                    else:
+                        failed += 1
+
+                    if (i+1) % 50 == 0:
+                        el = time.time() - start
+                        print(f"  [{i+1}/{len(missing)}] found={found} failed={failed} | {(i+1)/el*60:.0f}/min")
+
+                    if (i+1) % 100 == 0:
+                        data["products"] = products
+                        cp_path.write_text(json.dumps(data, ensure_ascii=False))
+
+                    time.sleep(random.uniform(1.0, 2.0))
+
+                except Exception as e:
+                    print(f"  Error {i+1}: {type(e).__name__}: {str(e)[:80]}")
+                    failed += 1
+                    try: page[0].url
+                    except:
+                        new_ip()
+                        products_on_ip = 0
+
+            data["products"] = products
+            cp_path.write_text(json.dumps(data, ensure_ascii=False))
+            print(f"  Pass {pass_num}: +{pass_found} prices (total: {found})")
+            if pass_found == 0:
+                print("  No progress — stopping.")
+                break
+
+        for x in [page, ctx, browser]:
+            try: x[0].close()
+            except: pass
+
+    data["products"] = products
+    cp_path.write_text(json.dumps(data, ensure_ascii=False))
+    print(f"\n  Done in {(time.time()-start)/60:.0f} min: {found} found, {failed} failed\n")
+    return
 
     PRICE_JS = """
     () => {
