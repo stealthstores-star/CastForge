@@ -10,7 +10,6 @@ Usage:
 """
 import json, os, re, sys, time, unicodedata
 from pathlib import Path
-from difflib import SequenceMatcher
 
 import requests
 import config
@@ -47,12 +46,6 @@ def normalise(text):
     # Collapse whitespace
     text = re.sub(r"\s+", " ", text).strip().lower()
     return text
-
-def fuzzy_match(a, b, threshold=0.90):
-    """Check if first 100 chars are 90%+ similar."""
-    a = normalise(a)[:100]
-    b = normalise(b)[:100]
-    return SequenceMatcher(None, a, b).ratio() >= threshold
 
 # ── Load local data ──
 def load_ai_cache():
@@ -113,8 +106,8 @@ def fetch_all_products(token, fields="id,title,status,tags,images,variants"):
     return products
 
 # ── Match Shopify product to AI cache ──
-def match_product(shopify_title, ai_cache, cache_normalised):
-    """Try exact → normalised → fuzzy match. Returns (raw_title, ai_title, match_type) or None."""
+def match_product(shopify_title, ai_cache, cache_normalised, shopify_images=None, scrape_data=None):
+    """Try exact → normalised → image-ID match. No fuzzy. Returns (raw_title, ai_title, match_type) or None."""
     # Exact match
     if shopify_title in ai_cache:
         return shopify_title, ai_cache[shopify_title], "exact"
@@ -125,10 +118,20 @@ def match_product(shopify_title, ai_cache, cache_normalised):
         raw = cache_normalised[norm]
         return raw, ai_cache[raw], "normalised"
 
-    # Fuzzy match on first 100 chars
-    for raw_title, ai_title in ai_cache.items():
-        if fuzzy_match(shopify_title, raw_title):
-            return raw_title, ai_title, "fuzzy"
+    # Image-ID match: extract AliExpress product ID from alicdn.com image URLs
+    if shopify_images and scrape_data:
+        for img in shopify_images:
+            src = img.get("src", "") if isinstance(img, dict) else str(img)
+            # alicdn URLs contain product ID in path like /kf/S{hash}.jpg
+            # but product_url contains the ID — try to match via scrape_data
+            # Extract any long number from image path that could be a product ID
+            for m in re.finditer(r'/(\d{10,})[\./]', src):
+                pid = m.group(1)
+                # Search scrape_data for this product ID
+                for raw_title, p in scrape_data.items():
+                    if isinstance(p, dict) and p.get("id") == pid:
+                        if raw_title in ai_cache:
+                            return raw_title, ai_cache[raw_title], "image_id"
 
     return None
 
@@ -231,7 +234,11 @@ Requirements:
 Reply with ONLY the HTML description, nothing else."""}]},
             timeout=30)
         if r.status_code == 200:
-            return r.json()["content"][0]["text"].strip()
+            desc = r.json()["content"][0]["text"].strip()
+            # Strip markdown code fences
+            desc = re.sub(r"^```html?\s*\n?", "", desc)
+            desc = re.sub(r"\n?```\s*$", "", desc)
+            return desc.strip()
     except Exception:
         pass
     return f"<p>Premium quality {title}. High-detail resin model kit requiring assembly and painting. Perfect for collectors and hobbyists.</p>"
@@ -381,7 +388,7 @@ def run(test_mode=False, poll=False):
             print(f"    many images:   {sum(1 for p in todo if len(p.get('images',[])) > 3)}")
             print(f"    no images:     {sum(1 for p in todo if len(p.get('images',[])) == 0)}")
             print(f"    edge titles:   {sum(1 for p in todo if len(p.get('title','')) > 200)}\n")
-            test_stats = {"exact": 0, "normalised": 0, "fuzzy": 0, "unmatched": 0,
+            test_stats = {"exact": 0, "normalised": 0, "image_id": 0, "unmatched": 0,
                           "images_kept": 0, "images_deleted": 0, "api_errors": 0}
 
         if not todo:
@@ -399,7 +406,9 @@ def run(test_mode=False, poll=False):
             shopify_title = product.get("title", "")
 
             # Match
-            match = match_product(shopify_title, ai_cache, cache_normalised)
+            match = match_product(shopify_title, ai_cache, cache_normalised,
+                                  shopify_images=product.get("images", []),
+                                  scrape_data=scrape_data)
             if not match:
                 progress["unmatched"] += 1
                 unmatched.append({"id": pid, "title": shopify_title})
@@ -487,7 +496,7 @@ def run(test_mode=False, poll=False):
             print(f"  Matching:")
             print(f"    Exact match:      {test_stats['exact']}")
             print(f"    Normalised match: {test_stats['normalised']}")
-            print(f"    Fuzzy match:      {test_stats['fuzzy']}")
+            print(f"    Image ID match:   {test_stats['image_id']}")
             print(f"    Unmatched:        {test_stats['unmatched']}")
             print(f"  Images:")
             print(f"    Total classified: {total_imgs}")
