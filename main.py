@@ -1586,7 +1586,7 @@ async def _run_price_scraper():
     # proxy causes session mismatch and AliExpress blocks the page from rendering
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=True,
+            channel="msedge", headless=True,
             args=["--disable-blink-features=AutomationControlled",
                   "--no-sandbox", "--disable-dev-shm-usage"],
         )
@@ -1627,7 +1627,7 @@ async def _run_price_scraper():
                 await browser.close()
                 await asyncio.sleep(2)
                 browser = await pw.chromium.launch(
-                    headless=True,
+                    channel="msedge", headless=True,
                     args=["--disable-blink-features=AutomationControlled",
                           "--no-sandbox", "--disable-dev-shm-usage"],
                 )
@@ -1851,7 +1851,7 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                     pass
 
             page.on("response", _on_response)
-            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+            await page.goto(url, wait_until="networkidle", timeout=30000)
 
             # Wait for the mtop price API (the ONLY source of price data)
             try:
