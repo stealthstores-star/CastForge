@@ -128,38 +128,47 @@ def main():
         ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
         page = ctx.new_page()
 
-        print("  Opening DSers...")
-        page.goto(DSERS_IMPORT_PAGE, wait_until="domcontentloaded", timeout=30000)
+        # Step 1: Login
+        print("  Logging in to DSers...")
+        page.goto("https://www.dsers.com/application/login", wait_until="domcontentloaded", timeout=30000)
         time.sleep(3)
 
-        # Login first if needed — before touching any input fields
-        login_url = page.url.lower()
-        if "login" in login_url or "sign" in login_url:
-            print("  Login page detected — logging in...")
-            # Clear any pre-filled text in email field
-            email_input = page.query_selector('input[type="email"], input[type="text"]')
-            pass_input = page.query_selector('input[type="password"]')
-            if email_input and pass_input:
-                email_input.click()
-                email_input.fill("")
-                email_input.fill(DSERS_EMAIL)
-                time.sleep(0.3)
-                pass_input.click()
-                pass_input.fill(DSERS_PASS)
-                time.sleep(0.3)
-                login_btn = page.query_selector('button:has-text("LOG IN"), button:has-text("Log in"), button[type="submit"]')
-                if login_btn:
-                    login_btn.click()
-                else:
-                    pass_input.press("Enter")
-                print("  Waiting for login...")
-                time.sleep(5)
-                # Navigate to import list after login
-                page.goto(DSERS_IMPORT_PAGE, wait_until="domcontentloaded", timeout=30000)
-                time.sleep(3)
-            print("  Logged in!\n")
+        # Wait for login form
+        page.wait_for_selector('input[type="password"]', timeout=10000)
+
+        # Clear and fill email
+        email_input = page.query_selector('input[type="text"]')
+        email_input.click()
+        email_input.fill("")
+        email_input.fill(DSERS_EMAIL)
+        time.sleep(0.3)
+
+        # Clear and fill password
+        pass_input = page.query_selector('input[type="password"]')
+        pass_input.click()
+        pass_input.fill("")
+        pass_input.fill(DSERS_PASS)
+        time.sleep(0.3)
+
+        # Click LOG IN
+        login_btn = page.query_selector('button:has-text("LOG IN")')
+        if login_btn:
+            login_btn.click()
         else:
-            print("  Already logged in.\n")
+            pass_input.press("Enter")
+
+        # Wait for redirect away from login
+        print("  Waiting for login redirect...")
+        for _ in range(20):
+            time.sleep(1)
+            if "login" not in page.url.lower():
+                break
+        print(f"  Logged in! URL: {page.url[:60]}")
+
+        # Step 2: Navigate to import list
+        print("  Opening import list...")
+        page.goto(DSERS_IMPORT_PAGE, wait_until="domcontentloaded", timeout=30000)
+        time.sleep(3)
 
         # Test badge selector
         count = page.evaluate(GET_COUNT_JS)
