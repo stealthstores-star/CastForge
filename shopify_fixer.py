@@ -106,28 +106,50 @@ def fetch_all_products(token, fields="id,title,status,tags,images,variants"):
     return products
 
 # ── Match Shopify product to AI cache ──
-def match_product(shopify_title, ai_cache, cache_normalised, shopify_images=None, scrape_data=None):
-    """Try exact → normalised → image-ID match. No fuzzy. Returns (raw_title, ai_title, match_type) or None."""
-    # Exact match
+def _tokenise(text):
+    """Split into lowercase word tokens, strip junk."""
+    text = normalise(text)
+    return set(w for w in re.split(r"[\s/\-]+", text) if len(w) >= 2)
+
+def _jaccard(a, b):
+    """Jaccard similarity between two token sets."""
+    if not a or not b:
+        return 0.0, 0
+    inter = a & b
+    union = a | b
+    return len(inter) / len(union), len(inter)
+
+def match_product(shopify_title, ai_cache, cache_normalised, cache_tokens=None,
+                  shopify_images=None, scrape_data=None):
+    """Match by exact → normalised → token overlap → image-ID."""
+    # 1. Exact match
     if shopify_title in ai_cache:
         return shopify_title, ai_cache[shopify_title], "exact"
 
-    # Normalised match
+    # 2. Normalised match
     norm = normalise(shopify_title)
     if norm in cache_normalised:
         raw = cache_normalised[norm]
         return raw, ai_cache[raw], "normalised"
 
-    # Image-ID match: extract AliExpress product ID from alicdn.com image URLs
+    # 3. Token overlap (Jaccard) — min 0.75 similarity AND min 6 shared tokens
+    if cache_tokens:
+        shop_tokens = _tokenise(shopify_title)
+        best_score, best_raw = 0.0, None
+        for raw_title, raw_tokens in cache_tokens.items():
+            score, shared = _jaccard(shop_tokens, raw_tokens)
+            if score >= 0.75 and shared >= 6 and score > best_score:
+                best_score = score
+                best_raw = raw_title
+        if best_raw:
+            return best_raw, ai_cache[best_raw], f"token({best_score:.0%})"
+
+    # 4. Image-ID match: extract AliExpress product ID from alicdn.com image URLs
     if shopify_images and scrape_data:
         for img in shopify_images:
             src = img.get("src", "") if isinstance(img, dict) else str(img)
-            # alicdn URLs contain product ID in path like /kf/S{hash}.jpg
-            # but product_url contains the ID — try to match via scrape_data
-            # Extract any long number from image path that could be a product ID
             for m in re.finditer(r'/(\d{10,})[\./]', src):
                 pid = m.group(1)
-                # Search scrape_data for this product ID
                 for raw_title, p in scrape_data.items():
                     if isinstance(p, dict) and p.get("id") == pid:
                         if raw_title in ai_cache:
@@ -343,10 +365,12 @@ def run(test_mode=False, poll=False):
         print("  ERROR: ANTHROPIC_API_KEY required for vision + descriptions")
         return
 
-    # Build normalised cache index
+    # Build normalised + token cache indices
     cache_normalised = {}
+    cache_tokens = {}
     for raw_title in ai_cache:
         cache_normalised[normalise(raw_title)] = raw_title
+        cache_tokens[raw_title] = _tokenise(raw_title)
 
     token = get_token()
     progress = load_progress() if not test_mode else {"processed_ids": [], "matched": 0, "unmatched": 0, "errors": 0}
@@ -388,7 +412,7 @@ def run(test_mode=False, poll=False):
             print(f"    many images:   {sum(1 for p in todo if len(p.get('images',[])) > 3)}")
             print(f"    no images:     {sum(1 for p in todo if len(p.get('images',[])) == 0)}")
             print(f"    edge titles:   {sum(1 for p in todo if len(p.get('title','')) > 200)}\n")
-            test_stats = {"exact": 0, "normalised": 0, "image_id": 0, "unmatched": 0,
+            test_stats = {"exact": 0, "normalised": 0, "token": 0, "image_id": 0, "unmatched": 0,
                           "images_kept": 0, "images_deleted": 0, "api_errors": 0}
 
         if not todo:
@@ -407,6 +431,7 @@ def run(test_mode=False, poll=False):
 
             # Match
             match = match_product(shopify_title, ai_cache, cache_normalised,
+                                  cache_tokens=cache_tokens,
                                   shopify_images=product.get("images", []),
                                   scrape_data=scrape_data)
             if not match:
@@ -421,7 +446,8 @@ def run(test_mode=False, poll=False):
 
             raw_title, ai_title, match_type = match
             if test_mode:
-                test_stats[match_type] += 1
+                stat_key = "token" if match_type.startswith("token") else match_type
+                test_stats[stat_key] = test_stats.get(stat_key, 0) + 1
 
             # Categorise
             cat_handle, _, parent_handle = categorize(ai_title)
@@ -496,6 +522,7 @@ def run(test_mode=False, poll=False):
             print(f"  Matching:")
             print(f"    Exact match:      {test_stats['exact']}")
             print(f"    Normalised match: {test_stats['normalised']}")
+            print(f"    Token overlap:    {test_stats['token']}")
             print(f"    Image ID match:   {test_stats['image_id']}")
             print(f"    Unmatched:        {test_stats['unmatched']}")
             print(f"  Images:")
