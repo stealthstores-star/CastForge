@@ -82,33 +82,22 @@ def main():
         page.goto(DSERS_IMPORT_PAGE, wait_until="domcontentloaded", timeout=30000)
         input("  >>> Press ENTER when DSers import list page is loaded... ")
 
-        # Test the count selector
+        # Test the count selector + dump HTML for debugging
+        html = page.evaluate("""() => {
+            const all = document.querySelectorAll('*');
+            for (const el of all) {
+                if ((el.textContent || '').trim().startsWith('Import list') && el.children.length < 10) {
+                    return el.parentElement.outerHTML.substring(0, 1000);
+                }
+            }
+            return 'NOT FOUND';
+        }""")
+        print(f"  SIDEBAR HTML: {html}\n")
+
         count = page.evaluate(GET_COUNT_JS)
         print(f"  Import list count: {count}")
         if count == -1:
-            print("  Count selector returned -1 — dumping page structure...\n")
-            dump = page.evaluate("""() => {
-                // Get all text nodes that contain numbers, with their parent info
-                const results = [];
-                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                while (walker.nextNode()) {
-                    const t = walker.currentNode.textContent.trim();
-                    if (/import/i.test(t) || /^\\d+$/.test(t)) {
-                        const el = walker.currentNode.parentElement;
-                        if (el) {
-                            const tag = el.tagName.toLowerCase();
-                            const cls = (el.className || '').toString().substring(0, 80);
-                            const parent = el.parentElement;
-                            const pcls = parent ? (parent.className || '').toString().substring(0, 80) : '';
-                            results.push(tag + '.' + cls + ' → "' + t.substring(0, 60) + '" (parent: ' + pcls.substring(0, 60) + ')');
-                        }
-                    }
-                }
-                return results.slice(0, 40).join('\\n');
-            }""")
-            print(dump)
-            print("\n  Script will continue WITHOUT tracking (simple paste+wait mode).\n")
-
+            print("  Count selector failed — will continue in simple paste+wait mode.\n")
         else:
             print(f"  Selector works! Starting import...\n")
 
