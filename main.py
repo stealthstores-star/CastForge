@@ -1283,7 +1283,7 @@ def cmd_fix_scrape_prices(relogin=False):
 
     # Uses Mullvad VPN (flat rate, unlimited bandwidth, zero proxy cost)
     # Rotates IP by calling `mullvad reconnect`
-    NUM_WORKERS = 2
+    NUM_WORKERS = 3
     PER_IP = 9999  # NO proactive rotation — only on captcha
 
     UAS = [
@@ -1309,7 +1309,7 @@ def cmd_fix_scrape_prices(relogin=False):
                 const rect = el.getBoundingClientRect();
                 if (rect.top < 0 || rect.top > 600) continue;
                 const t = el.innerText.replace(/\\s+/g,'').trim();
-                const m = t.match(/[£￡$€]\\d+[.,]\\d{2}/);
+                const m = t.match(/(?:US\\s*)?[£￡$€¥₽R]\\d+[.,]\\d{2}/);
                 if (m) return m[0].replace('￡','£');
             }
         }
@@ -1319,8 +1319,12 @@ def cmd_fix_scrape_prices(relogin=False):
             for (const p of [/"formattedActivityPrice"\\s*:\\s*"([^"]+)"/,/"formattedPrice"\\s*:\\s*"([^"]+)"/]) {
                 const m = t.match(p); if (m) return m[1].replace('￡','£');
             }
-            const m2 = t.match(/"minAmount"\\s*:\\s*{\\s*"value"\\s*:\\s*([\\d.]+)/);
-            if (m2) return '£'+m2[1];
+            const m2 = t.match(/"minAmount"\\s*:\\s*\\{\\s*"value"\\s*:\\s*([\\d.]+)/);
+            if (m2) {
+                const cur = t.match(/"currencyCode"\\s*:\\s*"([^"]+)"/);
+                const sym = cur ? ({'GBP':'£','USD':'$','EUR':'€','JPY':'¥','CNY':'¥','RUB':'₽'}[cur[1]]||'$') : '$';
+                return sym+m2[1];
+            }
         }
         return '';
     }"""
@@ -1353,7 +1357,7 @@ def cmd_fix_scrape_prices(relogin=False):
     import subprocess
 
     def rotate_vpn_and_signal():
-        """Rotate Mullvad VPN, signal all workers to restart browsers."""
+        """Rotate Mullvad VPN to random worldwide server, signal all workers to restart."""
         captcha_rotations[0] += 1
         print(f"\n  !! CAPTCHA #{captcha_rotations[0]} — rotating VPN + restarting all browsers...")
         try:
@@ -1363,11 +1367,11 @@ def cmd_fix_scrape_prices(relogin=False):
             print(f"  VPN: {r.stdout.strip().split(chr(10))[0] if r.stdout else 'unknown'}")
         except Exception as e:
             print(f"  VPN rotate failed: {e}")
-        captcha_event.set()  # tell all workers to restart
+        captcha_event.set()
 
-    # Connect Mullvad to GB server
-    print("  Connecting Mullvad VPN to GB...")
-    subprocess.run(["mullvad", "relay", "set", "location", "gb"], capture_output=True)
+    # Connect Mullvad — any server worldwide for max IP diversity
+    print("  Connecting Mullvad VPN (random server)...")
+    subprocess.run(["mullvad", "relay", "set", "tunnel-protocol", "wireguard"], capture_output=True)
     subprocess.run(["mullvad", "connect"], capture_output=True)
     time.sleep(3)
     r = subprocess.run(["mullvad", "status"], capture_output=True, text=True)
@@ -1450,7 +1454,7 @@ def cmd_fix_scrape_prices(relogin=False):
                 with lock:
                     rotate_vpn_and_signal()
                 fresh_browser()
-                try: pg[0].goto(url, wait_until="commit", timeout=8000)
+                try: pg[0].goto(url, wait_until="commit", timeout=5000)
                 except: return False
                 return not is_capt()
 
@@ -1466,10 +1470,10 @@ def cmd_fix_scrape_prices(relogin=False):
                     if products[idx].get("product_price") and _parse_price(products[idx]["product_price"]) > 0:
                         continue
                 try:
-                    try: pg[0].goto(url, wait_until="commit", timeout=8000)
+                    try: pg[0].goto(url, wait_until="commit", timeout=5000)
                     except:
                         fresh_browser()
-                        try: pg[0].goto(url, wait_until="commit", timeout=8000)
+                        try: pg[0].goto(url, wait_until="commit", timeout=5000)
                         except: continue
 
                     # Check captcha after goto
@@ -1500,7 +1504,7 @@ def cmd_fix_scrape_prices(relogin=False):
                     else:
                         with lock: failed[0] += 1
 
-                    time.sleep(1.0)  # 1 second delay between requests
+                    time.sleep(0.5)
                 except:
                     with lock: failed[0] += 1
                     try: pg[0].url
