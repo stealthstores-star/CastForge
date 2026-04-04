@@ -1266,9 +1266,9 @@ async def _run_price_scraper():
     from scraper import STEALTH_JS, USER_AGENTS
     import random
 
-    CONTEXTS = 5  # Direct connection — no proxy (proxy strips JS rendering)
-    BATCH_PER_CTX = 200
-    BROWSER_RESTART = 1000
+    CONTEXTS = 60
+    BATCH_PER_CTX = 50
+    BROWSER_RESTART = 1500
 
     print("\n══════════════════════════════════════")
     print("  CastForge Price Re-Scraper (60 contexts)")
@@ -1294,7 +1294,7 @@ async def _run_price_scraper():
 
     print(f"  Total products: {len(products)}")
     print(f"  Missing prices: {len(needs_price)}")
-    print(f"  Contexts: {CONTEXTS} (direct + login state, no proxy)")
+    print(f"  Contexts: {CONTEXTS} (proxy + login state)")
 
     if not needs_price:
         print("  All products have prices!")
@@ -1306,9 +1306,15 @@ async def _run_price_scraper():
     progress = {"done": 0, "found": 0, "failed": 0, "start": time.time()}
     titles_since_restart = 0
 
+    proxy_config = {
+        "server": "http://geo.iproyal.com:12321",
+        "username": "jpo1c9lb5mytbj0t",
+        "password": "GnXsjzZq15h0WEdY_country-us",
+    }
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            channel="msedge", headless=True,
+            headless=True, proxy=proxy_config,
             args=["--disable-blink-features=AutomationControlled",
                   "--no-sandbox", "--disable-dev-shm-usage"],
         )
@@ -1349,7 +1355,7 @@ async def _run_price_scraper():
                 await browser.close()
                 await asyncio.sleep(2)
                 browser = await pw.chromium.launch(
-                    channel="msedge", headless=True,
+                    headless=True, proxy=proxy_config,
                     args=["--disable-blink-features=AutomationControlled",
                           "--no-sandbox", "--disable-dev-shm-usage"],
                 )
@@ -1373,7 +1379,7 @@ async def _run_price_scraper():
 
         async with async_playwright() as pw2:
             browser2 = await pw2.chromium.launch(
-                channel="msedge", headless=True,
+                headless=True, proxy=proxy_config,
                 args=["--disable-blink-features=AutomationControlled",
                       "--no-sandbox", "--disable-dev-shm-usage"],
             )
@@ -1518,64 +1524,60 @@ async def _extract_price_from_page(page):
     price = ""
     shipping = ""
 
-    # Strategy 1: Target the MAIN product price specifically
-    # Exclude coupon/promo elements that contain "off" or "coupon"
+    # Get full page content and search for price data in the JSON/HTML
     try:
-        price_text = await page.evaluate("""() => {
-            // Try specific main price selectors first
-            const selectors = [
-                '[class*="snow-price--mainPrice"]',
-                '[class*="es--wrap--erdmPRe"]',
-                '[class*="price--current--"]',
-                '[class*="product-price-value"]',
-                '[class*="uniform-banner-box"] [class*="es--wrap"]',
-            ];
-            for (const sel of selectors) {
-                const el = document.querySelector(sel);
-                if (el) {
-                    const text = el.textContent.trim();
-                    // Skip if it contains "off" or "coupon" (promo element)
-                    if (!text.toLowerCase().includes('off') && !text.toLowerCase().includes('coupon')) {
-                        return text;
+        content = await page.content()
+        content = content.replace("\uffe1", "£")
+
+        # Strategy 1: Look for price in embedded __INIT_DATA__ or API response JSON
+        # AliExpress embeds price data in script tags even on CSR pages
+        for pattern in [
+            r'"formattedActivityPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
+            r'"activityPrice"\s*:\s*\{[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d*)',
+            r'"discountPrice"\s*:\s*\{[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d*)',
+            r'"formattedPrice"\s*:\s*"[£]?\s*(\d+\.?\d*)',
+            r'"minPrice"\s*:\s*"(\d+\.?\d*)',
+            r'"skuCalPrice"\s*:\s*"(\d+\.?\d*)',
+            r'"actSkuCalPrice"\s*:\s*"(\d+\.?\d*)',
+        ]:
+            m = re.search(pattern, content)
+            if m and float(m.group(1)) > 0.01:
+                price = f"£{m.group(1)}"
+                break
+
+        # Strategy 2: DOM text — find the rendered price
+        if not price:
+            price_text = await page.evaluate("""() => {
+                const selectors = [
+                    '[class*="snow-price--mainPrice"]',
+                    '[class*="es--wrap--erdmPRe"]',
+                    '[class*="price--current--"]',
+                    '[class*="product-price-value"]',
+                ];
+                for (const sel of selectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        const text = el.textContent.trim();
+                        if (!text.toLowerCase().includes('off') && !text.toLowerCase().includes('coupon'))
+                            return text;
                     }
                 }
-            }
-            // Fallback: get ALL price elements but filter out promos
-            const allPriceEls = document.querySelectorAll('[class*="price"], [class*="Price"]');
-            for (const el of allPriceEls) {
-                const text = el.textContent.trim();
-                const lower = text.toLowerCase();
-                // Skip promo/coupon/discount elements
-                if (lower.includes('off') || lower.includes('coupon') || lower.includes('save')
-                    || lower.includes('extra') || lower.includes('coins')) continue;
-                // Must have a £ sign
-                if (text.includes('£') || text.includes('\uffe1')) return text;
-            }
-            return '';
-        }""")
-        price_text = price_text.replace("\uffe1", "£")
-        m = re.search(r"£\s*(\d+\.?\d*)", price_text)
-        if m and float(m.group(1)) > 0:
-            price = f"£{m.group(1)}"
+                return '';
+            }""")
+            price_text = price_text.replace("\uffe1", "£")
+            m = re.search(r"£\s*(\d+\.?\d*)", price_text)
+            if m and float(m.group(1)) > 0.01:
+                price = f"£{m.group(1)}"
+
+        # Strategy 3: Any £X.XX in the page that's NOT in a coupon/promo context
+        if not price:
+            # Find all £ amounts, take smallest > 0 (usually the item price, not coupon thresholds)
+            all_prices = re.findall(r"£\s*(\d+\.\d{2})", content)
+            valid = sorted(set(float(p) for p in all_prices if 0.5 < float(p) < 500))
+            if valid:
+                price = f"£{valid[0]:.2f}"
     except Exception:
         pass
-
-    # Strategy 2: Look for minPrice in page JSON data
-    if not price:
-        try:
-            content = await page.content()
-            # Look for the actual product price in embedded JSON
-            for pattern in [
-                r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d*)',
-                r'"minPrice"\s*:\s*"?(\d+\.?\d*)',
-                r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d*)',
-            ]:
-                m = re.search(pattern, content)
-                if m and float(m.group(1)) > 0:
-                    price = f"£{m.group(1)}"
-                    break
-        except Exception:
-            pass
 
     # Shipping
     try:
