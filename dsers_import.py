@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 DSers Bulk Importer — paste AliExpress URLs into DSers import list.
-Tracks imports by watching the sidebar "Import list" count.
+Auto-login, tracks imports via Ant Design badge count.
 """
 import time
 import sys
@@ -12,36 +12,23 @@ URLS_FILE = Path("dsers_import_urls.txt")
 PROGRESS_FILE = Path("dsers_progress.txt")
 FAILED_FILE = Path("dsers_failed.txt")
 DSERS_IMPORT_PAGE = "https://www.dsers.com/app/import-list"
+DSERS_EMAIL = "thetreasurehubllc@gmail.com"
+DSERS_PASS = "Cococream1995!"
 
 GET_COUNT_JS = """() => {
-    const all = document.querySelectorAll('*');
-    for (const el of all) {
-        const text = (el.textContent || '').trim();
-        if (text === 'Import list') {
-            const parent = el.parentElement;
-            const badge = parent.querySelector('span, em, i, b, sup, div');
-            if (badge) {
-                const num = parseInt(badge.textContent.trim());
-                if (!isNaN(num)) return num;
-            }
-            const next = el.nextElementSibling;
-            if (next) {
-                const num = parseInt(next.textContent.trim());
-                if (!isNaN(num)) return num;
+    const items = document.querySelectorAll('li.ant-menu-item, li.ant-menu-submenu, [class*="menu"] li, a[href*="import"]');
+    for (const item of items) {
+        if ((item.textContent || '').includes('Import list')) {
+            const badge = item.querySelector('sup.ant-badge-count, .ant-badge-count, .ant-scroll-number-only-unit');
+            if (badge) return parseInt(badge.textContent.trim()) || 0;
+            const antBadge = item.querySelector('.ant-badge');
+            if (antBadge) {
+                const sup = antBadge.querySelector('sup');
+                if (sup) return parseInt(sup.textContent.trim()) || 0;
             }
         }
     }
-    for (const el of all) {
-        const t = (el.textContent || '').trim();
-        const m = t.match(/Import list\\s*(\\d+)/);
-        if (m && el.children.length < 5) return parseInt(m[1]);
-    }
     return -1;
-}"""
-
-DUMP_SIDEBAR_JS = """() => {
-    const sidebar = document.querySelector('aside, nav, [class*="sidebar"], [class*="menu"], [class*="sider"]');
-    return sidebar ? sidebar.innerHTML.substring(0, 3000) : 'NO SIDEBAR FOUND';
 }"""
 
 
@@ -54,19 +41,83 @@ def save_progress(n):
     PROGRESS_FILE.write_text(str(n))
 
 
+def load_progress():
+    if PROGRESS_FILE.exists():
+        try:
+            return int(PROGRESS_FILE.read_text().strip())
+        except ValueError:
+            pass
+    return 0
+
+
+def auto_login(page):
+    """Auto-login to DSers if login form is showing."""
+    time.sleep(2)
+    # Check if we're on a login page
+    url = page.url.lower()
+    body = (page.query_selector("body").inner_text() or "").lower() if page.query_selector("body") else ""
+
+    if "login" in url or "sign" in url or "email" in body and "password" in body:
+        print("  Login form detected — auto-logging in...")
+        try:
+            # Fill email
+            email_input = page.query_selector('input[type="email"], input[name="email"], input[placeholder*="email" i], input[placeholder*="Email"]')
+            if email_input:
+                email_input.click()
+                email_input.fill(DSERS_EMAIL)
+                time.sleep(0.3)
+
+            # Fill password
+            pass_input = page.query_selector('input[type="password"], input[name="password"]')
+            if pass_input:
+                pass_input.click()
+                pass_input.fill(DSERS_PASS)
+                time.sleep(0.3)
+
+            # Click submit
+            submit = page.query_selector('button[type="submit"], button:has-text("Log in"), button:has-text("Sign in"), button:has-text("Login")')
+            if submit:
+                submit.click()
+            else:
+                pass_input.press("Enter")
+
+            print("  Submitted login, waiting for redirect...")
+            time.sleep(5)
+
+            # Wait for import list page to load
+            for _ in range(10):
+                if "import-list" in page.url.lower() or "import" in page.url.lower():
+                    print("  Logged in!")
+                    return True
+                time.sleep(2)
+
+            # Navigate to import list
+            page.goto(DSERS_IMPORT_PAGE, wait_until="domcontentloaded", timeout=30000)
+            time.sleep(3)
+            print("  Navigated to import list.")
+            return True
+        except Exception as e:
+            print(f"  Auto-login failed: {e}")
+            return False
+    else:
+        print("  Already logged in.")
+        return True
+
+
 def main():
     if not URLS_FILE.exists():
         print(f"  {URLS_FILE} not found.")
         sys.exit(1)
 
     urls = load_urls()
-    save_progress(0)
+    start_from = load_progress()
 
     print(f"\n══════════════════════════════════════")
     print(f"  DSers Bulk Importer")
     print(f"══════════════════════════════════════")
     print(f"  URLs: {len(urls)}")
-    print(f"  Starting fresh from 0\n")
+    print(f"  Resuming from: {start_from}")
+    print(f"  Remaining: {len(urls) - start_from}\n")
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
@@ -77,40 +128,30 @@ def main():
         ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
         page = ctx.new_page()
 
-        print("  Opening DSers import page...")
-        print("  Log into DSers if needed, then press ENTER here.\n")
+        print("  Opening DSers...")
         page.goto(DSERS_IMPORT_PAGE, wait_until="domcontentloaded", timeout=30000)
-        input("  >>> Press ENTER when DSers import list page is loaded... ")
+        auto_login(page)
+        time.sleep(2)
 
-        # Test the count selector + dump HTML for debugging
-        html = page.evaluate("""() => {
-            const all = document.querySelectorAll('*');
-            for (const el of all) {
-                if ((el.textContent || '').trim().startsWith('Import list') && el.children.length < 10) {
-                    return el.parentElement.outerHTML.substring(0, 1000);
-                }
-            }
-            return 'NOT FOUND';
-        }""")
-        print(f"  SIDEBAR HTML: {html}\n")
-
+        # Test badge selector
         count = page.evaluate(GET_COUNT_JS)
-        print(f"  Import list count: {count}")
-        if count == -1:
-            print("  Count selector failed — will continue in simple paste+wait mode.\n")
+        print(f"  Badge count: {count}")
+        tracking = count >= 0
+        if not tracking:
+            print("  Badge selector returned -1 — running in simple mode (no tracking)\n")
         else:
-            print(f"  Selector works! Starting import...\n")
+            print(f"  Badge tracking active!\n")
 
         input_sel = 'input[placeholder*="product link"]'
         failed = []
         imported = 0
-        done = 0
+        done = start_from
         t0 = time.time()
 
-        for i in range(len(urls)):
+        for i in range(start_from, len(urls)):
             url = urls[i]
             try:
-                count_before = page.evaluate(GET_COUNT_JS)
+                count_before = page.evaluate(GET_COUNT_JS) if tracking else -1
 
                 inp = page.query_selector(input_sel) or \
                       page.query_selector('input[placeholder*="link"]') or \
@@ -133,8 +174,7 @@ def main():
                 else:
                     inp.press("Enter")
 
-                # Wait for count to increment, or just wait 2.5s if selector broken
-                if count_before >= 0:
+                if tracking and count_before >= 0:
                     success = False
                     for _ in range(10):
                         time.sleep(0.5)
@@ -163,10 +203,10 @@ def main():
 
             if done % 100 == 0:
                 elapsed = time.time() - t0
-                rate = done / max(elapsed, 1) * 60
+                rate = (done - start_from) / max(elapsed, 1) * 60
                 remaining = len(urls) - done
                 eta = remaining / max(rate, 0.1)
-                cur = page.evaluate(GET_COUNT_JS)
+                cur = page.evaluate(GET_COUNT_JS) if tracking else "?"
                 print(f"  [{done}/{len(urls)}] imported={imported} failed={len(failed)} badge={cur} | {rate:.0f}/min ETA {eta:.0f}m")
             elif done % 25 == 0:
                 print(f"  [{done}/{len(urls)}] imported={imported} failed={len(failed)}")
@@ -177,11 +217,11 @@ def main():
 
         # Retry with 8s wait
         if failed:
-            print(f"\n  ── Retry: {len(failed)} URLs (8s wait) ──\n")
+            print(f"\n  ── Retry: {len(failed)} URLs ──\n")
             still_failed = []
             for j, url in enumerate(failed):
                 try:
-                    count_before = page.evaluate(GET_COUNT_JS)
+                    count_before = page.evaluate(GET_COUNT_JS) if tracking else -1
                     inp = page.query_selector(input_sel) or \
                           page.query_selector('input[placeholder*="link"]')
                     if not inp:
@@ -196,15 +236,19 @@ def main():
                         ok_btn.click()
                     else:
                         inp.press("Enter")
-                    success = False
-                    for _ in range(16):
-                        time.sleep(0.5)
-                        if page.evaluate(GET_COUNT_JS) > count_before:
-                            success = True
-                            imported += 1
-                            break
-                    if not success:
-                        still_failed.append(url)
+                    if tracking and count_before >= 0:
+                        success = False
+                        for _ in range(16):
+                            time.sleep(0.5)
+                            if page.evaluate(GET_COUNT_JS) > count_before:
+                                success = True
+                                imported += 1
+                                break
+                        if not success:
+                            still_failed.append(url)
+                    else:
+                        time.sleep(3)
+                        imported += 1
                 except Exception:
                     still_failed.append(url)
                 if (j + 1) % 25 == 0:
@@ -218,7 +262,7 @@ def main():
                 print(f"  All retries done!")
 
         elapsed = time.time() - t0
-        final = page.evaluate(GET_COUNT_JS)
+        final = page.evaluate(GET_COUNT_JS) if tracking else "?"
         print(f"\n  Done! {done}/{len(urls)} in {elapsed/60:.0f} min")
         print(f"  Imported: {imported}, Failed: {len(failed)}, Badge: {final}\n")
         input("  Press ENTER to close browser... ")
