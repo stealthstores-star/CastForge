@@ -1283,8 +1283,8 @@ def cmd_fix_scrape_prices(relogin=False):
 
     # Uses Mullvad VPN (flat rate, unlimited bandwidth, zero proxy cost)
     # Rotates IP by calling `mullvad reconnect`
-    NUM_WORKERS = 1  # Mullvad = 1 IP for all, can't do parallel
-    PER_IP = 25  # new browser + new VPN IP every 25 products
+    NUM_WORKERS = 5
+    PER_IP = 80  # new browser + fingerprint every 80 (NO VPN rotate unless captcha)
 
     UAS = [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
