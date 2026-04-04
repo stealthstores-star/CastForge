@@ -2015,6 +2015,7 @@ async def _run_price_scraper_direct():
                 page = await ctx.new_page()
                 await page.add_init_script(STEALTH_JS)
                 found = 0
+                debug_count = [0]  # debug first 3 products per worker
 
                 for idx, url in chunk:
                     price = ""
@@ -2022,44 +2023,80 @@ async def _run_price_scraper_direct():
 
                     # Set up API intercept for this navigation
                     api_responses = []
+                    all_urls_seen = []  # debug
 
                     async def _capture_response(response):
                         resp_url = response.url
-                        # Capture the main product data API
-                        if "mtop.aliexpress" in resp_url and "query" in resp_url:
+                        # Skip static assets
+                        if any(x in resp_url for x in [".js", ".css", ".png", ".jpg",
+                                ".gif", ".ico", ".woff", ".svg", ".webp"]):
+                            return
+                        # Log non-static URLs for debug
+                        if debug_count[0] < 3:
                             try:
-                                body = await response.text()
-                                if len(body) > 1000:  # main API is ~170KB
-                                    api_responses.append(body)
+                                ct = response.headers.get("content-type", "")
+                                if "json" in ct or "javascript" in ct or "text" in ct:
+                                    all_urls_seen.append(resp_url[:120])
                             except Exception:
                                 pass
-                        # Also capture SEO data API (has price as fallback)
-                        elif "seodata" in resp_url.lower() or "seo/seodata" in resp_url:
-                            try:
-                                body = await response.text()
-                                if "price" in body.lower()[:5000]:
-                                    api_responses.append(body)
-                            except Exception:
-                                pass
+
+                        # Capture ANY response containing price data
+                        try:
+                            ct = response.headers.get("content-type", "")
+                            if not ("json" in ct or "javascript" in ct or "text" in ct):
+                                return
+                            body = await response.text()
+                            if len(body) < 500:
+                                return
+                            body_lower = body[:10000].lower()
+                            # Check if response has price-related fields
+                            if any(k in body_lower for k in [
+                                "skucalprice", "activityprice", "formattedprice",
+                                "minprice", "discountprice", "saleprice",
+                                '"price"', "freightamount",
+                            ]):
+                                api_responses.append(body)
+                                if debug_count[0] < 3:
+                                    print(f"    [API HIT] {resp_url[:100]} ({len(body)} bytes)")
+                        except Exception:
+                            pass
 
                     page.on("response", _capture_response)
 
                     try:
                         await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                        # Wait for API calls to complete (much faster than full render)
-                        await page.wait_for_timeout(4000)
+                        # Wait for API calls to complete
+                        await page.wait_for_timeout(5000)
 
                         # Check for captcha
-                        if "unusual traffic" in (await page.title()).lower():
+                        title = await page.title()
+                        if "unusual traffic" in title.lower() or "verify" in title.lower():
                             progress["captcha"] += 1
                             if progress["captcha"] <= 3:
-                                print(f"  CAPTCHA detected! ({progress['captcha']}x)")
+                                print(f"  CAPTCHA detected! ({progress['captcha']}x) title={title[:60]}")
                             if progress["captcha"] >= 10:
                                 print(f"  Too many captchas — IP likely flagged. Stopping.")
                                 page.remove_listener("response", _capture_response)
                                 await page.close()
                                 await ctx.close()
                                 return found
+
+                        # Debug: show what we got for first 3 products
+                        if debug_count[0] < 3:
+                            print(f"\n  DEBUG #{debug_count[0]+1}: {url[-50:]}")
+                            print(f"    Page title: {title[:60]}")
+                            print(f"    API responses captured: {len(api_responses)}")
+                            print(f"    Non-static URLs seen: {len(all_urls_seen)}")
+                            for u in all_urls_seen[:8]:
+                                print(f"      {u}")
+                            if api_responses:
+                                # Show what price fields were found
+                                for i_resp, body in enumerate(api_responses[:2]):
+                                    matches = re.findall(
+                                        r'"(?:sku|act|min|formatted|discount|sale|freight).*?[Pp]rice.*?"[^,]{0,60}',
+                                        body[:10000])
+                                    print(f"    Response #{i_resp}: {len(body)} bytes, price fields: {matches[:5]}")
+                            debug_count[0] += 1
 
                         # Parse intercepted API responses
                         for body in api_responses:
