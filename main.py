@@ -1439,13 +1439,16 @@ async def _scrape_single_price(page, url):
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=15000)
 
-        # Wait for price to render
+        # Wait for price to render — the price is JS-rendered
+        await page.wait_for_timeout(3000)
+
+        # Also try waiting for a price-like element
         try:
-            await page.wait_for_selector("[class*='price'], [class*='Price']", timeout=10000)
+            await page.wait_for_selector("[class*='price'], [class*='Price']", timeout=7000)
         except Exception:
             pass
 
-        # Check for captcha — only real captcha elements, not "Verified Purchase" etc.
+        # Check for captcha
         captcha_el = await page.query_selector(
             "iframe[src*='captcha'], [class*='captcha'], [class*='slider-verify'], "
             "[class*='baxia'], [id*='captcha'], [class*='nc-container']"
@@ -1453,66 +1456,95 @@ async def _scrape_single_price(page, url):
         if captcha_el:
             return ("", "", True)
 
-        # Extract price
         price = ""
 
-        # Try specific selectors
-        for sel in ["[class*='es--wrap--erdmPRe']",
-                     "[class*='price--current'] span",
-                     "[class*='uniform-banner-box'] [class*='es--wrap']",
-                     "[class*='product-price-value']"]:
-            el = await page.query_selector(sel)
-            if el:
-                text = (await el.inner_text()).strip()
-                # Normalise full-width pound
-                text = text.replace("\uffe1", "\u00a3")
-                m = re.search(r"\u00a3\s*([\d.]+)", text)
-                if not m:
-                    m = re.search(r"([\d.]+)", text)
-                if m and float(m.group(1)) > 0:
-                    price = f"\u00a3{m.group(1)}"
-                    break
+        # Strategy 1: Get ALL text from the page and find the first £X.XX pattern
+        # This is the most reliable — works regardless of class names
+        try:
+            all_text = await page.evaluate("""() => {
+                // Get text from price-like containers first
+                const priceEls = document.querySelectorAll('[class*="price"], [class*="Price"], [class*="snow-price"]');
+                let texts = [];
+                for (const el of priceEls) {
+                    texts.push(el.textContent);
+                }
+                return texts.join(' ||| ');
+            }""")
+            all_text = all_text.replace("\uffe1", "£")
+            # Find £X.XX patterns — take the first one (usually the sale/current price)
+            prices = re.findall(r"£\s*(\d+\.?\d*)", all_text)
+            if prices:
+                # Filter out 0 and very large values (which might be "save" amounts)
+                valid = [p for p in prices if float(p) > 0]
+                if valid:
+                    price = f"£{valid[0]}"
+        except Exception:
+            pass
 
-        # Fallback: JS evaluate
+        # Strategy 2: Direct selectors for known AliExpress price elements
         if not price:
-            try:
-                text = await page.evaluate(
-                    'document.querySelector("[class*=price]")?.textContent || ""'
-                )
-                text = text.replace("\uffe1", "\u00a3")
-                m = re.search(r"\u00a3\s*([\d.]+)", text)
-                if m and float(m.group(1)) > 0:
-                    price = f"\u00a3{m.group(1)}"
-            except Exception:
-                pass
+            for sel in ["[class*='es--wrap--erdmPRe']",
+                         "[class*='snow-price--mainPrice']",
+                         "[class*='price--current']",
+                         "[class*='product-price-value']",
+                         "[class*='uniform-banner-box'] [class*='es--wrap']"]:
+                el = await page.query_selector(sel)
+                if el:
+                    text = (await el.inner_text()).strip().replace("\uffe1", "£")
+                    m = re.search(r"£\s*(\d+\.?\d*)", text)
+                    if m and float(m.group(1)) > 0:
+                        price = f"£{m.group(1)}"
+                        break
 
-        # Fallback: regex on page source
+        # Strategy 3: Full page content regex
         if not price:
-            m = re.search(r"[\uffe1\u00a3]\s*(\d+\.\d{2})", content)
+            content = await page.content()
+            content = content.replace("\uffe1", "£")
+            m = re.search(r"£\s*(\d+\.\d{2})", content)
             if m and float(m.group(1)) > 0:
-                price = f"\u00a3{m.group(1)}"
+                price = f"£{m.group(1)}"
 
-        # Shipping
+        # Shipping — look for "Free shipping" or shipping cost
         shipping = ""
-        ship_els = await page.query_selector_all("[class*='shipping'], [class*='delivery']")
-        for el in ship_els:
-            text = (await el.inner_text()).strip().lower()
-            if "free shipping" in text:
-                # Check if conditional
-                if "over" in text or "on orders" in text:
-                    # Try to find actual shipping cost
-                    m = re.search(r"[\u00a3\uffe1]\s*([\d.]+)", text)
-                    if m:
-                        shipping = m.group(1)
+        try:
+            ship_text = await page.evaluate("""() => {
+                const els = document.querySelectorAll('[class*="shipping"], [class*="delivery"], [class*="dynamic-shipping"]');
+                let texts = [];
+                for (const el of els) {
+                    texts.push(el.textContent);
+                }
+                return texts.join(' ||| ');
+            }""")
+            ship_text = ship_text.lower().replace("\uffe1", "£")
+
+            if "free shipping" in ship_text:
+                # Check if conditional: "Free shipping over £ 8.00"
+                m = re.search(r"free shipping\s+over\s+£\s*([\d.]+)", ship_text)
+                if m:
+                    # Conditional — there's probably an actual shipping cost
+                    # Look for a separate cost like "£ 1.99" nearby
+                    costs = re.findall(r"£\s*([\d.]+)", ship_text)
+                    # Filter out the "over" threshold
+                    threshold = m.group(1)
+                    actual_costs = [c for c in costs if c != threshold and float(c) < float(threshold)]
+                    if actual_costs:
+                        shipping = actual_costs[0]
+                    else:
+                        shipping = "0"  # assume free if can't find actual cost
                 else:
                     shipping = "0"
-                break
-            m = re.search(r"[\u00a3\uffe1]\s*([\d.]+)", text)
-            if m and "shipping" in text:
-                shipping = m.group(1)
-                break
+            else:
+                # Look for explicit shipping cost
+                m = re.search(r"£\s*([\d.]+)", ship_text)
+                if m:
+                    shipping = m.group(1)
+        except Exception:
+            pass
 
         return (price, shipping, False)
+
+    except Exception:
+        return ("", "", False)
 
     except Exception:
         return ("", "", False)
