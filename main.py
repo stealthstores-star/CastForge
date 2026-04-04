@@ -1283,8 +1283,8 @@ def cmd_fix_scrape_prices(relogin=False):
 
     # Uses Mullvad VPN (flat rate, unlimited bandwidth, zero proxy cost)
     # Rotates IP by calling `mullvad reconnect`
-    NUM_WORKERS = 5  # fewer workers since all share one VPN connection
-    PER_IP = 80  # reconnect VPN every 80 products per worker
+    NUM_WORKERS = 15  # M4 Max can handle it
+    PER_IP = 9999  # don't rotate VPN proactively — only on captcha (all workers share 1 IP)
 
     UAS = [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -1400,14 +1400,15 @@ def cmd_fix_scrape_prices(relogin=False):
         with _wp() as pw:
             brow = [None]; cxt = [None]; pg = [None]
 
-            def fresh_browser():
+            def fresh_browser(rotate=False):
                 ip_num[0] += 1
                 for x in [pg, cxt, brow]:
                     try: x[0].close()
                     except: pass
-                # Rotate Mullvad VPN for new UK IP (free, no proxy needed)
-                with lock:
-                    rotate_vpn()
+                # Only rotate VPN on captcha (all workers share 1 IP)
+                if rotate:
+                    with lock:
+                        rotate_vpn()
                 brow[0] = pw.chromium.launch(
                     headless=False, channel="msedge",
                     args=["--disable-blink-features=AutomationControlled","--window-position=2000,2000"])
@@ -1451,13 +1452,13 @@ def cmd_fix_scrape_prices(relogin=False):
                     on_ip += 1
                     if is_capt():
                         with lock: captcha_rotations[0] += 1
-                        fresh_browser(); on_ip = 0
+                        fresh_browser(rotate=True); on_ip = 0
                         try: pg[0].goto(url, wait_until="commit", timeout=8000)
                         except: continue
                         if is_capt(): continue
 
-                    try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=3000)
-                    except: pass  # try price extraction anyway
+                    try: pg[0].wait_for_selector('h1[data-pl="product-title"],h1[class*="title"]', timeout=2000)
+                    except: pass
 
                     price = pg[0].evaluate(PRICE_JS) or ""
                     ship = pg[0].evaluate(SHIP_JS) or ""
@@ -1471,8 +1472,6 @@ def cmd_fix_scrape_prices(relogin=False):
                                 print(f"  ✓ W{worker_id} [{found[0]}] {price} ship={ship} — {url[-35:]}")
                     else:
                         with lock: failed[0] += 1
-
-                    time.sleep(random.uniform(0.2, 0.5))
                 except:
                     with lock: failed[0] += 1
                     try: pg[0].url
