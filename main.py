@@ -1889,7 +1889,26 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
             # Fallback: extract from rendered page content
             if not price_data["price"]:
-                price_data["price"], price_data["shipping"] = await _extract_price_from_page(page)
+                try:
+                    fallback_price, fallback_ship = await _extract_price_from_page(page)
+                    if fallback_price:
+                        price_data["price"] = fallback_price
+                        price_data["shipping"] = fallback_ship
+                        price_data["debug"] = "page_fallback"
+                    elif progress["failed"] < 3:
+                        # Debug: why did fallback fail on a rendered page?
+                        dbg = await page.evaluate("""() => {
+                            const text = document.body ? document.body.innerText.substring(0, 2000) : 'NO BODY';
+                            const dollars = text.match(/\\$\\s*\\d+\\.\\d{2}/g) || [];
+                            const pounds = text.match(/£\\s*\\d+\\.\\d{2}/g) || [];
+                            const html = document.documentElement.innerHTML;
+                            const cents = html.match(/"\\w*[Cc]ent\\w*":\\s*"?\\d+/g) || [];
+                            return {dollars: dollars.slice(0,5), pounds: pounds.slice(0,5), cents: cents.slice(0,5), textLen: text.length};
+                        }""")
+                        print(f"  FALLBACK DEBUG: {json.dumps(dbg)}")
+                except Exception as e:
+                    if progress["failed"] < 3:
+                        print(f"  FALLBACK ERROR: {type(e).__name__}: {str(e)[:100]}")
 
             if price_data["price"]:
                 products[idx]["product_price"] = price_data["price"]
