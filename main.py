@@ -1316,7 +1316,12 @@ async def _run_price_scraper():
         context = await browser.new_context(
             storage_state=str(ALI_STATE_FILE),
         )
-        print(f"  Browser launched with proxy. Opening {PRICE_TABS} tabs...")
+        # Block images, CSS, fonts, media — only need HTML + JS for price
+        await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}", lambda route: route.abort())
+        await context.route("**/*.css", lambda route: route.abort())
+        await context.route("**/ae-pic-a1.aliexpress-media.com/**", lambda route: route.abort())
+        await context.route("**/ae01.alicdn.com/kf/**", lambda route: route.abort())
+        print(f"  Browser launched with proxy (images/CSS blocked). Opening {PRICE_TABS} tabs...")
 
         # Split work across tabs
         chunk_size = max(1, len(needs_price) // PRICE_TABS + 1)
