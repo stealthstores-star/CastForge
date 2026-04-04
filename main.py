@@ -1283,7 +1283,7 @@ def cmd_fix_scrape_prices(relogin=False):
     PRICE_JS = """
     () => {
         let price = '';
-        // Strategy A: Price containers with ￡ or £
+        // Strategy A: Price containers near the product title (top of page only)
         const priceSels = [
             '[class*="price--current"]', '[class*="product-price-current"]',
             '[class*="snow-price"]', '[class*="price-current"]',
@@ -1295,12 +1295,16 @@ def cmd_fix_scrape_prices(relogin=False):
             const els = document.querySelectorAll(sel);
             for (const el of els) {
                 if (!el.offsetParent) continue;
+                const rect = el.getBoundingClientRect();
+                // Only accept prices in the product detail area (top 600px)
+                // Skip prices in "You may also like" / recommendation sections
+                if (rect.top < 0 || rect.top > 600) continue;
                 const t = el.innerText.replace(/\\s+/g, '').trim();
                 const m = t.match(/[£￡$€]\\d+[.,]\\d{2}/);
                 if (m) return m[0].replace('￡', '£');
             }
         }
-        // Strategy B: ALL visible elements
+        // Strategy B: Visible elements in product area only (top 600px)
         const allEls = document.querySelectorAll('span, div, strong, b');
         for (const el of allEls) {
             if (!el.offsetParent) continue;
@@ -1309,7 +1313,7 @@ def cmd_fix_scrape_prices(relogin=False):
             const m = t.match(/[£￡$€]\\d+[.,]\\d{2}/);
             if (m) {
                 const rect = el.getBoundingClientRect();
-                if (rect.top > 0 && rect.top < 800) return m[0].replace('￡', '£');
+                if (rect.top > 0 && rect.top < 600) return m[0].replace('￡', '£');
             }
         }
         // Strategy C: JSON data in scripts
@@ -1512,10 +1516,16 @@ def cmd_fix_scrape_prices(relogin=False):
             if _is_captcha(pg):
                 return None  # Signal: captcha, need new IP
 
+            # Wait for the PRODUCT TITLE to render — confirms the actual product loaded
+            # (not just recommendation cards which have their own prices)
             try:
-                pg.wait_for_selector('img[src*="alicdn"], [class*="gallery"], [class*="price"]', timeout=5000)
+                pg.wait_for_selector(
+                    'h1[data-pl="product-title"], h1[class*="title"], h1.product-title-text',
+                    timeout=8000)
             except Exception:
+                # No title = page didn't render the product, skip
                 time.sleep(0.5)
+                return ("", "")
 
             price_text = ""
             try:
