@@ -1285,7 +1285,7 @@ def cmd_fix_scrape_prices(relogin=False):
     PROXY_USER = "jpo1c9lb5mytbj0t"
     PROXY_PASS = "GnXsjzZq15h0WEdY_country-gb_session-{seed}"
     NUM_WORKERS = 10
-    PER_IP = 40
+    PER_IP = 150
 
     UAS = [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
