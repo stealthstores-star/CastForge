@@ -1307,13 +1307,15 @@ async def _run_price_scraper():
         browser = await pw.chromium.launch(
             channel="msedge", headless=True,
             proxy={
-                "server": "http://geo.iproyal.com:12321",
+                "server": "socks5://geo.iproyal.com:12321",
                 "username": "jpo1c9lb5mytbj0t",
                 "password": "GnXsjzZq15h0WEdY_country-us",
             },
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
         )
-        context = await browser.new_context(storage_state=str(ALI_STATE_FILE))
+        context = await browser.new_context(
+            storage_state=str(ALI_STATE_FILE),
+        )
         print(f"  Browser launched with proxy. Opening {PRICE_TABS} tabs...")
 
         # Split work across tabs
