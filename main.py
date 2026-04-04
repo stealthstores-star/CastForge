@@ -1250,8 +1250,7 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices using Playwright (CSR pages need real browser). 10 parallel tabs."""
-    # Login BEFORE entering async loop (sync Playwright can't run inside asyncio)
+    """Re-scrape prices: 60 contexts with proxy + login state. Same pattern as fix-titles."""
     if relogin or not ALI_STATE_FILE.exists():
         from playwright.sync_api import sync_playwright as sync_pw
         with sync_pw() as p:
@@ -1264,14 +1263,18 @@ def cmd_fix_scrape_prices(relogin=False):
 async def _run_price_scraper():
     import asyncio
     from playwright.async_api import async_playwright
+    from scraper import STEALTH_JS, USER_AGENTS
+    import random
+
+    CONTEXTS = 60
+    BATCH_PER_CTX = 50
+    BROWSER_RESTART = 1500
 
     print("\n══════════════════════════════════════")
-    print("  CastForge Price Re-Scraper (Playwright)")
+    print("  CastForge Price Re-Scraper (60 contexts)")
     print("══════════════════════════════════════\n")
 
-    if not ALI_STATE_FILE.exists():
-        print("  No login state found. Run with --relogin.")
-        return
+    session_path = str(ALI_STATE_FILE) if ALI_STATE_FILE.exists() else None
 
     cp_path = Path("scrape_checkpoint.json")
     if not cp_path.exists():
@@ -1291,73 +1294,75 @@ async def _run_price_scraper():
 
     print(f"  Total products: {len(products)}")
     print(f"  Missing prices: {len(needs_price)}")
-    print(f"  Tabs: {PRICE_TABS} concurrent")
+    print(f"  Contexts: {CONTEXTS} (proxy + login state)")
 
     if not needs_price:
         print("  All products have prices!")
         return
 
-    est_min = len(needs_price) / (PRICE_TABS * 20)  # ~20/min per tab
-    print(f"  Estimated: {est_min:.0f} minutes (~{PRICE_TABS * 20}/min)\n")
+    est = len(needs_price) / (CONTEXTS * 10)
+    print(f"  Estimated: {est:.0f} minutes\n")
 
-    progress = {"done": 0, "found": 0, "failed": 0, "captcha": 0, "start": time.time()}
-    retry_list = []  # URLs that hit captcha
+    progress = {"done": 0, "found": 0, "failed": 0, "start": time.time()}
+    titles_since_restart = 0
+
+    proxy_config = {
+        "server": "http://geo.iproyal.com:12321",
+        "username": "jpo1c9lb5mytbj0t",
+        "password": "GnXsjzZq15h0WEdY_country-us",
+    }
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            channel="msedge", headless=True,
-            proxy={
-                "server": "http://geo.iproyal.com:12321",
-                "username": "jpo1c9lb5mytbj0t",
-                "password": "GnXsjzZq15h0WEdY_country-us",
-            },
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox",
-                  "--ignore-certificate-errors"],
+            headless=True,
+            proxy=proxy_config,
+            args=["--disable-blink-features=AutomationControlled",
+                  "--no-sandbox", "--disable-dev-shm-usage"],
         )
-        context = await browser.new_context(
-            storage_state=str(ALI_STATE_FILE),
-            ignore_https_errors=True,
-        )
-        # Block images, CSS, fonts, media — only need HTML + JS for price
-        await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}", lambda route: route.abort())
-        await context.route("**/*.css", lambda route: route.abort())
-        await context.route("**/ae-pic-a1.aliexpress-media.com/**", lambda route: route.abort())
-        await context.route("**/ae01.alicdn.com/kf/**", lambda route: route.abort())
-        print(f"  Browser launched with proxy (images/CSS blocked). Opening {PRICE_TABS} tabs...")
 
-        # Split work across tabs
-        chunk_size = max(1, len(needs_price) // PRICE_TABS + 1)
-        chunks = [needs_price[i:i + chunk_size] for i in range(0, len(needs_price), chunk_size)]
+        for cycle_start in range(0, len(needs_price), CONTEXTS * BATCH_PER_CTX):
+            cycle = needs_price[cycle_start:cycle_start + CONTEXTS * BATCH_PER_CTX]
 
-        tasks = [
-            _price_tab_worker(context, chunk, products, progress, data, cp_path, tab_id)
-            for tab_id, chunk in enumerate(chunks)
-        ]
-        retry_lists = await asyncio.gather(*tasks, return_exceptions=True)
+            chunks = []
+            for ci in range(CONTEXTS):
+                chunk = cycle[ci * BATCH_PER_CTX:(ci + 1) * BATCH_PER_CTX]
+                if chunk:
+                    chunks.append(chunk)
 
-        # Collect retry URLs
-        for r in retry_lists:
-            if isinstance(r, list):
-                retry_list.extend(r)
+            tasks = [
+                _price_ctx_worker(browser, ci, chunk, products, progress,
+                                   session_path, USER_AGENTS, STEALTH_JS)
+                for ci, chunk in enumerate(chunks)
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Retry captcha'd URLs with delay
-        if retry_list:
-            print(f"\n  Retrying {len(retry_list)} captcha'd products (5s delay each)...")
-            page = await context.new_page()
-            for idx, url in retry_list:
-                result = await _scrape_single_price(page, url)
-                if result[0]:
-                    products[idx]["product_price"] = result[0]
-                    if result[1]:
-                        products[idx]["shipping"] = result[1]
-                    progress["found"] += 1
-                else:
-                    progress["failed"] += 1
-                progress["done"] += 1
-                await asyncio.sleep(5)
-            await page.close()
+            for r in results:
+                if isinstance(r, int):
+                    titles_since_restart += r
 
-        await context.close()
+            # Checkpoint
+            data["products"] = products
+            cp_path.write_text(json.dumps(data, ensure_ascii=False))
+
+            elapsed = time.time() - progress["start"]
+            rate = progress["done"] / max(elapsed, 1) * 60
+            remaining = len(needs_price) - cycle_start - len(cycle)
+            eta = remaining / max(rate, 1) if rate > 0 else 0
+            print(f"  Checkpoint [{cycle_start + len(cycle)}/{len(needs_price)}] "
+                  f"{progress['found']} found | {rate:.0f}/min | ETA: {eta:.0f} min")
+
+            # Browser restart every 1500
+            if titles_since_restart >= BROWSER_RESTART and remaining > 0:
+                await browser.close()
+                await asyncio.sleep(2)
+                browser = await pw.chromium.launch(
+                    headless=True, proxy=proxy_config,
+                    args=["--disable-blink-features=AutomationControlled",
+                          "--no-sandbox", "--disable-dev-shm-usage"],
+                )
+                titles_since_restart = 0
+                print(f"  Browser restarted")
+
         await browser.close()
 
     # Final save
@@ -1365,27 +1370,11 @@ async def _run_price_scraper():
     cp_path.write_text(json.dumps(data, ensure_ascii=False))
 
     elapsed = time.time() - progress["start"]
-    print(f"\n  {'='*50}")
-    print(f"  Done in {elapsed/60:.0f} min: {progress['found']} prices found, "
-          f"{progress['failed']} failed, {progress['captcha']} captcha'd")
-    print(f"  Checkpoint saved")
-    print(f"  {'='*50}")
-
-    # Log failures
-    if progress["failed"] > 0:
-        failed_urls = [url for i, url in needs_price
-                        if not products[i].get("product_price") or _parse_price(products[i].get("product_price", "")) <= 0]
-        if failed_urls:
-            with open("price_scrape_failed.csv", "w", newline="") as f:
-                import csv as csv_mod
-                w = csv_mod.writer(f)
-                w.writerow(["url"])
-                for u in failed_urls[:5000]:
-                    w.writerow([u])
-            print(f"  Failed URLs: {len(failed_urls)} → price_scrape_failed.csv")
+    print(f"\n  Done in {elapsed/60:.0f} min: {progress['found']} found, "
+          f"{progress['failed']} failed")
 
     # Regenerate all_products.csv
-    print(f"\n  Regenerating all_products.csv...")
+    print(f"  Regenerating all_products.csv...")
     import csv as csv_mod
     fieldnames = [
         "id", "product_title", "product_price", "product_original_price",
@@ -1403,48 +1392,119 @@ async def _run_price_scraper():
     print(f"  Saved all_products.csv ({len(products)} products)")
 
 
-async def _price_tab_worker(context, items, products, progress, data, cp_path, tab_id):
-    """One browser tab processing its chunk of products."""
+async def _price_ctx_worker(browser, worker_id, items, products, progress,
+                             session_path, user_agents, stealth_js):
+    """One browser context that scrapes prices from its chunk."""
+    import random
+
+    ua = random.choice(user_agents)
+    vp = {"width": random.choice([1280, 1366, 1440, 1920]),
+          "height": random.choice([720, 900, 1080])}
+
+    ctx_kwargs = dict(user_agent=ua, viewport=vp, locale="en-GB",
+                       ignore_https_errors=True)
+    if session_path:
+        ctx_kwargs["storage_state"] = session_path
+
+    context = await browser.new_context(**ctx_kwargs)
+
+    # Block images/CSS/fonts to save bandwidth
+    await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}",
+                         lambda route: route.abort())
+    await context.route("**/*.css", lambda route: route.abort())
+
     page = await context.new_page()
-    retry = []
-    debug_count = [0]  # mutable counter shared with _scrape_single_price
+    await page.add_init_script(stealth_js)
+    found = 0
 
     for idx, url in items:
-        result = await _scrape_single_price(page, url, debug_count=debug_count)
-        price, shipping, is_captcha = result
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            await page.wait_for_timeout(3000)
 
-        if is_captcha:
-            retry.append((idx, url))
-            progress["captcha"] += 1
-        elif price:
-            products[idx]["product_price"] = price
-            if shipping:
-                products[idx]["shipping"] = shipping
-            progress["found"] += 1
+            price, shipping = await _extract_price_from_page(page)
 
-            if progress["found"] <= 2:
-                print(f"  FOUND: {price} ship={shipping} — {url[-40:]}")
-        else:
+            if price:
+                products[idx]["product_price"] = price
+                if shipping:
+                    products[idx]["shipping"] = shipping
+                progress["found"] += 1
+                found += 1
+
+                if progress["found"] <= 3:
+                    print(f"  FOUND: {price} ship={shipping} — {url[-40:]}")
+            else:
+                progress["failed"] += 1
+
+        except Exception:
             progress["failed"] += 1
 
         progress["done"] += 1
-        done = progress["done"]
-
-        if done % 50 == 0:
+        if progress["done"] % 100 == 0:
             elapsed = time.time() - progress["start"]
-            rate = done / max(elapsed, 1) * 60
-            eta = (len(products) - done) / max(rate, 1) if rate > 0 else 0
-            print(f"  [{done}] Found {progress['found']}, "
-                  f"Failed {progress['failed']}, Captcha {progress['captcha']} "
-                  f"| {rate:.0f}/min")
-
-        # Checkpoint save
-        if done % PRICE_SAVE_EVERY == 0:
-            data["products"] = products
-            cp_path.write_text(json.dumps(data, ensure_ascii=False))
+            rate = progress["done"] / max(elapsed, 1) * 60
+            print(f"  [{progress['done']}] Found {progress['found']}, "
+                  f"Failed {progress['failed']} | {rate:.0f}/min")
 
     await page.close()
-    return retry
+    await context.close()
+    return found
+
+
+async def _extract_price_from_page(page):
+    """Extract price + shipping from a rendered AliExpress page."""
+    price = ""
+    shipping = ""
+
+    # Strategy 1: JS evaluate — get all price element text
+    try:
+        all_text = await page.evaluate("""() => {
+            const els = document.querySelectorAll('[class*="price"], [class*="Price"], [class*="snow-price"]');
+            return Array.from(els).map(e => e.textContent).join(' ||| ');
+        }""")
+        all_text = all_text.replace("\uffe1", "£")
+        prices = re.findall(r"£\s*(\d+\.?\d*)", all_text)
+        valid = [p for p in prices if float(p) > 0]
+        if valid:
+            price = f"£{valid[0]}"
+    except Exception:
+        pass
+
+    # Strategy 2: page content regex
+    if not price:
+        try:
+            content = await page.content()
+            content = content.replace("\uffe1", "£")
+            m = re.search(r"£\s*(\d+\.\d{2})", content)
+            if m and float(m.group(1)) > 0:
+                price = f"£{m.group(1)}"
+        except Exception:
+            pass
+
+    # Shipping
+    try:
+        ship_text = await page.evaluate("""() => {
+            const els = document.querySelectorAll('[class*="shipping"], [class*="delivery"]');
+            return Array.from(els).map(e => e.textContent).join(' ||| ');
+        }""")
+        ship_text = ship_text.lower().replace("\uffe1", "£")
+        if "free shipping" in ship_text:
+            m = re.search(r"free shipping\s+over\s+£\s*([\d.]+)", ship_text)
+            if m:
+                costs = re.findall(r"£\s*([\d.]+)", ship_text)
+                threshold = m.group(1)
+                actual = [c for c in costs if c != threshold and float(c) < float(threshold)]
+                shipping = actual[0] if actual else "0"
+            else:
+                shipping = "0"
+        else:
+            m = re.search(r"£\s*([\d.]+)", ship_text)
+            if m:
+                shipping = m.group(1)
+    except Exception:
+        pass
+
+    return price, shipping
 
 
 async def _scrape_single_price(page, url, debug_count=None):
