@@ -86,15 +86,31 @@ def main():
         count = page.evaluate(GET_COUNT_JS)
         print(f"  Import list count: {count}")
         if count == -1:
-            print("  Count selector returned -1 — dumping sidebar HTML:\n")
-            sidebar = page.evaluate(DUMP_SIDEBAR_JS)
-            print(sidebar)
-            print("\n  Fix the selector based on the HTML above, then re-run.")
-            input("\n  Press ENTER to close browser... ")
-            browser.close()
-            return
+            print("  Count selector returned -1 — dumping page structure...\n")
+            dump = page.evaluate("""() => {
+                // Get all text nodes that contain numbers, with their parent info
+                const results = [];
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+                while (walker.nextNode()) {
+                    const t = walker.currentNode.textContent.trim();
+                    if (/import/i.test(t) || /^\\d+$/.test(t)) {
+                        const el = walker.currentNode.parentElement;
+                        if (el) {
+                            const tag = el.tagName.toLowerCase();
+                            const cls = (el.className || '').toString().substring(0, 80);
+                            const parent = el.parentElement;
+                            const pcls = parent ? (parent.className || '').toString().substring(0, 80) : '';
+                            results.push(tag + '.' + cls + ' → "' + t.substring(0, 60) + '" (parent: ' + pcls.substring(0, 60) + ')');
+                        }
+                    }
+                }
+                return results.slice(0, 40).join('\\n');
+            }""")
+            print(dump)
+            print("\n  Script will continue WITHOUT tracking (simple paste+wait mode).\n")
 
-        print(f"  Selector works! Starting import...\n")
+        else:
+            print(f"  Selector works! Starting import...\n")
 
         input_sel = 'input[placeholder*="product link"]'
         failed = []
@@ -128,18 +144,21 @@ def main():
                 else:
                     inp.press("Enter")
 
-                # Wait up to 5s for count to increment
-                success = False
-                for _ in range(10):
-                    time.sleep(0.5)
-                    count_after = page.evaluate(GET_COUNT_JS)
-                    if count_after > count_before:
-                        success = True
-                        imported += 1
-                        break
-
-                if not success:
-                    failed.append(url)
+                # Wait for count to increment, or just wait 2.5s if selector broken
+                if count_before >= 0:
+                    success = False
+                    for _ in range(10):
+                        time.sleep(0.5)
+                        count_after = page.evaluate(GET_COUNT_JS)
+                        if count_after > count_before:
+                            success = True
+                            imported += 1
+                            break
+                    if not success:
+                        failed.append(url)
+                else:
+                    time.sleep(2.5)
+                    imported += 1
 
             except Exception as e:
                 failed.append(url)
