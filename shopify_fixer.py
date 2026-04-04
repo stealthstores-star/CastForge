@@ -106,13 +106,27 @@ def fetch_all_products(token, fields="id,title,status,tags,images,variants"):
     return products
 
 # ── Match Shopify product to AI cache ──
+STOPWORDS = {"resin", "scale", "model", "kit", "gk", "cast", "figure", "figures",
+             "miniature", "statue", "bust", "diorama", "unpainted", "unassembled",
+             "new", "hot", "sale", "free", "shipping", "quality", "high", "the",
+             "and", "for", "with", "from", "set", "pcs", "piece", "pieces"}
+
 def _tokenise(text):
-    """Split into lowercase word tokens, strip junk."""
+    """Split into lowercase content tokens, exclude stopwords and scale notations."""
     text = normalise(text)
-    return set(w for w in re.split(r"[\s/\-]+", text) if len(w) >= 2)
+    tokens = set()
+    for w in re.split(r"[\s/\-]+", text):
+        if len(w) < 2:
+            continue
+        if w in STOPWORDS:
+            continue
+        if re.match(r"^\d+$", w) and len(w) < 4:
+            continue  # skip bare short numbers
+        tokens.add(w)
+    return tokens
 
 def _jaccard(a, b):
-    """Jaccard similarity between two token sets."""
+    """Jaccard similarity between two content token sets."""
     if not a or not b:
         return 0.0, 0
     inter = a & b
@@ -132,13 +146,13 @@ def match_product(shopify_title, ai_cache, cache_normalised, cache_tokens=None,
         raw = cache_normalised[norm]
         return raw, ai_cache[raw], "normalised"
 
-    # 3. Token overlap (Jaccard) — min 0.75 similarity AND min 6 shared tokens
+    # 3. Token overlap (Jaccard) — min 0.80 similarity AND min 8 shared content tokens
     if cache_tokens:
         shop_tokens = _tokenise(shopify_title)
         best_score, best_raw = 0.0, None
         for raw_title, raw_tokens in cache_tokens.items():
             score, shared = _jaccard(shop_tokens, raw_tokens)
-            if score >= 0.75 and shared >= 6 and score > best_score:
+            if score >= 0.80 and shared >= 8 and score > best_score:
                 best_score = score
                 best_raw = raw_title
         if best_raw:
