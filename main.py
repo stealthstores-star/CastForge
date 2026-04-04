@@ -1523,6 +1523,10 @@ async def _run_price_scraper():
         print("  All products have prices!")
         return
 
+    print()
+    print("  Starting scrape... (prices appear after ~5s per product)")
+    print()
+
     est = len(needs_price) / (CONTEXTS * 10)
     print(f"  Estimated: {est:.0f} minutes\n")
 
@@ -1740,27 +1744,12 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
                     body_lower = body.lower()
 
-                    # Debug: log first 3 API responses that contain "price"
-                    if "price" in body_lower and _debug_printed["count"] < 3:
+                    # Only log non-HTML API responses that have real price data
+                    # (HTML pages are CSR shells — no price data in initial response)
+                    if "html" not in ct and "price" in body_lower and _debug_printed["count"] < 3:
                         _debug_printed["count"] += 1
-                        # Find ALL key:value pairs containing "price" (case-insensitive)
                         prices_found = re.findall(r'"([^"]*[Pp]rice[^"]*)":\s*"?([^",}{]{1,30})', body[:50000])
-                        # Also show raw snippets around "price" occurrences
-                        snippets = []
-                        idx_start = 0
-                        for _ in range(5):
-                            pi = body_lower.find("price", idx_start)
-                            if pi == -1:
-                                break
-                            snippets.append(body[max(0,pi-30):pi+60].replace("\n", " ").strip())
-                            idx_start = pi + 10
-                        print(f"\n  API DEBUG #{_debug_printed['count']}:")
-                        print(f"    URL: {resp_url[:100]}")
-                        print(f"    Content-Type: {ct[:60]}")
-                        print(f"    Body length: {len(body)}")
-                        print(f"    Price fields: {prices_found[:15]}")
-                        for i, s in enumerate(snippets):
-                            print(f"    Snippet {i+1}: ...{s}...")
+                        print(f"  API HIT: {resp_url[:80]} ({len(body)}b) fields={prices_found[:8]}")
 
                     # Extract price
                     if not price_data["price"]:
@@ -1816,9 +1805,9 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                 progress["found"] += 1
                 found += 1
 
-                if progress["found"] <= 5:
+                if progress["found"] <= 20:
                     src = price_data.get("debug", "page_content")
-                    print(f"  FOUND: {price_data['price']} ship={price_data['shipping']} via={src}")
+                    print(f"  ✓ FOUND #{progress['found']}: {price_data['price']} ship={price_data['shipping']} via={src}")
             else:
                 progress["failed"] += 1
 
@@ -1871,11 +1860,13 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
             progress["failed"] += 1
 
         progress["done"] += 1
-        if progress["done"] % 100 == 0:
+        if progress["done"] % 10 == 0:
             elapsed = time.time() - progress["start"]
             rate = progress["done"] / max(elapsed, 1) * 60
-            print(f"  [{progress['done']}] Found {progress['found']}, "
-                  f"Failed {progress['failed']} | {rate:.0f}/min")
+            remaining = len(products) - progress["done"]
+            eta = remaining / max(rate, 1) if rate > 0 else 0
+            print(f"  [{progress['done']}] found={progress['found']} "
+                  f"failed={progress['failed']} | {rate:.0f}/min ETA {eta:.0f}m")
 
     await page.close()
     await context.close()
