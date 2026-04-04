@@ -85,7 +85,7 @@ def fetch_all_products(token, fields="id,title,status,tags,images,variants"):
     """Paginate through all Shopify products."""
     headers = shopify_headers(token)
     products = []
-    url = f"{shopify_base()}/products.json?limit=250&fields={fields}&status=draft"
+    url = f"{shopify_base()}/products.json?limit=250&fields={fields}&status=active"
     while url:
         r = requests.get(url, headers=headers, timeout=30)
         if r.status_code == 429:
@@ -95,6 +95,8 @@ def fetch_all_products(token, fields="id,title,status,tags,images,variants"):
             print(f"  API error {r.status_code}: {r.text[:200]}")
             break
         products.extend(r.json().get("products", []))
+        if len(products) % 1000 < 250:
+            print(f"    ...{len(products)} fetched", flush=True)
         # Pagination
         url = None
         link = r.headers.get("Link", "")
@@ -393,9 +395,9 @@ def run(test_mode=False, poll=False):
 
     while True:
         # Fetch products
-        print(f"\n  Fetching draft products from Shopify...")
+        print(f"\n  Fetching active products from Shopify...")
         products = fetch_all_products(token)
-        print(f"  Found {len(products)} draft products")
+        print(f"  Found {len(products)} active products")
 
         # Filter already processed
         todo = [p for p in products if p["id"] not in processed_set]
@@ -455,7 +457,19 @@ def run(test_mode=False, poll=False):
                 progress["processed_ids"].append(pid)
                 if test_mode:
                     test_stats["unmatched"] += 1
-                    print(f"  [{i+1}] ✗ UNMATCHED: {shopify_title[:60]}")
+                    # Find closest cache entry for diagnosis
+                    shop_tokens = _tokenise(shopify_title)
+                    best_score, best_shared, best_raw = 0.0, 0, ""
+                    for raw, toks in cache_tokens.items():
+                        score, shared = _jaccard(shop_tokens, toks)
+                        if score > best_score:
+                            best_score, best_shared, best_raw = score, shared, raw
+                    shop_only = sorted(shop_tokens - _tokenise(best_raw)) if best_raw else []
+                    cache_only = sorted(_tokenise(best_raw) - shop_tokens) if best_raw else []
+                    print(f"  [{i+1}] ✗ UNMATCHED")
+                    print(f"       Shopify: {shopify_title}")
+                    print(f"       Closest: {best_raw}")
+                    print(f"       Token overlap: {best_score:.0%} | Shared: {best_shared} | Shop-only: {shop_only[:8]} | Cache-only: {cache_only[:8]}")
                 continue
 
             raw_title, ai_title, match_type = match
