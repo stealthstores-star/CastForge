@@ -1433,21 +1433,10 @@ def cmd_fix_scrape_prices(relogin=False):
                 pg[0] = cxt[0].new_page()
 
             def is_capt():
-                # URL check FIRST — this is the #1 signal
-                u = pg[0].url
-                if "punish" in u or "x5sec" in u or "captcha" in u.lower():
-                    return True
                 try:
-                    body = (pg[0].query_selector("body").inner_text() or "").strip()
-                    if len(body) < 500:
-                        bl = body.lower()
-                        if any(w in bl for w in ["unusual traffic","robot","detected"]):
-                            return True
-                    for frame in pg[0].frames:
-                        if "recaptcha" in (frame.url or "").lower():
-                            return True
-                except: pass
-                return False
+                    u = pg[0].url.lower()
+                    return "punish" in u or "x5sec" in u
+                except: return False
 
             def handle_captcha(url):
                 """Rotate VPN, restart browser, retry the URL. Returns True if cleared."""
