@@ -1365,6 +1365,75 @@ async def _run_price_scraper():
 
         await browser.close()
 
+    # Retry pass — products that failed get a second chance with longer wait
+    still_missing = []
+    for i, p in enumerate(products):
+        price = p.get("product_price", "")
+        if not price or _parse_price(price) <= 0:
+            url = p.get("product_url") or p.get("source_url", "")
+            if url:
+                still_missing.append((i, url))
+
+    if still_missing and len(still_missing) < len(needs_price):
+        print(f"\n  ── Retry pass: {len(still_missing)} products with 5s wait ──")
+        progress2 = {"done": 0, "found": 0, "failed": 0, "start": time.time()}
+
+        async with async_playwright() as pw2:
+            browser2 = await pw2.chromium.launch(
+                headless=True, proxy=proxy_config,
+                args=["--disable-blink-features=AutomationControlled",
+                      "--no-sandbox", "--disable-dev-shm-usage"],
+            )
+
+            retry_chunks = []
+            for ci in range(CONTEXTS):
+                chunk = still_missing[ci * BATCH_PER_CTX:(ci + 1) * BATCH_PER_CTX]
+                if chunk:
+                    retry_chunks.append(chunk)
+
+            async def _retry_worker(browser, chunk):
+                ctx = await browser.new_context(
+                    user_agent=random.choice(user_agents), locale="en-GB",
+                    ignore_https_errors=True,
+                    **({"storage_state": session_path} if session_path else {}),
+                )
+                await ctx.route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,otf,eot,mp4,webm}",
+                                 lambda route: route.abort())
+                await ctx.route("**/*.css", lambda route: route.abort())
+                pg = await ctx.new_page()
+                found = 0
+                for idx, url in chunk:
+                    try:
+                        await pg.goto(url, wait_until="domcontentloaded", timeout=15000)
+                        await pg.wait_for_timeout(5000)  # longer wait on retry
+                        price, shipping = await _extract_price_from_page(pg)
+                        if price:
+                            products[idx]["product_price"] = price
+                            if shipping:
+                                products[idx]["shipping"] = shipping
+                            progress2["found"] += 1
+                            found += 1
+                        else:
+                            progress2["failed"] += 1
+                    except Exception:
+                        progress2["failed"] += 1
+                    progress2["done"] += 1
+                    if progress2["done"] % 100 == 0:
+                        print(f"    Retry [{progress2['done']}] +{progress2['found']} found")
+                await pg.close()
+                await ctx.close()
+                return found
+
+            tasks2 = [_retry_worker(browser2, c) for c in retry_chunks]
+            await asyncio.gather(*tasks2, return_exceptions=True)
+            await browser2.close()
+
+        data["products"] = products
+        cp_path.write_text(json.dumps(data, ensure_ascii=False))
+        print(f"  Retry found {progress2['found']} more prices")
+        progress["found"] += progress2["found"]
+        progress["failed"] = progress["failed"] - progress2["found"]
+
     # Final save
     data["products"] = products
     cp_path.write_text(json.dumps(data, ensure_ascii=False))
@@ -1419,14 +1488,8 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
     for idx, url in items:
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-
-            # Wait for price element to render
-            try:
-                await page.wait_for_selector("[class*='price'], [class*='Price']", timeout=8000)
-            except Exception:
-                pass
-            await page.wait_for_timeout(2000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            await page.wait_for_timeout(3000)
 
             price, shipping = await _extract_price_from_page(page)
 
