@@ -1250,7 +1250,7 @@ def _ensure_ali_login(pw):
 
 
 def cmd_fix_scrape_prices(relogin=False):
-    """Re-scrape prices: 60 contexts with proxy + login state. Same pattern as fix-titles."""
+    """Re-scrape prices: 60 Playwright contexts with proxy. DEBUG first failures."""
     if relogin or not ALI_STATE_FILE.exists():
         from playwright.sync_api import sync_playwright as sync_pw
         with sync_pw() as p:
@@ -1487,22 +1487,70 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
 
     for idx, url in items:
         try:
+            # Intercept API responses that contain price data
+            price_data = {"price": "", "shipping": ""}
+
+            async def _on_response(response):
+                try:
+                    resp_url = response.url
+                    # Catch the detail API response that has price
+                    if ("api" in resp_url and "detail" in resp_url) or "pdp" in resp_url:
+                        if response.status == 200:
+                            try:
+                                body = await response.text()
+                                body = body.replace("\uffe1", "£")
+                                for pat in [
+                                    r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                                    r'"activityPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                                    r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d+)',
+                                    r'"formattedPrice"\s*:\s*"[^"]*?(\d+\.?\d+)',
+                                    r'"skuCalPrice"\s*:\s*"(\d+\.?\d+)',
+                                ]:
+                                    m = re.search(pat, body)
+                                    if m and float(m.group(1)) > 0.1:
+                                        price_data["price"] = f"£{m.group(1)}"
+                                        break
+
+                                # Shipping
+                                sm = re.search(r'"freightAmount"[^}]*?"value"\s*:\s*"?(\d+\.?\d*)', body)
+                                if sm:
+                                    price_data["shipping"] = sm.group(1)
+                                elif "freeShipping" in body or '"free"' in body.lower():
+                                    price_data["shipping"] = "0"
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            page.on("response", _on_response)
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(4000)  # wait for API calls to complete
+            page.remove_listener("response", _on_response)
 
-            price, shipping = await _extract_price_from_page(page)
+            # Also try page content as fallback
+            if not price_data["price"]:
+                price_data["price"], price_data["shipping"] = await _extract_price_from_page(page)
 
-            if price:
-                products[idx]["product_price"] = price
-                if shipping:
-                    products[idx]["shipping"] = shipping
+            if price_data["price"]:
+                products[idx]["product_price"] = price_data["price"]
+                if price_data["shipping"]:
+                    products[idx]["shipping"] = price_data["shipping"]
                 progress["found"] += 1
                 found += 1
 
-                if progress["found"] <= 3:
-                    print(f"  FOUND: {price} ship={shipping} — {url[-40:]}")
+                if progress["found"] <= 5:
+                    print(f"  FOUND: {price_data['price']} ship={price_data['shipping']} — {url[-40:]}")
             else:
                 progress["failed"] += 1
+
+                # Debug: dump first 3 failures
+                if progress["failed"] <= 3 and worker_id == 0:
+                    try:
+                        title = await page.title()
+                        pg_url = page.url
+                        print(f"  DEBUG FAIL: title='{title[:40]}' url={pg_url[:60]}")
+                    except Exception:
+                        pass
 
         except Exception:
             progress["failed"] += 1
