@@ -1727,8 +1727,9 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                     if resp_url.rstrip("/").endswith(".js"):
                         return
                     ct = response.headers.get("content-type", "")
-                    # Only look at JSON and HTML responses, NOT javascript
-                    if "json" not in ct and "html" not in ct:
+                    # Allow JSON, HTML, and JSONP (javascript) responses
+                    # Static .js assets are already blocked by URL filter above
+                    if "json" not in ct and "html" not in ct and "javascript" not in ct:
                         return
                     if response.status != 200:
                         return
@@ -1743,11 +1744,23 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
                     if "price" in body_lower and _debug_printed["count"] < 3:
                         _debug_printed["count"] += 1
                         # Find ALL key:value pairs containing "price" (case-insensitive)
-                        prices_found = re.findall(r'"([^"]*[Pp]rice[^"]*)":\s*"?([^",}{]{1,30})', body[:20000])
+                        prices_found = re.findall(r'"([^"]*[Pp]rice[^"]*)":\s*"?([^",}{]{1,30})', body[:50000])
+                        # Also show raw snippets around "price" occurrences
+                        snippets = []
+                        idx_start = 0
+                        for _ in range(5):
+                            pi = body_lower.find("price", idx_start)
+                            if pi == -1:
+                                break
+                            snippets.append(body[max(0,pi-30):pi+60].replace("\n", " ").strip())
+                            idx_start = pi + 10
                         print(f"\n  API DEBUG #{_debug_printed['count']}:")
-                        print(f"    URL: {resp_url[:80]}")
+                        print(f"    URL: {resp_url[:100]}")
+                        print(f"    Content-Type: {ct[:60]}")
                         print(f"    Body length: {len(body)}")
                         print(f"    Price fields: {prices_found[:15]}")
+                        for i, s in enumerate(snippets):
+                            print(f"    Snippet {i+1}: ...{s}...")
 
                     # Extract price
                     if not price_data["price"]:
