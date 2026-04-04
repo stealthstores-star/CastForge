@@ -1582,15 +1582,11 @@ async def _run_price_scraper():
     progress = {"done": 0, "found": 0, "failed": 0, "start": time.time()}
     titles_since_restart = 0
 
-    proxy_config = {
-        "server": "http://geo.iproyal.com:12321",
-        "username": "jpo1c9lb5mytbj0t",
-        "password": "GnXsjzZq15h0WEdY_country-us",
-    }
-
+    # Use direct connection (no proxy) — login cookies are from direct connection,
+    # proxy causes session mismatch and AliExpress blocks the page from rendering
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=True, proxy=proxy_config,
+            headless=True,
             args=["--disable-blink-features=AutomationControlled",
                   "--no-sandbox", "--disable-dev-shm-usage"],
         )
@@ -1631,7 +1627,7 @@ async def _run_price_scraper():
                 await browser.close()
                 await asyncio.sleep(2)
                 browser = await pw.chromium.launch(
-                    headless=True, proxy=proxy_config,
+                    headless=True,
                     args=["--disable-blink-features=AutomationControlled",
                           "--no-sandbox", "--disable-dev-shm-usage"],
                 )
