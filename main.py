@@ -1398,9 +1398,10 @@ async def _price_tab_worker(context, items, products, progress, data, cp_path, t
     """One browser tab processing its chunk of products."""
     page = await context.new_page()
     retry = []
+    debug_count = [0]  # mutable counter shared with _scrape_single_price
 
     for idx, url in items:
-        result = await _scrape_single_price(page, url)
+        result = await _scrape_single_price(page, url, debug_count=debug_count)
         price, shipping, is_captcha = result
 
         if is_captcha:
@@ -1412,24 +1413,10 @@ async def _price_tab_worker(context, items, products, progress, data, cp_path, t
                 products[idx]["shipping"] = shipping
             progress["found"] += 1
 
-            # Print first success
             if progress["found"] <= 2:
-                print(f"  FOUND: £{price} ship={shipping} — {url[-40:]}")
+                print(f"  FOUND: {price} ship={shipping} — {url[-40:]}")
         else:
             progress["failed"] += 1
-
-            # Debug first 3 failures — dump page info
-            if progress["failed"] <= 3:
-                try:
-                    pg_title = await page.title()
-                    pg_url = page.url
-                    snippet = await page.evaluate("document.body?.innerText?.substring(0, 300) || 'empty'")
-                    print(f"  DEBUG FAIL #{progress['failed']}:")
-                    print(f"    URL: {pg_url[:80]}")
-                    print(f"    Title: {pg_title[:60]}")
-                    print(f"    Body: {snippet[:200]}")
-                except Exception:
-                    print(f"  DEBUG FAIL: couldn't read page")
 
         progress["done"] += 1
         done = progress["done"]
@@ -1451,13 +1438,13 @@ async def _price_tab_worker(context, items, products, progress, data, cp_path, t
     return retry
 
 
-async def _scrape_single_price(page, url):
-    """Navigate to one product page, extract price + shipping. Returns (price, shipping, is_captcha)."""
+async def _scrape_single_price(page, url, debug_count=None):
+    """Navigate to one product page, extract price + shipping. Returns (price, shipping, is_captcha, error)."""
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        resp = await page.goto(url, wait_until="domcontentloaded", timeout=15000)
 
         # Wait for price to render — the price is JS-rendered
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(4000)
 
         # Also try waiting for a price-like element
         try:
@@ -1558,9 +1545,31 @@ async def _scrape_single_price(page, url):
         except Exception:
             pass
 
+        # Debug: if no price found, log what we see
+        if not price and debug_count is not None and debug_count[0] < 5:
+            debug_count[0] += 1
+            try:
+                pg_url = page.url
+                pg_title = await page.title()
+                body = await page.evaluate("document.body?.innerText?.substring(0, 500) || ''")
+                body = body.replace("\n", " ")[:200]
+                print(f"\n  DEBUG FAIL #{debug_count[0]}:")
+                print(f"    Navigated to: {pg_url[:80]}")
+                print(f"    Page title: {pg_title[:60]}")
+                print(f"    Body text: {body[:200]}")
+                # Also check what page.content() has for price patterns
+                content = await page.content()
+                price_matches = re.findall(r"£\s*\d+\.?\d*", content.replace("\uffe1", "£"))
+                print(f"    £ patterns in HTML: {price_matches[:5]}")
+            except Exception as de:
+                print(f"    DEBUG error: {de}")
+
         return (price, shipping, False)
 
-    except Exception:
+    except Exception as e:
+        if debug_count is not None and debug_count[0] < 5:
+            debug_count[0] += 1
+            print(f"\n  DEBUG EXCEPTION #{debug_count[0]}: {type(e).__name__}: {str(e)[:100]}")
         return ("", "", False)
 
     except Exception:
