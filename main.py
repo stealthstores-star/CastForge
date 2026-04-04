@@ -1266,9 +1266,9 @@ async def _run_price_scraper():
     from scraper import STEALTH_JS, USER_AGENTS
     import random
 
-    CONTEXTS = 60
-    BATCH_PER_CTX = 50
-    BROWSER_RESTART = 1500
+    CONTEXTS = 5  # Direct connection — no proxy (proxy strips JS rendering)
+    BATCH_PER_CTX = 200
+    BROWSER_RESTART = 1000
 
     print("\n══════════════════════════════════════")
     print("  CastForge Price Re-Scraper (60 contexts)")
@@ -1294,7 +1294,7 @@ async def _run_price_scraper():
 
     print(f"  Total products: {len(products)}")
     print(f"  Missing prices: {len(needs_price)}")
-    print(f"  Contexts: {CONTEXTS} (proxy + login state)")
+    print(f"  Contexts: {CONTEXTS} (direct + login state, no proxy)")
 
     if not needs_price:
         print("  All products have prices!")
@@ -1306,16 +1306,9 @@ async def _run_price_scraper():
     progress = {"done": 0, "found": 0, "failed": 0, "start": time.time()}
     titles_since_restart = 0
 
-    proxy_config = {
-        "server": "http://geo.iproyal.com:12321",
-        "username": "jpo1c9lb5mytbj0t",
-        "password": "GnXsjzZq15h0WEdY_country-us",
-    }
-
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=True,
-            proxy=proxy_config,
+            channel="msedge", headless=True,
             args=["--disable-blink-features=AutomationControlled",
                   "--no-sandbox", "--disable-dev-shm-usage"],
         )
@@ -1356,7 +1349,7 @@ async def _run_price_scraper():
                 await browser.close()
                 await asyncio.sleep(2)
                 browser = await pw.chromium.launch(
-                    headless=True, proxy=proxy_config,
+                    channel="msedge", headless=True,
                     args=["--disable-blink-features=AutomationControlled",
                           "--no-sandbox", "--disable-dev-shm-usage"],
                 )
@@ -1380,7 +1373,7 @@ async def _run_price_scraper():
 
         async with async_playwright() as pw2:
             browser2 = await pw2.chromium.launch(
-                headless=True, proxy=proxy_config,
+                channel="msedge", headless=True,
                 args=["--disable-blink-features=AutomationControlled",
                       "--no-sandbox", "--disable-dev-shm-usage"],
             )
