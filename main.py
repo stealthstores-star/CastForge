@@ -1525,28 +1525,62 @@ async def _extract_price_from_page(page):
     price = ""
     shipping = ""
 
-    # Strategy 1: JS evaluate — get all price element text
+    # Strategy 1: Target the MAIN product price specifically
+    # Exclude coupon/promo elements that contain "off" or "coupon"
     try:
-        all_text = await page.evaluate("""() => {
-            const els = document.querySelectorAll('[class*="price"], [class*="Price"], [class*="snow-price"]');
-            return Array.from(els).map(e => e.textContent).join(' ||| ');
+        price_text = await page.evaluate("""() => {
+            // Try specific main price selectors first
+            const selectors = [
+                '[class*="snow-price--mainPrice"]',
+                '[class*="es--wrap--erdmPRe"]',
+                '[class*="price--current--"]',
+                '[class*="product-price-value"]',
+                '[class*="uniform-banner-box"] [class*="es--wrap"]',
+            ];
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el) {
+                    const text = el.textContent.trim();
+                    // Skip if it contains "off" or "coupon" (promo element)
+                    if (!text.toLowerCase().includes('off') && !text.toLowerCase().includes('coupon')) {
+                        return text;
+                    }
+                }
+            }
+            // Fallback: get ALL price elements but filter out promos
+            const allPriceEls = document.querySelectorAll('[class*="price"], [class*="Price"]');
+            for (const el of allPriceEls) {
+                const text = el.textContent.trim();
+                const lower = text.toLowerCase();
+                // Skip promo/coupon/discount elements
+                if (lower.includes('off') || lower.includes('coupon') || lower.includes('save')
+                    || lower.includes('extra') || lower.includes('coins')) continue;
+                // Must have a £ sign
+                if (text.includes('£') || text.includes('\uffe1')) return text;
+            }
+            return '';
         }""")
-        all_text = all_text.replace("\uffe1", "£")
-        prices = re.findall(r"£\s*(\d+\.?\d*)", all_text)
-        valid = [p for p in prices if float(p) > 0]
-        if valid:
-            price = f"£{valid[0]}"
+        price_text = price_text.replace("\uffe1", "£")
+        m = re.search(r"£\s*(\d+\.?\d*)", price_text)
+        if m and float(m.group(1)) > 0:
+            price = f"£{m.group(1)}"
     except Exception:
         pass
 
-    # Strategy 2: page content regex
+    # Strategy 2: Look for minPrice in page JSON data
     if not price:
         try:
             content = await page.content()
-            content = content.replace("\uffe1", "£")
-            m = re.search(r"£\s*(\d+\.\d{2})", content)
-            if m and float(m.group(1)) > 0:
-                price = f"£{m.group(1)}"
+            # Look for the actual product price in embedded JSON
+            for pattern in [
+                r'"formattedActivityPrice"\s*:\s*"[^"]*?(\d+\.?\d*)',
+                r'"minPrice"\s*:\s*"?(\d+\.?\d*)',
+                r'"discountPrice"[^}]*?"minPrice"\s*:\s*"?(\d+\.?\d*)',
+            ]:
+                m = re.search(pattern, content)
+                if m and float(m.group(1)) > 0:
+                    price = f"£{m.group(1)}"
+                    break
         except Exception:
             pass
 
