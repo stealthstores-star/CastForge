@@ -1717,9 +1717,18 @@ async def _price_ctx_worker(browser, worker_id, items, products, progress,
             async def _on_response(response):
                 try:
                     resp_url = response.url
+                    # Skip static asset URLs — they never contain price data
+                    if any(x in resp_url for x in [
+                        "/ae-fe/", "/AWSC/", "/baxia", "alicdn.com/g/",
+                        ".css", ".png", ".jpg", ".woff", ".svg",
+                    ]):
+                        return
+                    # Skip JS files by extension (but allow JSONP callbacks)
+                    if resp_url.rstrip("/").endswith(".js"):
+                        return
                     ct = response.headers.get("content-type", "")
-                    # Only look at JSON responses
-                    if "json" not in ct and "javascript" not in ct:
+                    # Only look at JSON and HTML responses, NOT javascript
+                    if "json" not in ct and "html" not in ct:
                         return
                     if response.status != 200:
                         return
