@@ -436,12 +436,18 @@ def run(test_mode=False, poll=False):
                 location_id = locations[0]["id"]
     except Exception as e:
         print(f"  ERROR fetching locations: {e}")
-    print(f"  Location ID: {location_id}")
+    print(f"  Using location_id={location_id}")
     if not location_id:
         print("  WARNING: no location_id — inventory updates will be skipped")
 
-    progress = load_progress() if not test_mode else {"processed_ids": [], "matched": 0, "unmatched": 0, "errors": 0}
+    progress = load_progress()
     processed_set = set(progress["processed_ids"])
+    if test_mode:
+        # Don't reset — respect already-processed IDs
+        print(f"  Already processed: {len(processed_set)} products (skipping)")
+        progress["matched"] = 0  # reset counts for test display only
+        progress["unmatched"] = 0
+        progress["errors"] = 0
     unmatched = []
 
     while True:
