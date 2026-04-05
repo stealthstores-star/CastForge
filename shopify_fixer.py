@@ -94,7 +94,7 @@ def fetch_all_products(token, fields="id,title,status,tags,images,variants"):
     """Paginate through all Shopify products."""
     headers = shopify_headers(token)
     products = []
-    url = f"{shopify_base()}/products.json?limit=250&fields={fields}&status=active"
+    url = f"{shopify_base()}/products.json?limit=250&fields={fields}&status=draft"
     while url:
         r = requests.get(url, headers=headers, timeout=30)
         if r.status_code == 429:
@@ -452,9 +452,9 @@ def run(test_mode=False, poll=False):
 
     while True:
         # Fetch products
-        print(f"\n  Fetching active products from Shopify...")
+        print(f"\n  Fetching draft products from Shopify...")
         products = fetch_all_products(token)
-        print(f"  Found {len(products)} active products")
+        print(f"  Found {len(products)} draft products")
 
         # Filter already processed
         todo = [p for p in products if p["id"] not in processed_set]
