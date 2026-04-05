@@ -290,7 +290,7 @@ Use <p>, <ul>, <li>, <strong> tags only. No code fences. No generic filler like 
 
 # ── Update a single Shopify product ──
 def fix_product(product, ai_title, category_handle, parent_handle, description,
-                good_images, token, collection_map, test_mode=False):
+                good_images, token, collection_map, location_id=None, test_mode=False):
     """Apply all fixes to a Shopify product."""
     headers = shopify_headers(token)
     base = shopify_base()
@@ -332,18 +332,8 @@ def fix_product(product, ai_title, category_handle, parent_handle, description,
         errors.append(f"Update error: {e}")
     time.sleep(0.5)
 
-    # 3. Set inventory to 10 for all variants via inventory_levels/set.json
-    # Get location ID once
-    loc_id = None
-    try:
-        lr = requests.get(f"{base}/locations.json", headers=headers, timeout=15)
-        if lr.status_code == 200:
-            locations = lr.json().get("locations", [])
-            if locations:
-                loc_id = locations[0]["id"]
-    except Exception as e:
-        errors.append(f"Location fetch error: {e}")
-
+    # 3. Set inventory to 10 for all variants
+    loc_id = location_id
     if test_mode:
         print(f"       INV location_id={loc_id}")
     if loc_id:
@@ -421,6 +411,35 @@ def run(test_mode=False, poll=False):
         cache_tokens[raw_title] = _tokenise(raw_title)
 
     token = get_token()
+
+    # Fetch location_id once at startup
+    _headers = shopify_headers(token)
+    _base = shopify_base()
+    location_id = None
+    try:
+        lr = requests.get(f"{_base}/locations.json", headers=_headers, timeout=15)
+        if lr.status_code == 200:
+            locations = lr.json().get("locations", [])
+            # Prefer non-legacy active location
+            for loc in locations:
+                if loc.get("active") and not loc.get("legacy"):
+                    location_id = loc["id"]
+                    break
+            # Fallback: first active
+            if not location_id:
+                for loc in locations:
+                    if loc.get("active"):
+                        location_id = loc["id"]
+                        break
+            # Fallback: just first
+            if not location_id and locations:
+                location_id = locations[0]["id"]
+    except Exception as e:
+        print(f"  ERROR fetching locations: {e}")
+    print(f"  Location ID: {location_id}")
+    if not location_id:
+        print("  WARNING: no location_id — inventory updates will be skipped")
+
     progress = load_progress() if not test_mode else {"processed_ids": [], "matched": 0, "unmatched": 0, "errors": 0}
     processed_set = set(progress["processed_ids"])
     unmatched = []
@@ -566,7 +585,8 @@ def run(test_mode=False, poll=False):
 
             # Apply fixes
             errs = fix_product(product, ai_title, cat_handle, parent_handle, desc,
-                              good_images, token, collection_map, test_mode=test_mode)
+                              good_images, token, collection_map,
+                              location_id=location_id, test_mode=test_mode)
 
             # Upload images if product had 0 and we pulled from scrape data
             if need_upload and good_images:
