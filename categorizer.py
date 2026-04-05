@@ -796,10 +796,20 @@ def categorize(title, description=""):
     # "ship" but NOT "shipping"
     has_ship = bool(re.search(r"\bships?\b", t, re.IGNORECASE))
     has_shipping = bool(re.search(r"\bshipping\b|\bfree ship\b", t, re.IGNORECASE))
+    # Strong naval keywords — match alone
     if _wb(["submarine", "u-boat", "battleship", "destroyer", "frigate",
             "cruiser", "corvette", "aircraft carrier", "warship",
-            "navy", "naval", "boat"], t):
+            "dreadnought", "boat"], t):
         return "scale-ships-naval", 10, "scale-model-kits"
+    # Weak keywords "navy"/"naval" — only match if a naval context word is also present
+    if _wb(["navy", "naval"], t):
+        naval_context = ["ship", "vessel", "fleet", "carrier", "destroyer",
+                         "battleship", "warship", "submarine", "frigate",
+                         "cruiser", "boat", "dreadnought", "sailor", "seaman",
+                         "ijn", "uss", "hms", "admiral"]
+        if _wb(naval_context, t):
+            return "scale-ships-naval", 10, "scale-model-kits"
+        # navy/naval without context → skip, fall through to next category
     if has_ship and not has_shipping:
         return "scale-ships-naval", 10, "scale-model-kits"
     if re.search(r"\b1[:/](350|700)\b", t):
