@@ -208,53 +208,33 @@ def _resize_for_vision(url):
         return None
 
 def classify_images(image_urls, api_key):
-    """Classify images. Resizes to 512x512 in memory for API only."""
+    """Binary YES/NO classification per image. Returns list of (url, 'YES'|'NO')."""
     if not image_urls:
         return []
 
     results = []
-    for i in range(0, len(image_urls), 5):
-        batch = image_urls[i:i+5]
-        content = []
-        valid_batch = []
-
-        for j, url in enumerate(batch):
-            b64 = _resize_for_vision(url)
-            if b64:
-                content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}})
-                content.append({"type": "text", "text": f"Image {len(valid_batch)+1}:"})
-                valid_batch.append(url)
-            else:
-                results.append((url, "other"))
-
-        if not valid_batch:
+    for url in image_urls:
+        b64 = _resize_for_vision(url)
+        if not b64:
+            results.append((url, "NO"))
             continue
-
-        content.append({"type": "text", "text": """Classify this image. ONE word only: product_photo, text_panel, review_photo, size_chart, logo, packaging, other.
-Rules: if >40% of image is text/watermark → text_panel, NEVER product_photo. Reply one per line: "1: product_photo" """})
-
         try:
             r = requests.post("https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 200,
-                      "messages": [{"role": "user", "content": content}]},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 10,
+                      "messages": [{"role": "user", "content": [
+                          {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+                          {"type": "text", "text": "Is this a clean photograph of a physical product (miniature, model, figure, kit component)? Reply ONE word: YES or NO. Reply NO if image contains: text warnings, store policies, instructions, size charts, logos, watermarks taking >20% of image, or review/user-submitted content. Reply YES only if primary content is the product itself photographed clearly."}
+                      ]}]},
                 timeout=30)
             if r.status_code == 200:
-                text = r.json()["content"][0]["text"]
-                parsed = {}
-                for line in text.strip().split("\n"):
-                    m = re.match(r"(\d+):\s*(\w+)", line.strip())
-                    if m:
-                        parsed[int(m.group(1)) - 1] = m.group(2)
-                for j, url in enumerate(valid_batch):
-                    results.append((url, parsed.get(j, "product_photo")))
+                answer = r.json()["content"][0]["text"].strip().upper()
+                results.append((url, "YES" if "YES" in answer else "NO"))
             else:
-                for url in valid_batch:
-                    results.append((url, "product_photo"))
+                results.append((url, "YES"))  # keep on API error
         except Exception:
-            for url in valid_batch:
-                results.append((url, "product_photo"))
-        time.sleep(0.5)
+            results.append((url, "YES"))
+        time.sleep(0.3)
 
     return results
 
@@ -270,7 +250,7 @@ def generate_ai_title(image_urls, fallback_title, api_key):
     if not content:
         return fallback_title
 
-    content.append({"type": "text", "text": f"""Look at this product image and write a clean, SEO-friendly product title for an e-commerce store selling resin models, miniatures, and hobby kits. Include: specific subject (e.g. 'Viking Warrior', 'WWII Tiger Tank', 'Cyber Succubus'), scale if visible, material ('Resin'), and type ('Figure', 'Bust', 'Kit', 'Miniature'). 60-80 chars max. No filler words, no '1/10 Cast Resin Model Assembly Kit GK Unpainted Needs To Be Assembled' junk. The original listing title was: {fallback_title[:100]}. Reply with ONLY the title text, nothing else."""})
+    content.append({"type": "text", "text": f"""Look at this product image. Write an SEO-friendly e-commerce title (60-90 chars) for a resin model/miniature store. Include in this order: (1) specific subject with identifying details (e.g. 'Roman Legionary Centurion', 'WWII German Tiger I Tank Commander', 'Cyberpunk Assassin with Katana'), (2) scale if visible, (3) material ('Resin'), (4) type ('Figure', 'Bust', 'Kit', 'Diorama'). Be specific — 'Viking Warrior' not 'Warrior', 'Spitfire Mk.IX' not 'WWII Aircraft'. The original listing title was: {fallback_title[:120]}. Reply with ONLY the title."""})
 
     try:
         r = requests.post("https://api.anthropic.com/v1/messages",
@@ -292,8 +272,12 @@ def generate_description(title, category, api_key):
     try:
         r = requests.post("https://api.anthropic.com/v1/messages",
             headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 300,
-                  "messages": [{"role": "user", "content": f"""Write a 120-word product description for {title}. Category: {category}. Include: specific details from the title, target hobbyist, assembly requirements, one concrete use case. Avoid 'elevate your collection', 'perfect for enthusiasts', 'exceptional craftsmanship'. 2 paragraphs, HTML <p> tags only, no code fences."""}]},
+            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 400,
+                  "messages": [{"role": "user", "content": f"""Write a product description for {title}. Category: {category}. Format as HTML with:
+Opening sentence hooking the buyer (what makes this product special)
+<ul><li> bulleted key features (4-5 bullets: scale, material, subject details, assembly required, recommended use)
+Closing paragraph (who this is for, shipping mention)
+Use <p>, <ul>, <li>, <strong> tags only. No code fences. No generic filler like 'elevate your collection' or 'perfect for enthusiasts'. Reference specific details from the title. 100-140 words total."""}]},
             timeout=30)
         if r.status_code == 200:
             desc = r.json()["content"][0]["text"].strip()
@@ -360,28 +344,39 @@ def fix_product(product, ai_title, category_handle, parent_handle, description,
     except Exception as e:
         errors.append(f"Location fetch error: {e}")
 
+    if test_mode:
+        print(f"       INV location_id={loc_id}")
     if loc_id:
         for variant in product.get("variants", []):
             iid = variant.get("inventory_item_id")
+            vid = variant.get("id")
             if not iid:
+                if test_mode:
+                    print(f"       INV variant={vid}: NO inventory_item_id, skipping")
                 continue
             try:
                 # Enable tracking first
-                requests.put(f"{base}/inventory_items/{iid}.json", headers=headers,
+                track_r = requests.put(f"{base}/inventory_items/{iid}.json", headers=headers,
                            json={"inventory_item": {"id": iid, "tracked": True}},
                            timeout=15)
+                if test_mode:
+                    print(f"       INV TRACK iid={iid}: {track_r.status_code} {track_r.text[:120]}")
                 time.sleep(0.3)
                 # Set available quantity to 10
                 inv_payload = {"location_id": loc_id, "inventory_item_id": iid, "available": 10}
+                if test_mode:
+                    print(f"       INV SET request: {json.dumps(inv_payload)}")
                 ir = requests.post(f"{base}/inventory_levels/set.json", headers=headers,
                                  json=inv_payload, timeout=15)
                 if test_mode:
-                    print(f"       INV variant={variant.get('id')} iid={iid}: {ir.status_code} {ir.text[:150]}")
+                    print(f"       INV SET response: {ir.status_code} {ir.text[:200]}")
                 if ir.status_code not in (200, 201):
-                    errors.append(f"Inventory set failed for variant {variant.get('id')}: {ir.status_code} {ir.text[:100]}")
+                    errors.append(f"Inventory set failed variant={vid}: {ir.status_code} {ir.text[:100]}")
             except Exception as e:
-                errors.append(f"Inventory error variant {variant.get('id')}: {e}")
+                errors.append(f"Inventory error variant={vid}: {e}")
             time.sleep(0.3)
+    elif test_mode:
+        print(f"       INV ERROR: no location_id found")
 
     # 4. Assign to collections
     if category_handle and collection_map:
@@ -525,15 +520,15 @@ def run(test_mode=False, poll=False):
                 if imgs_raw:
                     extra_images = [u.strip() for u in imgs_raw.split("|") if u.strip().startswith("http")]
 
-            # Vision classify existing Shopify images
+            # Vision classify existing Shopify images (YES/NO binary)
             shopify_images = [img.get("src", "") for img in product.get("images", []) if img.get("src")]
-            all_images = list(dict.fromkeys(shopify_images + extra_images))  # dedupe, preserve order
+            all_images = list(dict.fromkeys(shopify_images + extra_images))  # dedupe
 
             good_images = all_images
             images_deleted = 0
             if all_images:
                 classified = classify_images(all_images[:15], api_key)
-                good_images = [url for url, cls in classified if cls == "product_photo"]
+                good_images = [url for url, cls in classified if cls == "YES"]
                 images_deleted = len(classified) - len(good_images)
                 if not good_images:
                     good_images = all_images[:5]
@@ -542,11 +537,29 @@ def run(test_mode=False, poll=False):
                     test_stats["images_kept"] += len(good_images)
                     test_stats["images_deleted"] += images_deleted
 
+            # Bug 4: If 0 images after classification, pull from scrape data
+            need_upload = False
+            if not good_images and scrape_product:
+                imgs_raw = scrape_product.get("product_images", "")
+                if imgs_raw:
+                    scraped_urls = [u.strip() for u in imgs_raw.split("|") if u.strip().startswith("http")]
+                    if scraped_urls:
+                        classified = classify_images(scraped_urls[:10], api_key)
+                        good_images = [url for url, cls in classified if cls == "YES"]
+                        need_upload = bool(good_images)
+                        if test_mode:
+                            print(f"       IMAGES: pulled {len(good_images)} from scrape data (need upload)")
+
             # Generate AI title via vision (using first 1-2 product images)
             ai_title = generate_ai_title(good_images, cached_title, api_key)
 
             # Re-categorise using the new AI title
             cat_handle, _, parent_handle = categorize(ai_title)
+            if test_mode:
+                print(f"       CAT: categorize('{ai_title[:60]}') → {cat_handle} (parent: {parent_handle})")
+                mapped_id = collection_map.get(cat_handle, "NOT FOUND")
+                parent_id = collection_map.get(parent_handle, "NOT FOUND") if parent_handle else "N/A"
+                print(f"       CAT MAP: {cat_handle}={mapped_id}, {parent_handle}={parent_id}")
 
             # Generate description
             desc = generate_description(ai_title, cat_handle, api_key)
@@ -554,6 +567,21 @@ def run(test_mode=False, poll=False):
             # Apply fixes
             errs = fix_product(product, ai_title, cat_handle, parent_handle, desc,
                               good_images, token, collection_map, test_mode=test_mode)
+
+            # Upload images if product had 0 and we pulled from scrape data
+            if need_upload and good_images:
+                headers_api = shopify_headers(token)
+                base = shopify_base()
+                for img_url in good_images[:9]:
+                    try:
+                        ir = requests.post(f"{base}/products/{pid}/images.json",
+                            headers=headers_api,
+                            json={"image": {"src": img_url}}, timeout=30)
+                        if test_mode:
+                            print(f"       IMG UPLOAD: {ir.status_code} {img_url[-40:]}")
+                        time.sleep(0.5)
+                    except Exception as e:
+                        errs.append(f"Image upload error: {e}")
 
             processed_set.add(pid)
             progress["processed_ids"].append(pid)
