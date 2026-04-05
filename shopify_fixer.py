@@ -549,12 +549,18 @@ def run(test_mode=False, poll=False):
             shopify_images = [img.get("src", "") for img in product.get("images", []) if img.get("src")]
             all_images = list(dict.fromkeys(shopify_images + extra_images))  # dedupe
 
+            if test_mode:
+                print(f"       IMGS: {len(shopify_images)} from Shopify, {len(extra_images)} from scrape, {len(all_images)} total")
+
             good_images = all_images
             images_deleted = 0
             if all_images:
                 classified = classify_images(all_images[:15], api_key)
                 good_images = [url for url, cls in classified if cls == "YES"]
                 images_deleted = len(classified) - len(good_images)
+                if test_mode:
+                    for url, cls in classified:
+                        print(f"       IMG: {cls} — {url[-50:]}")
                 if not good_images:
                     good_images = all_images[:5]
                     images_deleted = 0
@@ -562,18 +568,37 @@ def run(test_mode=False, poll=False):
                     test_stats["images_kept"] += len(good_images)
                     test_stats["images_deleted"] += images_deleted
 
-            # Bug 4: If 0 images after classification, pull from scrape data
+            # 0-image products: pull from scrape checkpoint
             need_upload = False
-            if not good_images and scrape_product:
-                imgs_raw = scrape_product.get("product_images", "")
-                if imgs_raw:
-                    scraped_urls = [u.strip() for u in imgs_raw.split("|") if u.strip().startswith("http")]
-                    if scraped_urls:
-                        classified = classify_images(scraped_urls[:10], api_key)
+            if not good_images:
+                if test_mode:
+                    print(f"       IMG 0-IMAGE: looking up scrape data...")
+                    print(f"       IMG lookup key: '{raw_title[:80]}'")
+                    print(f"       IMG scrape_product found: {scrape_product is not None}")
+                if scrape_product:
+                    imgs_raw = scrape_product.get("product_images", "")
+                    main_img = scrape_product.get("product_image", "")
+                    all_scraped = []
+                    if imgs_raw:
+                        all_scraped = [u.strip() for u in imgs_raw.split("|") if u.strip().startswith("http")]
+                    if not all_scraped and main_img and main_img.startswith("http"):
+                        all_scraped = [main_img]
+                    if test_mode:
+                        print(f"       IMG scrape lookup: found {len(all_scraped)} image URLs")
+                    if all_scraped:
+                        classified = classify_images(all_scraped[:10], api_key)
                         good_images = [url for url, cls in classified if cls == "YES"]
                         need_upload = bool(good_images)
                         if test_mode:
-                            print(f"       IMAGES: pulled {len(good_images)} from scrape data (need upload)")
+                            for url, cls in classified:
+                                print(f"       IMG SCRAPE: {cls} — {url[-50:]}")
+                            print(f"       IMG SCRAPE: {len(good_images)} YES, need_upload={need_upload}")
+                elif test_mode:
+                    # Try to diagnose why scrape lookup missed
+                    norm_key = normalise(raw_title)
+                    print(f"       IMG scrape lookup: MISS")
+                    print(f"       IMG norm key: '{norm_key[:80]}'")
+                    print(f"       IMG scrape_data has {len(scrape_data)} entries")
 
             # Generate AI title via vision (using first 1-2 product images)
             ai_title = generate_ai_title(good_images, cached_title, api_key)
@@ -596,18 +621,26 @@ def run(test_mode=False, poll=False):
 
             # Upload images if product had 0 and we pulled from scrape data
             if need_upload and good_images:
+                if test_mode:
+                    print(f"       IMG UPLOAD: uploading {len(good_images)} images to product {pid}")
                 headers_api = shopify_headers(token)
                 base = shopify_base()
                 for img_url in good_images[:9]:
                     try:
+                        payload = {"image": {"src": img_url}}
                         ir = requests.post(f"{base}/products/{pid}/images.json",
-                            headers=headers_api,
-                            json={"image": {"src": img_url}}, timeout=30)
+                            headers=headers_api, json=payload, timeout=30)
                         if test_mode:
-                            print(f"       IMG UPLOAD: {ir.status_code} {img_url[-40:]}")
+                            print(f"       IMG POST: {ir.status_code} {img_url[-50:]}")
+                            if ir.status_code not in (200, 201):
+                                print(f"       IMG POST body: {ir.text[:200]}")
                         time.sleep(0.5)
                     except Exception as e:
                         errs.append(f"Image upload error: {e}")
+                        if test_mode:
+                            print(f"       IMG POST ERROR: {e}")
+            elif not good_images and test_mode:
+                print(f"       IMG: product has 0 images — no upload source found")
 
             processed_set.add(pid)
             progress["processed_ids"].append(pid)
