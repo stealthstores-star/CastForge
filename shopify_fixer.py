@@ -224,7 +224,7 @@ def classify_images(image_urls, api_key):
                 json={"model": "claude-haiku-4-5-20251001", "max_tokens": 10,
                       "messages": [{"role": "user", "content": [
                           {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
-                          {"type": "text", "text": "Is this a clean photograph of a physical product (miniature, model, figure, kit component)? Reply ONE word: YES or NO. Reply NO if image contains: text warnings, store policies, instructions, size charts, logos, watermarks taking >20% of image, or review/user-submitted content. Reply YES only if primary content is the product itself photographed clearly."}
+                          {"type": "text", "text": "Reply YES if image shows ANY physical product, item, figure, clothing, model, or accessory — even photographed on white background, with watermarks, small text labels, colour swatches, or multiple angles. Reply NO ONLY if image is >60% pure text, pure logo, blank/empty, or pure size chart grid. When uncertain, reply YES. ONE word only: YES or NO."}
                       ]}]},
                 timeout=30)
             if r.status_code == 200:
@@ -619,37 +619,35 @@ def run(test_mode=False, poll=False):
                               good_images, token, collection_map,
                               location_id=location_id, test_mode=test_mode)
 
-            # Upload images if product had 0 and we pulled from scrape data
+            # Upload images — always use base64 (alicdn src URLs get silently rejected by Shopify)
             if need_upload and good_images:
                 if test_mode:
                     print(f"       IMG UPLOAD: uploading {len(good_images)} images to product {pid}")
                 headers_api = shopify_headers(token)
                 base = shopify_base()
+                import base64 as b64mod
                 img_ok, img_fail = 0, 0
                 for img_url in good_images[:9]:
                     try:
-                        # Try src URL first
-                        payload = {"image": {"src": img_url}}
                         if test_mode:
-                            print(f"       IMG POST src: {img_url[-60:]}")
-                        ir = requests.post(f"{base}/products/{pid}/images.json",
-                            headers=headers_api, json=payload, timeout=30)
-                        if test_mode:
-                            print(f"       IMG POST response: {ir.status_code} {ir.text[:150]}")
-
-                        # If src failed (hotlink rejected), fallback to base64 attachment
-                        if ir.status_code not in (200, 201):
+                            print(f"       IMG downloading: {img_url[-70:]}")
+                        dl = requests.get(img_url, timeout=20,
+                            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                                     "Referer": "https://www.aliexpress.com/"})
+                        if dl.status_code != 200 or len(dl.content) < 1000:
                             if test_mode:
-                                print(f"       IMG POST src failed — trying base64 fallback...")
-                            import base64 as b64mod
-                            dl = requests.get(img_url, timeout=15, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.aliexpress.com/"})
-                            if dl.status_code == 200 and len(dl.content) > 1000:
-                                encoded = b64mod.b64encode(dl.content).decode("utf-8")
-                                payload = {"image": {"attachment": encoded, "filename": "product.jpg"}}
-                                ir = requests.post(f"{base}/products/{pid}/images.json",
-                                    headers=headers_api, json=payload, timeout=30)
-                                if test_mode:
-                                    print(f"       IMG POST b64: {ir.status_code} ({len(dl.content)} bytes)")
+                                print(f"       IMG download failed: {dl.status_code} ({len(dl.content)} bytes)")
+                            img_fail += 1
+                            continue
+
+                        encoded = b64mod.b64encode(dl.content).decode("utf-8")
+                        payload = {"image": {"attachment": encoded, "filename": "product.jpg"}}
+                        if test_mode:
+                            print(f"       IMG POST b64: {len(dl.content)} bytes → product {pid}")
+                        ir = requests.post(f"{base}/products/{pid}/images.json",
+                            headers=headers_api, json=payload, timeout=60)
+                        if test_mode:
+                            print(f"       IMG POST response: {ir.status_code} {ir.text[:200]}")
 
                         if ir.status_code in (200, 201):
                             img_ok += 1
@@ -660,8 +658,21 @@ def run(test_mode=False, poll=False):
                         img_fail += 1
                         errs.append(f"Image upload error: {e}")
                         if test_mode:
-                            print(f"       IMG POST ERROR: {e}")
+                            print(f"       IMG ERROR: {e}")
+
+                # Verify images actually landed
                 if test_mode:
+                    time.sleep(1)
+                    try:
+                        vr = requests.get(f"{base}/products/{pid}.json?fields=id,images",
+                            headers=headers_api, timeout=15)
+                        if vr.status_code == 200:
+                            actual = len(vr.json().get("product", {}).get("images", []))
+                            print(f"       IMG VERIFY: server has {actual} images (uploaded {img_ok}, failed {img_fail})")
+                        else:
+                            print(f"       IMG VERIFY: fetch failed {vr.status_code}")
+                    except Exception as e:
+                        print(f"       IMG VERIFY ERROR: {e}")
                     print(f"       IMG RESULT: {img_ok} uploaded, {img_fail} failed")
             elif not good_images and test_mode:
                 print(f"       IMG: product has 0 images — no upload source found")
