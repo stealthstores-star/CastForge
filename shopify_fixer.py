@@ -20,6 +20,7 @@ AI_CACHE_FILE = Path("ai_title_cache.json")
 CHECKPOINT_FILE = Path("scrape_checkpoint.json")
 COLLECTION_MAP_FILE = Path("collection_map.json")
 PROGRESS_FILE = Path("shopify_fix_progress.json")
+PUSHED_TITLES_FILE = Path("pushed_titles.json")
 UNMATCHED_FILE = Path("unmatched_products.json")
 ERRORS_FILE = Path("shopify_fix_errors.json")
 
@@ -88,6 +89,18 @@ def load_progress():
 
 def save_progress(progress):
     PROGRESS_FILE.write_text(json.dumps(progress, indent=2))
+
+def load_pushed_titles():
+    """Load {product_id: {title, raw_title, timestamp}} from pushed_titles.json."""
+    if PUSHED_TITLES_FILE.exists():
+        return json.loads(PUSHED_TITLES_FILE.read_text())
+    return {}
+
+def save_pushed_title(pid, title, raw_title):
+    """Append a pushed title immediately to pushed_titles.json."""
+    data = load_pushed_titles()
+    data[str(pid)] = {"title": title, "raw_title": raw_title, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    PUSHED_TITLES_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
 # ── Fetch all Shopify products ──
 def fetch_all_products(token, fields="id,title,status,tags,images,variants"):
@@ -437,11 +450,21 @@ def run(test_mode=False, poll=False):
     for raw_title, ai_title_val in ai_cache.items():
         cache_normalised[normalise(raw_title)] = raw_title
         cache_tokens[raw_title] = _tokenise(raw_title)
-        # Reverse: both exact and normalised forms of AI title
         if ai_title_val:
             ai_title_reverse[ai_title_val] = raw_title
             ai_title_reverse[normalise(ai_title_val)] = raw_title
-    print(f"  Reverse AI title index: {len(ai_title_reverse)} entries")
+
+    # Load pushed titles (vision-generated titles from previous runs)
+    pushed_titles = load_pushed_titles()
+    pushed_title_set = set()  # set of normalised titles we've already pushed
+    for pt_data in pushed_titles.values():
+        t = pt_data.get("title", "")
+        if t:
+            pushed_title_set.add(t)
+            pushed_title_set.add(normalise(t))
+            ai_title_reverse[t] = pt_data.get("raw_title", t)
+            ai_title_reverse[normalise(t)] = pt_data.get("raw_title", t)
+    print(f"  Reverse AI title index: {len(ai_title_reverse)} entries (inc. {len(pushed_titles)} pushed)")
 
     token = get_token()
 
@@ -474,23 +497,30 @@ def run(test_mode=False, poll=False):
         print("  WARNING: no location_id — inventory updates will be skipped")
 
     progress = load_progress()
+    # Fix 3: manually add known-stuck product IDs
+    manual_ids = [9208970707197]
+    for mid in manual_ids:
+        if mid not in progress["processed_ids"]:
+            progress["processed_ids"].append(mid)
     processed_set = set(progress["processed_ids"])
+    save_progress(progress)
+
+    print(f"  Progress file has {len(processed_set)} IDs")
     if test_mode:
-        # Don't reset — respect already-processed IDs
-        print(f"  Already processed: {len(processed_set)} products (skipping)")
-        progress["matched"] = 0  # reset counts for test display only
+        progress["matched"] = 0
         progress["unmatched"] = 0
         progress["errors"] = 0
     unmatched = []
 
     while True:
-        # Fetch products
         print(f"\n  Fetching draft products from Shopify...")
         products = fetch_all_products(token)
         print(f"  Found {len(products)} draft products")
 
         # Filter already processed
+        filtered_out = len([p for p in products if p["id"] in processed_set])
         todo = [p for p in products if p["id"] not in processed_set]
+        print(f"  Filtered out by progress: {filtered_out}")
         print(f"  To process: {len(todo)}")
 
         if test_mode:
@@ -659,10 +689,18 @@ def run(test_mode=False, poll=False):
             # Generate description
             desc = generate_description(ai_title, cat_handle, api_key)
 
+            # Save progress BEFORE pushing — crash during push still marks as done
+            processed_set.add(pid)
+            progress["processed_ids"].append(pid)
+            save_progress(progress)
+
             # Apply fixes
             errs = fix_product(product, ai_title, cat_handle, parent_handle, desc,
                               good_images, token, collection_map,
                               location_id=location_id, test_mode=test_mode)
+
+            # Record the pushed title for future resumability
+            save_pushed_title(pid, ai_title, raw_title)
 
             # Upload images — if product has 0 Shopify images OR we pulled new ones from scrape
             shopify_has_images = len([img for img in product.get("images", []) if img.get("src")])
@@ -737,9 +775,7 @@ def run(test_mode=False, poll=False):
                 except Exception:
                     pass
 
-            processed_set.add(pid)
-            progress["processed_ids"].append(pid)
-            save_progress(progress)  # immediate save — never lose progress
+            # Progress already saved before fix_product
             if errs:
                 progress["errors"] += 1
                 if test_mode:
