@@ -8,8 +8,9 @@ Usage:
     python3 shopify_fixer.py run         # Fix all products, resumable
     python3 shopify_fixer.py run --poll   # Fix all + poll every 10min for new imports
 """
-import json, os, re, sys, time, unicodedata
+import json, os, re, sys, time, unicodedata, threading
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import config
@@ -24,6 +25,45 @@ PUSHED_TITLES_FILE = Path("pushed_titles.json")
 DELETED_FILE = Path("deleted_no_images.json")
 UNMATCHED_FILE = Path("unmatched_products.json")
 ERRORS_FILE = Path("shopify_fix_errors.json")
+
+# ── Thread safety ──
+_file_lock = threading.Lock()
+_shopify_lock = threading.Lock()  # rate limiter for Shopify API
+_shopify_last_call = [0.0]
+
+def _shopify_throttle():
+    """Enforce ~2 req/s sustained for Shopify REST. Thread-safe."""
+    with _shopify_lock:
+        now = time.time()
+        elapsed = now - _shopify_last_call[0]
+        if elapsed < 0.5:
+            time.sleep(0.5 - elapsed)
+        _shopify_last_call[0] = time.time()
+
+def _shopify_request(method, url, headers, json_data=None, timeout=30):
+    """Thread-safe Shopify API call with rate limit handling."""
+    _shopify_throttle()
+    for attempt in range(3):
+        try:
+            r = getattr(requests, method)(url, headers=headers, json=json_data, timeout=timeout)
+            if r.status_code == 429:
+                wait = float(r.headers.get("Retry-After", 2))
+                time.sleep(wait)
+                continue
+            return r
+        except Exception as e:
+            if attempt == 2:
+                raise
+            time.sleep(1)
+    return None
+
+def _thread_safe_save_progress(progress):
+    with _file_lock:
+        save_progress(progress)
+
+def _thread_safe_save_pushed(pid, title, raw_title):
+    with _file_lock:
+        save_pushed_title(pid, title, raw_title)
 
 # ── Shopify API ──
 def get_token():
@@ -236,35 +276,41 @@ def _resize_for_vision(url):
     except Exception:
         return None
 
+_CLASSIFY_PROMPT = "Reply YES if image shows a physical product clearly visible AND any watermarks/text take up less than 25% of the image area. Reply NO if the image has large prominent watermark text overlaid across the main product (e.g. store brand name repeated diagonally, giant logos covering the product), or is >50% pure text, pure logo, blank/empty, or pure size chart grid. Small corner watermarks are fine. When the product itself is the dominant visual element, reply YES. ONE word only: YES or NO."
+
+def _classify_one(url, api_key):
+    """Classify a single image. Thread-safe."""
+    b64 = _resize_for_vision(url)
+    if not b64:
+        return (url, "NO")
+    try:
+        r = requests.post("https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 10,
+                  "messages": [{"role": "user", "content": [
+                      {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+                      {"type": "text", "text": _CLASSIFY_PROMPT}
+                  ]}]},
+            timeout=30)
+        if r.status_code == 200:
+            answer = r.json()["content"][0]["text"].strip().upper()
+            return (url, "YES" if "YES" in answer else "NO")
+        return (url, "YES")
+    except Exception:
+        return (url, "YES")
+
 def classify_images(image_urls, api_key):
-    """Binary YES/NO classification per image. Returns list of (url, 'YES'|'NO')."""
+    """Parallel binary YES/NO classification. 4 concurrent vision calls."""
     if not image_urls:
         return []
-
-    results = []
-    for url in image_urls:
-        b64 = _resize_for_vision(url)
-        if not b64:
-            results.append((url, "NO"))
-            continue
-        try:
-            r = requests.post("https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 10,
-                      "messages": [{"role": "user", "content": [
-                          {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
-                          {"type": "text", "text": "Reply YES if image shows a physical product clearly visible AND any watermarks/text take up less than 25% of the image area. Reply NO if the image has large prominent watermark text overlaid across the main product (e.g. store brand name repeated diagonally, giant logos covering the product), or is >50% pure text, pure logo, blank/empty, or pure size chart grid. Small corner watermarks are fine. When the product itself is the dominant visual element, reply YES. ONE word only: YES or NO."}
-                      ]}]},
-                timeout=30)
-            if r.status_code == 200:
-                answer = r.json()["content"][0]["text"].strip().upper()
-                results.append((url, "YES" if "YES" in answer else "NO"))
-            else:
-                results.append((url, "YES"))  # keep on API error
-        except Exception:
-            results.append((url, "YES"))
-        time.sleep(0.3)
-
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_classify_one, url, api_key): url for url in image_urls}
+        results = []
+        for f in as_completed(futures):
+            results.append(f.result())
+    # Restore original order
+    url_order = {url: i for i, url in enumerate(image_urls)}
+    results.sort(key=lambda x: url_order.get(x[0], 999))
     return results
 
 # ── Generate AI title via vision ──
@@ -349,17 +395,11 @@ def fix_product(product, ai_title, category_handle, parent_handle, description,
 
     # 2. Update product (title, description, status, tags)
     try:
-        r = requests.put(f"{base}/products/{pid}.json", headers=headers,
-                        json=update, timeout=30)
-        if r.status_code == 429:
-            time.sleep(float(r.headers.get("Retry-After", 2)))
-            r = requests.put(f"{base}/products/{pid}.json", headers=headers,
-                            json=update, timeout=30)
-        if r.status_code not in (200, 201):
+        r = _shopify_request("put", f"{base}/products/{pid}.json", headers, update)
+        if r and r.status_code not in (200, 201):
             errors.append(f"Update failed: {r.status_code} {r.text[:100]}")
     except Exception as e:
         errors.append(f"Update error: {e}")
-    time.sleep(0.5)
 
     # 3. Set inventory to 10 for all variants
     loc_id = location_id
@@ -563,9 +603,15 @@ def run(test_mode=False, poll=False):
 
         t0 = time.time()
         delete_count = [0]
-        for i, product in enumerate(todo):
+        done_count = [0]
+        NUM_WORKERS = 1 if test_mode else 6
+
+        def _process_one(item):
+            """Process a single product. Thread-safe."""
+            i, product = item
             pid = product["id"]
             shopify_title = product.get("title", "")
+            log_prefix = f"  [{pid}]" if not test_mode else f"  [{i+1}]"
 
             # Match
             match = match_product(shopify_title, ai_cache, cache_normalised,
@@ -579,16 +625,16 @@ def run(test_mode=False, poll=False):
                     # Already processed — skip silently, add to progress
                     processed_set.add(pid)
                     progress["processed_ids"].append(pid)
-                    save_progress(progress)
+                    _thread_safe_save_progress(progress)
                     if test_mode:
-                        print(f"  [{i+1}] ⏭ ALREADY_PROCESSED (title matches AI output): {shopify_title[:60]}")
-                    continue
+                        print(f"  {log_prefix} ⏭ ALREADY_PROCESSED: {shopify_title[:60]}")
+                    return
 
                 progress["unmatched"] += 1
                 unmatched.append({"id": pid, "title": shopify_title})
                 processed_set.add(pid)
                 progress["processed_ids"].append(pid)
-                save_progress(progress)
+                _thread_safe_save_progress(progress)
                 if test_mode:
                     test_stats["unmatched"] += 1
                     # Find closest cache entry for diagnosis
@@ -607,7 +653,7 @@ def run(test_mode=False, poll=False):
                     print(f"       Shopify: {shopify_title}")
                     print(f"       Closest: {best_raw}")
                     print(f"       Token overlap: {best_score:.0%} | Shared: {best_shared} | Shop-only: {shop_only[:8]} | Cache-only: {cache_only[:8]}")
-                continue
+                return
 
             raw_title, cached_title, match_type = match
             if test_mode:
@@ -692,9 +738,10 @@ def run(test_mode=False, poll=False):
             desc = generate_description(ai_title, cat_handle, api_key)
 
             # Save progress BEFORE pushing — crash during push still marks as done
-            processed_set.add(pid)
-            progress["processed_ids"].append(pid)
-            save_progress(progress)
+            with _file_lock:
+                processed_set.add(pid)
+                progress["processed_ids"].append(pid)
+                save_progress(progress)
 
             # Apply fixes
             errs = fix_product(product, ai_title, cat_handle, parent_handle, desc,
@@ -702,7 +749,7 @@ def run(test_mode=False, poll=False):
                               location_id=location_id, test_mode=test_mode)
 
             # Record the pushed title for future resumability
-            save_pushed_title(pid, ai_title, raw_title)
+            _thread_safe_save_pushed(pid, ai_title, raw_title)
 
             # Upload images — if product has 0 Shopify images OR we pulled new ones from scrape
             shopify_has_images = len([img for img in product.get("images", []) if img.get("src")])
@@ -820,11 +867,26 @@ def run(test_mode=False, poll=False):
                 elif (i + 1) % 10 == 0:
                     print(f"  [{i+1}/{len(todo)}] ✓ {ai_title[:50]} → {cat_handle}")
 
-            if not test_mode and (i + 1) % 25 == 0:
-                save_progress(progress)
-                elapsed = time.time() - t0
-                rate = (i + 1) / max(elapsed, 1) * 60
-                print(f"  [{i+1}/{len(todo)}] matched={progress['matched']} unmatched={progress['unmatched']} errors={progress['errors']} | {rate:.0f}/min")
+            with _file_lock:
+                done_count[0] += 1
+                if not test_mode and done_count[0] % 25 == 0:
+                    elapsed = time.time() - t0
+                    rate = done_count[0] / max(elapsed, 1) * 60
+                    print(f"  [{done_count[0]}/{len(todo)}] matched={progress['matched']} unmatched={progress['unmatched']} errors={progress['errors']} | {rate:.0f}/min")
+
+        # Run workers
+        if NUM_WORKERS == 1:
+            for item in enumerate(todo):
+                _process_one(item)
+        else:
+            print(f"  Running {NUM_WORKERS} parallel workers...")
+            with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
+                futures = [pool.submit(_process_one, item) for item in enumerate(todo)]
+                for f in as_completed(futures):
+                    try:
+                        f.result()
+                    except Exception as e:
+                        print(f"  Worker error: {e}")
 
         # Save
         save_progress(progress)
