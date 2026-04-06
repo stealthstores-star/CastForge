@@ -21,6 +21,7 @@ CHECKPOINT_FILE = Path("scrape_checkpoint.json")
 COLLECTION_MAP_FILE = Path("collection_map.json")
 PROGRESS_FILE = Path("shopify_fix_progress.json")
 PUSHED_TITLES_FILE = Path("pushed_titles.json")
+DELETED_FILE = Path("deleted_no_images.json")
 UNMATCHED_FILE = Path("unmatched_products.json")
 ERRORS_FILE = Path("shopify_fix_errors.json")
 
@@ -561,6 +562,7 @@ def run(test_mode=False, poll=False):
                 break
 
         t0 = time.time()
+        delete_count = [0]
         for i, product in enumerate(todo):
             pid = product["id"]
             shopify_title = product.get("title", "")
@@ -762,18 +764,45 @@ def run(test_mode=False, poll=False):
             elif not good_images and test_mode:
                 print(f"       IMG: product has 0 images — no upload source found")
 
-            # Always verify final image count in test mode
-            if test_mode:
-                try:
-                    headers_api = shopify_headers(token)
-                    base = shopify_base()
-                    vr = requests.get(f"{base}/products/{pid}.json?fields=id,images",
-                        headers=headers_api, timeout=15)
-                    if vr.status_code == 200:
-                        final_imgs = len(vr.json().get("product", {}).get("images", []))
+            # Verify final image count and delete if 0
+            final_imgs = -1
+            try:
+                headers_api = shopify_headers(token)
+                base = shopify_base()
+                vr = requests.get(f"{base}/products/{pid}.json?fields=id,images",
+                    headers=headers_api, timeout=15)
+                if vr.status_code == 200:
+                    final_imgs = len(vr.json().get("product", {}).get("images", []))
+                    if test_mode:
                         print(f"       IMG FINAL: product {pid} has {final_imgs} images on Shopify")
-                except Exception:
-                    pass
+            except Exception:
+                pass
+
+            # Delete product if 0 images on server
+            if final_imgs == 0:
+                if delete_count[0] >= 500:
+                    print(f"\n  ⚠ SAFETY HALT: {delete_count[0]} products deleted this run. Stopping to prevent runaway deletion.")
+                    print(f"  Review deleted_no_images.json and restart if correct.")
+                    save_progress(progress)
+                    return
+                try:
+                    dr = requests.delete(f"{base}/products/{pid}.json", headers=headers_api, timeout=15)
+                    if dr.status_code in (200, 204):
+                        delete_count[0] += 1
+                        # Log deletion
+                        del_log = []
+                        if DELETED_FILE.exists():
+                            del_log = json.loads(DELETED_FILE.read_text())
+                        del_log.append({"id": pid, "title": ai_title, "reason": "0 images after processing",
+                                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")})
+                        DELETED_FILE.write_text(json.dumps(del_log, indent=2, ensure_ascii=False))
+                        print(f"  🗑 DELETED (no images): {pid} — {ai_title[:60]}")
+                    else:
+                        if test_mode:
+                            print(f"       DELETE failed: {dr.status_code} {dr.text[:100]}")
+                except Exception as e:
+                    if test_mode:
+                        print(f"       DELETE error: {e}")
 
             # Progress already saved before fix_product
             if errs:
