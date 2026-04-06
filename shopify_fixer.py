@@ -188,12 +188,27 @@ def match_product(shopify_title, ai_cache, cache_normalised, cache_tokens=None,
 
     return None
 
+def _download_with_retry(url, timeout=20, retries=3):
+    """Download URL with exponential backoff. Returns response or None."""
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                         "Referer": "https://www.aliexpress.com/"})
+            if r.status_code == 200:
+                return r
+        except Exception:
+            pass
+        if attempt < retries - 1:
+            time.sleep(2 ** (attempt + 1))  # 2, 4, 8
+    return None
+
 # ── Vision classify images using Haiku 4.5 ──
 def _resize_for_vision(url):
     """Download image, resize to 512x512 IN MEMORY ONLY, return base64. Original URL untouched."""
     try:
-        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code != 200:
+        r = _download_with_retry(url, timeout=15)
+        if not r:
             return None
         from PIL import Image
         from io import BytesIO
@@ -224,7 +239,7 @@ def classify_images(image_urls, api_key):
                 json={"model": "claude-haiku-4-5-20251001", "max_tokens": 10,
                       "messages": [{"role": "user", "content": [
                           {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
-                          {"type": "text", "text": "Reply YES if image shows ANY physical product, item, figure, clothing, model, or accessory — even photographed on white background, with watermarks, small text labels, colour swatches, or multiple angles. Reply NO ONLY if image is >60% pure text, pure logo, blank/empty, or pure size chart grid. When uncertain, reply YES. ONE word only: YES or NO."}
+                          {"type": "text", "text": "Reply YES if image shows a physical product clearly visible AND any watermarks/text take up less than 25% of the image area. Reply NO if the image has large prominent watermark text overlaid across the main product (e.g. store brand name repeated diagonally, giant logos covering the product), or is >50% pure text, pure logo, blank/empty, or pure size chart grid. Small corner watermarks are fine. When the product itself is the dominant visual element, reply YES. ONE word only: YES or NO."}
                       ]}]},
                 timeout=30)
             if r.status_code == 200:
@@ -367,6 +382,18 @@ def fix_product(product, ai_title, category_handle, parent_handle, description,
             time.sleep(0.3)
     elif test_mode:
         print(f"       INV ERROR: no location_id found")
+
+    # Verify inventory after setting (test mode only)
+    if test_mode and loc_id:
+        time.sleep(1)
+        try:
+            vr = requests.get(f"{base}/products/{pid}.json?fields=id,variants", headers=headers, timeout=15)
+            if vr.status_code == 200:
+                vdata = vr.json().get("product", {}).get("variants", [])
+                for v in vdata:
+                    print(f"       INV VERIFY: variant={v.get('id')} inventory_quantity={v.get('inventory_quantity')} tracked={v.get('inventory_management')}")
+        except Exception as e:
+            print(f"       INV VERIFY ERROR: {e}")
 
     # 4. Assign to collections
     if category_handle and collection_map:
@@ -619,8 +646,12 @@ def run(test_mode=False, poll=False):
                               good_images, token, collection_map,
                               location_id=location_id, test_mode=test_mode)
 
-            # Upload images — always use base64 (alicdn src URLs get silently rejected by Shopify)
-            if need_upload and good_images:
+            # Upload images — if product has 0 Shopify images OR we pulled new ones from scrape
+            shopify_has_images = len([img for img in product.get("images", []) if img.get("src")])
+            should_upload = (need_upload and good_images) or (shopify_has_images == 0 and good_images)
+            if test_mode:
+                print(f"       IMG DECISION: shopify_has={shopify_has_images}, need_upload={need_upload}, good_images={len(good_images)}, should_upload={should_upload}")
+            if should_upload and good_images:
                 if test_mode:
                     print(f"       IMG UPLOAD: uploading {len(good_images)} images to product {pid}")
                 headers_api = shopify_headers(token)
@@ -631,10 +662,8 @@ def run(test_mode=False, poll=False):
                     try:
                         if test_mode:
                             print(f"       IMG downloading: {img_url[-70:]}")
-                        dl = requests.get(img_url, timeout=20,
-                            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                                     "Referer": "https://www.aliexpress.com/"})
-                        if dl.status_code != 200 or len(dl.content) < 1000:
+                        dl = _download_with_retry(img_url)
+                        if not dl or dl.status_code != 200 or len(dl.content) < 1000:
                             if test_mode:
                                 print(f"       IMG download failed: {dl.status_code} ({len(dl.content)} bytes)")
                             img_fail += 1
@@ -676,6 +705,19 @@ def run(test_mode=False, poll=False):
                     print(f"       IMG RESULT: {img_ok} uploaded, {img_fail} failed")
             elif not good_images and test_mode:
                 print(f"       IMG: product has 0 images — no upload source found")
+
+            # Always verify final image count in test mode
+            if test_mode:
+                try:
+                    headers_api = shopify_headers(token)
+                    base = shopify_base()
+                    vr = requests.get(f"{base}/products/{pid}.json?fields=id,images",
+                        headers=headers_api, timeout=15)
+                    if vr.status_code == 200:
+                        final_imgs = len(vr.json().get("product", {}).get("images", []))
+                        print(f"       IMG FINAL: product {pid} has {final_imgs} images on Shopify")
+                except Exception:
+                    pass
 
             processed_set.add(pid)
             progress["processed_ids"].append(pid)

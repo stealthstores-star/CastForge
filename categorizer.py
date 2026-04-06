@@ -768,6 +768,19 @@ def categorize(title, description=""):
     if re.search(r"\b1[:/]6\b", t) and _wb(["action figure", "action"], t):
         return "accessories", 10, "accessories"
 
+    # ── P1b: FIGURE CLOTHING / ACCESSORIES ──
+    # Clothing items for figures — NOT characters wearing clothes
+    clothing_words = ["clothing", "outfit", "t-shirt", "tshirt", "jacket", "coat",
+                      "pants", "shirt", "dress", "hoodie", "stockings", "shoes",
+                      "boots", "hat", "cap", "helmet accessory", "uniform set",
+                      "clothes", "garment", "vest", "cloak", "cape accessory"]
+    figure_subject_words = ["warrior", "soldier", "character", "hero", "knight",
+                            "pilot", "commander", "assassin", "wizard", "mage"]
+    if _wb(clothing_words, t):
+        # Only categorise as accessories if it's PRIMARILY clothing, not a figure
+        if not _wb(figure_subject_words, t):
+            return "accessories", 10, "accessories"
+
     # ── P2: BUSTS ──
     if _wb(["bust"], t):
         return "busts-portraits", 10, "anime-fantasy-figures"
