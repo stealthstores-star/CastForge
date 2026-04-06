@@ -430,12 +430,18 @@ def run(test_mode=False, poll=False):
         print("  ERROR: ANTHROPIC_API_KEY required for vision + descriptions")
         return
 
-    # Build normalised + token cache indices
+    # Build normalised + token + reverse cache indices
     cache_normalised = {}
     cache_tokens = {}
-    for raw_title in ai_cache:
+    ai_title_reverse = {}  # ai_title → raw_title (detect already-processed products)
+    for raw_title, ai_title_val in ai_cache.items():
         cache_normalised[normalise(raw_title)] = raw_title
         cache_tokens[raw_title] = _tokenise(raw_title)
+        # Reverse: both exact and normalised forms of AI title
+        if ai_title_val:
+            ai_title_reverse[ai_title_val] = raw_title
+            ai_title_reverse[normalise(ai_title_val)] = raw_title
+    print(f"  Reverse AI title index: {len(ai_title_reverse)} entries")
 
     token = get_token()
 
@@ -535,10 +541,22 @@ def run(test_mode=False, poll=False):
                                   shopify_images=product.get("images", []),
                                   scrape_data=scrape_data)
             if not match:
+                # Check if this product's title IS an AI title (already processed in a previous run)
+                is_already_done = shopify_title in ai_title_reverse or normalise(shopify_title) in ai_title_reverse
+                if is_already_done:
+                    # Already processed — skip silently, add to progress
+                    processed_set.add(pid)
+                    progress["processed_ids"].append(pid)
+                    save_progress(progress)
+                    if test_mode:
+                        print(f"  [{i+1}] ⏭ ALREADY_PROCESSED (title matches AI output): {shopify_title[:60]}")
+                    continue
+
                 progress["unmatched"] += 1
                 unmatched.append({"id": pid, "title": shopify_title})
                 processed_set.add(pid)
                 progress["processed_ids"].append(pid)
+                save_progress(progress)
                 if test_mode:
                     test_stats["unmatched"] += 1
                     # Find closest cache entry for diagnosis
@@ -721,6 +739,7 @@ def run(test_mode=False, poll=False):
 
             processed_set.add(pid)
             progress["processed_ids"].append(pid)
+            save_progress(progress)  # immediate save — never lose progress
             if errs:
                 progress["errors"] += 1
                 if test_mode:
