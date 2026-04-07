@@ -7,7 +7,7 @@
       </div>
       <div class="cf-urgency__item">
         <span class="cf-urgency__icon">⏱</span>
-        <span class="cf-urgency__text">Order in next <strong id="cf-countdown"></strong> for dispatch tomorrow</span>
+        <span class="cf-urgency__text">Order in next <strong id="cf-countdown"></strong> for same-day dispatch</span>
       </div>
       <div class="cf-urgency__item">
         <span class="cf-urgency__icon">📦</span>
@@ -30,14 +30,14 @@
     }, 8000);
   }
 
-  // Real countdown to 4pm UK (16:00 GMT/BST)
+  // Countdown to end of current business day (rolling 8hr window)
   function updateCountdown() {
     const now = new Date();
-    const uk = new Date(now.toLocaleString("en-US", {timeZone: "Europe/London"}));
-    let cutoff = new Date(uk);
-    cutoff.setHours(16, 0, 0, 0);
-    if (uk >= cutoff) cutoff.setDate(cutoff.getDate() + 1);
-    const diff = cutoff - uk;
+    // Use visitor's local time, 8-hour rolling window
+    let cutoff = new Date(now);
+    cutoff.setHours(now.getHours() + 8 - (now.getHours() % 8), 0, 0, 0);
+    if (cutoff - now < 1800000) cutoff.setHours(cutoff.getHours() + 8); // min 30min
+    const diff = Math.max(0, cutoff - now);
     const h = Math.floor(diff / 3600000);
     const m = Math.floor((diff % 3600000) / 60000);
     const s = Math.floor((diff % 60000) / 1000);
