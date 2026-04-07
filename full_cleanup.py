@@ -45,10 +45,12 @@ def _headers(token):
 def _base():
     return f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
 
-def fetch_all_products(token, fields="id,title,images,tags,status"):
+def fetch_all_products(token, fields="id,title,images,tags,status", statuses=None):
+    if statuses is None:
+        statuses = ["active"]  # Only active by default — don't touch drafts
     headers = _headers(token)
     products = []
-    for status in ["active", "draft"]:
+    for status in statuses:
         # Get expected count first
         cr = http.get(f"{_base()}/products/count.json?status={status}", headers=headers, timeout=15)
         expected = cr.json().get("count", "?") if cr.status_code == 200 else "?"
@@ -387,17 +389,23 @@ def main():
     dry_run = "--dry-run" in sys.argv
     phase_filter = None
     test_count = 0
-    for i, a in enumerate(sys.argv):
-        if a == "--phase" and i+1 < len(sys.argv):
-            phase_filter = int(sys.argv[i+1])
-        if a == "--test" and i+1 < len(sys.argv):
-            test_count = int(sys.argv[i+1])
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--phase" and i+1 < len(args):
+            phase_filter = int(args[i+1]); i += 2; continue
+        if args[i] == "--test" and i+1 < len(args):
+            test_count = int(args[i+1]); i += 2; continue
+        i += 1
     if "--reset-phase2" in sys.argv:
         prog = load_progress()
         prog["phase2_done"] = []
         prog["phase2_deleted"] = []
         save_progress(prog)
         print("  Reset Phase 2 progress.")
+
+    print(f"  DEBUG argv: {sys.argv}")
+    print(f"  DEBUG parsed: phase={phase_filter} test={test_count} dry_run={dry_run}")
 
     token = get_shopify_token()
     prog = load_progress()
@@ -407,7 +415,7 @@ def main():
     print(f"══════════════════════════════════════")
     print(f"  Dry run: {dry_run}")
     if test_count:
-        print(f"  Test mode: classify {test_count} products (no deletions)")
+        print(f"  TEST MODE: classify {test_count} products only (no deletions)")
     if phase_filter:
         print(f"  Running phase {phase_filter} only")
     print()
