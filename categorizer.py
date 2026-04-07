@@ -768,6 +768,23 @@ def categorize(title, description=""):
     if re.search(r"\b1[:/]6\b", t) and _wb(["action figure", "action"], t):
         return "accessories", 10, "accessories"
 
+    # ── P1a: SCENE PROPS / DIORAMA ACCESSORIES ──
+    # Crates, barrels, furniture, supplies etc — always accessories unless combined with figure/vehicle
+    scene_prop_words = [
+        "crate", "cola", "bucket", "barrel", "drum", "well", "supplies",
+        "food", "drink", "bottle", "can", "pallet", "sign", "signage",
+        "furniture", "chair", "table", "lamp", "fence", "gate", "door", "window",
+        "tool", "toolbox", "ladder", "rope", "chain", "rubble", "debris",
+        "sandbag", "tire", "wheel", "fuel", "oil", "water tank",
+        "tent", "tarp", "cargo", "stock", "ammo box", "ammunition box",
+        "supply", "equipment set", "accessory", "accessories",
+    ]
+    figure_vehicle_words = ["soldier", "tank", "figure", "crew", "warrior", "infantry", "bust",
+                            "vehicle", "mech", "aircraft", "ship", "pilot", "commander"]
+    if _wb(scene_prop_words, t):
+        if not _wb(figure_vehicle_words, t):
+            return "accessories", 10, "accessories"
+
     # ── P1b: FIGURE CLOTHING / ACCESSORIES ──
     # Clothing items for figures — NOT characters wearing clothes
     clothing_words = ["clothing", "outfit", "t-shirt", "tshirt", "jacket", "coat",
