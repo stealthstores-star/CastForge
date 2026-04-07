@@ -28,7 +28,7 @@ CHECKPOINT_FILE = Path("scrape_checkpoint.json")
 PUSHED_TITLES_FILE = Path("pushed_titles.json")
 ALI_STATE_FILE = Path("ali_state.json")
 
-PHASE2_PROMPT = """Is this a clean product photograph of a physical resin/plastic model WITHOUT prominent brand watermarks or text banners? Answer NO if: (a) not a real model (emoji, clipart, cartoon, stock photo, smiley face, generic illustration), (b) has a visible brand logo watermark like 'MINIWAR', 'GK', Chinese text banners, supplier logos taking >15% of the image, (c) has a coloured label/banner bar across top/bottom showing product code and scale (e.g. '1/35' banner with Chinese text), (d) is text-only, logo-only, or size chart. Answer YES only if it's a clean unbranded photo of the actual physical model. Respond with ONLY 'YES' or 'NO'."""
+PHASE2_PROMPT = """Is this image a photograph of a physical model, figure, vehicle, terrain piece, or model accessory? Answer NO ONLY if the image is clearly: a smiley face emoji, cartoon clipart, generic stock photo unrelated to models, pure text, or a blank/placeholder image. Answer YES for any photograph of a real physical product even if it has watermarks, brand stamps, or banner overlays — those are still real products. Answer ONLY 'YES' or 'NO'."""
 
 _file_lock = threading.Lock()
 _shutdown = threading.Event()
@@ -46,23 +46,49 @@ def _base():
     return f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
 
 def fetch_all_products(token, fields="id,title,images,tags,status"):
-    headers, products = _headers(token), []
+    headers = _headers(token)
+    products = []
     for status in ["active", "draft"]:
+        # Get expected count first
+        cr = http.get(f"{_base()}/products/count.json?status={status}", headers=headers, timeout=15)
+        expected = cr.json().get("count", "?") if cr.status_code == 200 else "?"
+        print(f"    Shopify reports {expected} {status} products")
+
         url = f"{_base()}/products.json?limit=250&fields={fields}&status={status}"
+        status_count = 0
         while url:
-            r = http.get(url, headers=headers, timeout=30)
-            if r.status_code == 429:
-                time.sleep(float(r.headers.get("Retry-After", 2))); continue
-            if r.status_code != 200: break
-            products.extend(r.json().get("products", []))
+            for attempt in range(3):
+                try:
+                    r = http.get(url, headers=headers, timeout=30)
+                    if r.status_code == 429:
+                        time.sleep(float(r.headers.get("Retry-After", 2)))
+                        continue
+                    break
+                except Exception:
+                    time.sleep(2)
+            else:
+                break
+            if r.status_code != 200:
+                print(f"    API error {r.status_code}")
+                break
+            batch = r.json().get("products", [])
+            products.extend(batch)
+            status_count += len(batch)
             if len(products) % 1000 < 250:
-                print(f"    ...{len(products)}", flush=True)
+                print(f"    ...{len(products)} fetched", flush=True)
+
+            # Parse Link header for next page — handle rel="previous" safely
             url = None
             link = r.headers.get("Link", "")
-            if 'rel="next"' in link:
-                for p in link.split(","):
-                    if 'rel="next"' in p: url = p.split("<")[1].split(">")[0]
+            if link:
+                # Split on >, < boundaries not commas (URLs can contain commas)
+                for part in link.split(", <"):
+                    if 'rel="next"' in part:
+                        url = part.split(">")[0].lstrip("<")
+                        break
             time.sleep(0.5)
+
+        print(f"    Fetched {status_count} {status} products (expected {expected})")
     return products
 
 def delete_product(pid, token):
@@ -110,18 +136,22 @@ def phase1(products, token, prog, dry_run):
     return deleted
 
 # ── Phase 2: Vision classify + delete bad images ──
-def phase2(products, token, prog, dry_run):
-    print(f"\n  ══ Phase 2: Delete bad-image products (AI vision) ══")
+def phase2(products, token, prog, dry_run, test_count=0):
+    print(f"\n  ══ Phase 2: {'TEST' if test_count else 'Delete'} bad-image products (AI vision) ══")
     api_key = config.ANTHROPIC_API_KEY
     done_set = set(prog["phase2_done"])
     with_img = [p for p in products if len(p.get("images", [])) > 0 and p["id"] not in done_set]
-    print(f"  {len(with_img)} products to classify (~{len(with_img)*5//60} min @ 6 workers)\n")
+    if test_count:
+        with_img = with_img[:test_count]
+        print(f"  TEST MODE: classifying {len(with_img)} products (no deletions)\n")
+    else:
+        print(f"  {len(with_img)} products to classify (~{len(with_img)*5//60} min @ 6 workers)\n")
     deleted, kept = [0], [0]
     t0 = time.time()
 
     def classify_one(item):
         i, p = item
-        if _shutdown.is_set() or deleted[0] >= 1000: return
+        if _shutdown.is_set() or deleted[0] >= 50: return
         pid, title = p["id"], p.get("title", "")[:60]
         img_url = p["images"][0].get("src", "")
         try:
@@ -144,11 +174,22 @@ def phase2(products, token, prog, dry_run):
                           {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
                           {"type": "text", "text": PHASE2_PROMPT}]}]},
                 timeout=30)
-            verdict = "YES"
+            verdict = "YES"  # default KEEP
+            raw_answer = ""
             if r.status_code == 200:
-                verdict = "YES" if "YES" in r.json()["content"][0]["text"].upper() else "NO"
+                raw_answer = r.json()["content"][0]["text"].strip()
+                # Only delete if response is literally "NO" — anything else = KEEP
+                verdict = "NO" if raw_answer.upper().strip().rstrip(".") == "NO" else "YES"
         except Exception:
             verdict = "YES"
+            raw_answer = "ERROR"
+
+        if test_count:
+            # Test mode: print raw response, never delete
+            label = "✗ DELETE" if verdict == "NO" else "✓ KEEP"
+            print(f"  [P2] [{i+1}/{len(with_img)}] {label}: {title}")
+            print(f"         Haiku raw: \"{raw_answer}\" → {verdict}")
+            return
 
         if verdict == "NO":
             if dry_run:
@@ -165,8 +206,9 @@ def phase2(products, token, prog, dry_run):
                 rate = (i+1) / max(time.time()-t0, 1) * 60
                 print(f"  [P2] [{i+1}/{len(with_img)}] kept={kept[0]} deleted={deleted[0]} | {rate:.0f}/min")
 
-        prog["phase2_done"].append(pid)
-        save_progress(prog)
+        if not test_count:
+            prog["phase2_done"].append(pid)
+            save_progress(prog)
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         futs = [pool.submit(classify_one, (i, p)) for i, p in enumerate(with_img)]
@@ -174,8 +216,9 @@ def phase2(products, token, prog, dry_run):
             try: f.result()
             except Exception as e: print(f"  [P2] error: {e}")
 
-    if deleted[0] >= 1000:
-        print(f"  ⚠ SAFETY: 1000 deletions. Halting Phase 2.")
+    if deleted[0] >= 50:
+        print(f"  ⚠ SAFETY: 50 deletions reached. Review deleted products in cleanup_progress.json.")
+        print(f"  Reset phase2_done in cleanup_progress.json to re-scan, or continue with --phase 2")
     print(f"  Phase 2 done: {kept[0]} kept, {deleted[0]} deleted")
     return deleted[0]
 
@@ -343,9 +386,18 @@ def phase4(products, token, prog, dry_run):
 def main():
     dry_run = "--dry-run" in sys.argv
     phase_filter = None
+    test_count = 0
     for i, a in enumerate(sys.argv):
         if a == "--phase" and i+1 < len(sys.argv):
             phase_filter = int(sys.argv[i+1])
+        if a == "--test" and i+1 < len(sys.argv):
+            test_count = int(sys.argv[i+1])
+    if "--reset-phase2" in sys.argv:
+        prog = load_progress()
+        prog["phase2_done"] = []
+        prog["phase2_deleted"] = []
+        save_progress(prog)
+        print("  Reset Phase 2 progress.")
 
     token = get_shopify_token()
     prog = load_progress()
@@ -354,6 +406,8 @@ def main():
     print(f"  CastForge Full Cleanup Pipeline")
     print(f"══════════════════════════════════════")
     print(f"  Dry run: {dry_run}")
+    if test_count:
+        print(f"  Test mode: classify {test_count} products (no deletions)")
     if phase_filter:
         print(f"  Running phase {phase_filter} only")
     print()
@@ -365,14 +419,14 @@ def main():
     p1_del, p2_del, p3_moved, p4_rev = 0, 0, 0, 0
 
     if not phase_filter or phase_filter == 1:
-        p1_del = phase1(products, token, prog, dry_run)
-        # Re-fetch after deletions
-        if p1_del > 0 and not dry_run:
-            products = [p for p in products if p["id"] not in set(prog["phase1_done"])]
+        if not test_count:
+            p1_del = phase1(products, token, prog, dry_run)
+            if p1_del > 0 and not dry_run:
+                products = [p for p in products if p["id"] not in set(prog["phase1_done"])]
 
     if not phase_filter or phase_filter == 2:
         if not _shutdown.is_set():
-            p2_del = phase2(products, token, prog, dry_run)
+            p2_del = phase2(products, token, prog, dry_run, test_count=test_count)
             if p2_del > 0 and not dry_run:
                 del_ids = set(d["id"] for d in prog["phase2_deleted"])
                 products = [p for p in products if p["id"] not in del_ids]
