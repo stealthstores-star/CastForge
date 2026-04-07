@@ -1,81 +1,21 @@
-<section class="cf-filters cf-section">
-  <div class="cf-container">
-    <div class="cf-filters__group">
-      <h3 class="cf-filters__label">Shop by Scale</h3>
-      <div class="cf-filters__pills">
-        {%- assign scales = "1/35,1/72,1/24,1/16,1/10,75mm,28mm" | split: "," -%}
-        {%- for scale in scales -%}
-          <a href="/search?q={{ scale | url_encode }}" class="cf-pill">{{ scale }}</a>
-        {%- endfor -%}
-      </div>
-    </div>
-    <div class="cf-filters__group">
-      <h3 class="cf-filters__label">Shop by Theme</h3>
-      <div class="cf-filters__pills">
-        {%- assign themes = "WWII,Modern Military,Fantasy,Sci-Fi,Anime,Historical,Cars" | split: "," -%}
-        {%- assign theme_links = "scale-military-vehicles,wargaming-infantry,fantasy-warriors,scifi-figures,anime-characters,wargaming-heroes-characters,scale-cars-motorcycles" | split: "," -%}
-        {%- for theme in themes -%}
-          <a href="/collections/{{ theme_links[forloop.index0] }}" class="cf-pill">{{ theme }}</a>
-        {%- endfor -%}
-      </div>
+<section class="cf-section cf-section--alt">
+  <div class="cf-container" style="text-align:center;">
+    <p class="cf-eyebrow">Browse by Theme</p>
+    <h2 class="cf-h2">Find Your Niche</h2>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;">
+      {%- assign themes = "WWII Military,Modern Warfare,Fantasy,Sci-Fi,Anime & Manga,Historical,Cars & Vehicles" | split: "," -%}
+      {%- assign links = "scale-military-vehicles,wargaming-infantry,fantasy-warriors,scifi-figures,anime-characters,wargaming-heroes-characters,scale-cars-motorcycles" | split: "," -%}
+      {%- for theme in themes -%}
+        <a href="/collections/{{ links[forloop.index0] }}" class="cf-pill">{{ theme }}</a>
+      {%- endfor -%}
     </div>
   </div>
 </section>
-
 <style>
-.cf-filters {
-  padding: 48px 0 !important;
-  text-align: center;
-  width: 100%;
-}
-.cf-filters__group {
-  margin-bottom: 28px;
-  width: 100%;
-}
-.cf-filters__group:last-child { margin-bottom: 0; }
-.cf-filters__label {
-  display: block;
-  font-family: var(--cf-font-body, 'Inter', sans-serif);
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: var(--cf-text-muted, #888);
-  margin-bottom: 16px;
-  text-align: center;
-}
-.cf-filters__pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: center;
-  width: 100%;
-}
-.cf-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 10px 24px;
-  border: 1px solid var(--cf-border, #2a2a2a);
-  border-radius: 24px;
-  font-family: var(--cf-font-body, 'Inter', sans-serif);
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--cf-text, #e8e8e8);
-  text-decoration: none;
-  transition: all 0.2s;
-  white-space: nowrap;
-}
-.cf-pill:hover {
-  border-color: var(--cf-accent, #FF6B1A);
-  color: #fff;
-  background: var(--cf-accent, #FF6B1A);
-}
-@media (max-width: 768px) {
-  .cf-pill { padding: 8px 16px; font-size: 13px; }
-}
+.cf-pill{display:inline-flex;align-items:center;padding:10px 24px;border:1px solid var(--cf-border);border-radius:24px;font-family:var(--cf-font-body);font-size:14px;font-weight:500;color:var(--cf-text);text-decoration:none;white-space:nowrap;transition:all 0.2s;}
+.cf-pill:hover{background:var(--cf-accent);border-color:var(--cf-accent);color:#fff;}
+@media(max-width:768px){.cf-pill{padding:8px 16px;font-size:13px;}}
 </style>
-
 {% schema %}
-{ "name": "Quick Filters", "tag": "section" }
+{ "name": "Theme Filters", "tag": "section" }
 {% endschema %}

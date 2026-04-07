@@ -1,0 +1,20 @@
+{%- comment -%} THE ONLY announcement bar. Do not duplicate in header or layout. {%- endcomment -%}
+<div class="cf-announce">
+  <div class="cf-container">
+    <span>🚚 <strong>Free worldwide shipping</strong> on all orders · 5-7 day delivery</span>
+  </div>
+</div>
+<style>
+.cf-announce {
+  background: var(--cf-accent, #FF6B1A);
+  color: #fff;
+  text-align: center;
+  font-size: 13px;
+  font-family: var(--cf-font-body, 'Inter', sans-serif);
+  padding: 8px 0;
+  letter-spacing: 0.3px;
+}
+</style>
+{% schema %}
+{ "name": "Announcement Bar", "tag": "div" }
+{% endschema %}

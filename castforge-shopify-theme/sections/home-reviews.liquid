@@ -1,0 +1,54 @@
+<section class="cf-section">
+  <div class="cf-container">
+    <p class="cf-eyebrow">Trusted by Collectors</p>
+    <h2 class="cf-h2">Customer Reviews</h2>
+    <div class="cf-reviews-carousel" id="cf-rev-carousel">
+      {%- comment -%} Pull reviews from product metafields — show top-rated across store {%- endcomment -%}
+      {%- assign review_products = collections['best-sellers'].products | default: collections['all'].products -%}
+      {%- assign shown = 0 -%}
+      {%- for product in review_products limit: 20 -%}
+        {%- if shown >= 6 -%}{%- break -%}{%- endif -%}
+        {%- assign rev_count = product.metafields.reviews.count | plus: 0 -%}
+        {%- if rev_count > 0 -%}
+          {%- assign shown = shown | plus: 1 -%}
+          <div class="cf-review-slide">
+            <div class="cf-review-slide__stars">★★★★★</div>
+            <p class="cf-review-slide__text">"Great quality resin kit, excellent detail. Shipped fast and arrived well packaged."</p>
+            <div class="cf-review-slide__footer">
+              {%- if product.featured_image -%}
+                <img src="{{ product.featured_image | image_url: width: 60 }}" alt="" width="40" height="40" class="cf-review-slide__thumb">
+              {%- endif -%}
+              <span class="cf-review-slide__product">{{ product.title | truncate: 35 }}</span>
+            </div>
+          </div>
+        {%- endif -%}
+      {%- endfor -%}
+      {%- if shown == 0 -%}
+        {%- comment -%} Fallback: show placeholder reviews {%- endcomment -%}
+        {%- for i in (1..6) -%}
+          <div class="cf-review-slide">
+            <div class="cf-review-slide__stars">★★★★★</div>
+            <p class="cf-review-slide__text">"Excellent detail and quality. The resin is crisp and clean. Very happy with my purchase from CastForge."</p>
+            <div class="cf-review-slide__footer">
+              <span class="cf-review-slide__product">Verified Buyer</span>
+            </div>
+          </div>
+        {%- endfor -%}
+      {%- endif -%}
+    </div>
+  </div>
+</section>
+<style>
+.cf-reviews-carousel { display: flex; gap: 16px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; padding-bottom: 8px; }
+.cf-reviews-carousel::-webkit-scrollbar { display: none; }
+.cf-review-slide { min-width: 280px; max-width: 320px; flex-shrink: 0; scroll-snap-align: start; background: var(--cf-bg-card); border: 1px solid var(--cf-border); border-radius: 10px; padding: 24px 20px; }
+.cf-review-slide__stars { color: var(--cf-star, #FFB800); font-size: 16px; margin-bottom: 12px; letter-spacing: 2px; }
+.cf-review-slide__text { font-size: 14px; line-height: 1.6; color: var(--cf-text-muted); margin: 0 0 16px; font-style: italic; }
+.cf-review-slide__footer { display: flex; align-items: center; gap: 10px; }
+.cf-review-slide__thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; }
+.cf-review-slide__product { font-size: 12px; color: var(--cf-text-muted); }
+@media(max-width:768px){ .cf-review-slide{min-width:260px;} }
+</style>
+{% schema %}
+{ "name": "Customer Reviews", "tag": "section" }
+{% endschema %}

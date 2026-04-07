@@ -1,0 +1,30 @@
+<section class="cf-section cf-section--alt">
+  <div class="cf-container">
+    <p class="cf-eyebrow">This Week's Pick</p>
+    <h2 class="cf-h2">New Arrivals</h2>
+    <div class="cf-featured">
+      {%- assign feat = collections['new-arrivals'] | default: collections['all'] -%}
+      {%- for product in feat.products limit: 4 -%}
+        <a href="{{ product.url }}" class="cf-product-card">
+          <div class="cf-product-card__img">
+            {%- if product.featured_image -%}
+              <img src="{{ product.featured_image | image_url: width: 400 }}" alt="{{ product.title }}" width="400" height="400" loading="lazy">
+            {%- endif -%}
+          </div>
+          <h3 class="cf-product-card__title">{{ product.title | truncate: 50 }}</h3>
+          <span class="cf-product-card__price">{{ product.price | money }}</span>
+        </a>
+      {%- endfor -%}
+    </div>
+    <div style="text-align:center;margin-top:28px;">
+      <a href="/collections/new-arrivals" class="cf-btn cf-btn--outline">See All New Arrivals</a>
+    </div>
+  </div>
+</section>
+<style>
+.cf-featured { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+@media(max-width:768px){ .cf-featured{grid-template-columns:repeat(2,1fr);gap:10px;} }
+</style>
+{% schema %}
+{ "name": "Featured Collection", "tag": "section" }
+{% endschema %}

@@ -1,103 +1,42 @@
-<section class="cf-trending cf-section">
+<section class="cf-section">
   <div class="cf-container">
-    <h2 class="cf-section-title">Trending Now</h2>
+    <p class="cf-eyebrow">Popular Right Now</p>
+    <h2 class="cf-h2">Trending Models</h2>
     <div class="cf-trending__wrap">
-      <button class="cf-trending__arrow cf-trending__arrow--left" id="cf-trend-left" aria-label="Scroll left">‹</button>
-      <div class="cf-trending__scroll" id="cf-trend-scroll">
-        {%- comment -%} Try best-sellers first, fall back to all products {%- endcomment -%}
-        {%- assign trend_col = collections['best-sellers'] -%}
-        {%- if trend_col == blank or trend_col.products_count == 0 -%}
-          {%- assign trend_col = collections['all'] -%}
-        {%- endif -%}
-        {%- for product in trend_col.products limit: 8 -%}
+      <button class="cf-trending__arrow cf-trending__arrow--l" id="cf-tl" aria-label="Left">‹</button>
+      <div class="cf-trending__scroll" id="cf-ts">
+        {%- assign tc = collections['best-sellers'] -%}
+        {%- if tc == blank or tc.products_count == 0 -%}{%- assign tc = collections['all'] -%}{%- endif -%}
+        {%- for product in tc.products limit: 8 -%}
           <a href="{{ product.url }}" class="cf-product-card">
             <div class="cf-product-card__img">
-              {%- if product.featured_image -%}
-                <img src="{{ product.featured_image | image_url: width: 400 }}" alt="{{ product.title }}" width="400" height="400" loading="lazy">
-              {%- else -%}
-                <div class="cf-product-card__placeholder"></div>
-              {%- endif -%}
+              {%- if product.featured_image -%}<img src="{{ product.featured_image | image_url: width: 400 }}" alt="{{ product.title }}" width="400" height="400" loading="lazy">{%- endif -%}
             </div>
-            <h3 class="cf-product-card__title">{{ product.title | truncate: 55 }}</h3>
+            <h3 class="cf-product-card__title">{{ product.title | truncate: 50 }}</h3>
             <span class="cf-product-card__price">{{ product.price | money }}</span>
-            {%- if product.compare_at_price > product.price -%}
-              <span class="cf-product-card__was">{{ product.compare_at_price | money }}</span>
-            {%- endif -%}
           </a>
         {%- endfor -%}
       </div>
-      <button class="cf-trending__arrow cf-trending__arrow--right" id="cf-trend-right" aria-label="Scroll right">›</button>
+      <button class="cf-trending__arrow cf-trending__arrow--r" id="cf-tr" aria-label="Right">›</button>
     </div>
-    <div class="cf-trending__cta">
-      <a href="/collections/all" class="cf-btn cf-btn--outline">
-        View All {{ collections['all'].products_count | default: '13,000' }}+ Models
-      </a>
+    <div style="text-align:center;margin-top:32px;">
+      <a href="/collections/all" class="cf-btn cf-btn--outline">View All {{ collections['all'].products_count | default: '13,000' }}+ Models</a>
     </div>
   </div>
 </section>
-
 <style>
-.cf-trending__wrap { position: relative; }
-.cf-trending__scroll {
-  display: flex;
-  gap: 16px;
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  padding: 4px 0 8px;
-}
-.cf-trending__scroll::-webkit-scrollbar { display: none; }
-.cf-trending__scroll .cf-product-card {
-  min-width: 220px;
-  max-width: 260px;
-  flex-shrink: 0;
-  scroll-snap-align: start;
-}
-.cf-trending__arrow {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-80%);
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: var(--cf-bg-card, #141414);
-  border: 1px solid var(--cf-border, #2a2a2a);
-  color: var(--cf-text, #e8e8e8);
-  font-size: 24px;
-  cursor: pointer;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-.cf-trending__arrow:hover { border-color: var(--cf-accent); color: var(--cf-accent); }
-.cf-trending__arrow--left { left: -8px; }
-.cf-trending__arrow--right { right: -8px; }
-.cf-trending__cta { text-align: center; margin-top: 32px; }
-.cf-product-card__was {
-  display: block;
-  font-size: 12px;
-  color: var(--cf-text-muted);
-  text-decoration: line-through;
-  padding: 0 14px 10px;
-}
-.cf-product-card__placeholder { width: 100%; height: 100%; background: #1a1a1a; }
-@media (max-width: 768px) {
-  .cf-trending__arrow { display: none; }
-  .cf-trending__scroll .cf-product-card { min-width: 180px; }
-}
+.cf-trending__wrap{position:relative;}
+.cf-trending__scroll{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:4px 0 8px;}
+.cf-trending__scroll::-webkit-scrollbar{display:none;}
+.cf-trending__scroll .cf-product-card{min-width:220px;max-width:260px;flex-shrink:0;scroll-snap-align:start;}
+.cf-trending__arrow{position:absolute;top:50%;transform:translateY(-80%);width:40px;height:40px;border-radius:50%;background:var(--cf-bg-card);border:1px solid var(--cf-border);color:var(--cf-text);font-size:24px;cursor:pointer;z-index:2;display:flex;align-items:center;justify-content:center;transition:all 0.2s;}
+.cf-trending__arrow:hover{border-color:var(--cf-accent);color:var(--cf-accent);}
+.cf-trending__arrow--l{left:-8px;}.cf-trending__arrow--r{right:-8px;}
+@media(max-width:768px){.cf-trending__arrow{display:none;}.cf-trending__scroll .cf-product-card{min-width:180px;}}
 </style>
-
 <script>
-(function(){
-  const scroll = document.getElementById('cf-trend-scroll');
-  document.getElementById('cf-trend-left')?.addEventListener('click', () => scroll.scrollBy({left: -280, behavior: 'smooth'}));
-  document.getElementById('cf-trend-right')?.addEventListener('click', () => scroll.scrollBy({left: 280, behavior: 'smooth'}));
-})();
+(function(){const s=document.getElementById('cf-ts');document.getElementById('cf-tl')?.addEventListener('click',()=>s.scrollBy({left:-280,behavior:'smooth'}));document.getElementById('cf-tr')?.addEventListener('click',()=>s.scrollBy({left:280,behavior:'smooth'}));})();
 </script>
-
 {% schema %}
 { "name": "Trending Now", "tag": "section" }
 {% endschema %}

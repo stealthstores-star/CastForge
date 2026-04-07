@@ -1,0 +1,72 @@
+{%- comment -%}
+  Reusable scale filter bar.
+  Usage: {% render 'scale-filter-bar' %}
+  Works on: homepage, collection pages, search results.
+{%- endcomment -%}
+
+<div class="cf-scale-bar">
+  <div class="cf-container">
+    <span class="cf-scale-bar__label">Shop by Scale</span>
+    <div class="cf-scale-bar__pills">
+      {%- assign scales = "1/35,1/72,1/24,1/16,1/10,1/6,75mm,54mm,28mm" | split: "," -%}
+      {%- for scale in scales -%}
+        {%- assign tag_slug = scale | replace: '/', '-' -%}
+        <a href="/collections/all/{{ tag_slug }}" class="cf-scale-pill">{{ scale }}</a>
+      {%- endfor -%}
+    </div>
+  </div>
+</div>
+
+<style>
+.cf-scale-bar {
+  padding: 20px 0;
+  background: var(--cf-bg-card, #141414);
+  border-bottom: 1px solid var(--cf-border, #2a2a2a);
+}
+.cf-scale-bar .cf-container {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.cf-scale-bar__label {
+  font-family: var(--cf-font-body, 'Inter', sans-serif);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--cf-accent, #FF6B1A);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cf-scale-bar__pills {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.cf-scale-bar__pills::-webkit-scrollbar { display: none; }
+.cf-scale-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 18px;
+  border: 1px solid var(--cf-border, #2a2a2a);
+  border-radius: 20px;
+  font-family: var(--cf-font-body, 'Inter', sans-serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cf-text, #e8e8e8);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.cf-scale-pill:hover {
+  background: var(--cf-accent, #FF6B1A);
+  border-color: var(--cf-accent, #FF6B1A);
+  color: #fff;
+}
+@media (max-width: 768px) {
+  .cf-scale-bar .cf-container { flex-direction: column; align-items: flex-start; gap: 10px; }
+}
+</style>

@@ -1,29 +1,13 @@
 {
   "sections": {
-    "hero": {
-      "type": "home-hero",
-      "settings": {}
-    },
-    "categories": {
-      "type": "home-categories",
-      "settings": {}
-    },
-    "trending": {
-      "type": "home-trending",
-      "settings": {}
-    },
-    "filters": {
-      "type": "home-filters",
-      "settings": {}
-    },
-    "why": {
-      "type": "home-why",
-      "settings": {}
-    },
-    "newsletter": {
-      "type": "home-newsletter",
-      "settings": {}
-    }
+    "hero": { "type": "home-hero", "settings": {} },
+    "categories": { "type": "home-categories", "settings": {} },
+    "trending": { "type": "home-trending", "settings": {} },
+    "filters": { "type": "home-filters", "settings": {} },
+    "why": { "type": "home-why", "settings": {} },
+    "featured": { "type": "home-featured", "settings": {} },
+    "reviews": { "type": "home-reviews", "settings": {} },
+    "newsletter": { "type": "home-newsletter", "settings": {} }
   },
   "order": [
     "hero",
@@ -31,6 +15,8 @@
     "trending",
     "filters",
     "why",
+    "featured",
+    "reviews",
     "newsletter"
   ]
 }
