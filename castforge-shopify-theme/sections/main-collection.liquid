@@ -1,0 +1,180 @@
+{{ 'product-hero.css' | asset_url | stylesheet_tag }}
+
+<section class="cf-collection">
+  <div class="cf-container">
+    <h1 class="cf-section-title">{{ collection.title }}</h1>
+    {% if collection.description != blank %}
+      <p class="cf-collection__desc">{{ collection.description }}</p>
+    {% endif %}
+
+    <div class="cf-collection__grid-wrap">
+      <!-- Sidebar filters -->
+      <aside class="cf-collection__sidebar">
+        <form id="cf-filter-form">
+          {% for filter in collection.filters %}
+            <div class="cf-filter-group">
+              <h3 class="cf-filter-title">{{ filter.label }}</h3>
+
+              {% if filter.type == 'price_range' %}
+                {%- comment -%} Dynamic price range — respects active currency {%- endcomment -%}
+                <div class="cf-filter-price">
+                  <div class="cf-filter-price__row">
+                    <label>
+                      <span>{{ localization.country.currency.symbol }}</span>
+                      <input type="number"
+                        name="{{ filter.min_value.param_name }}"
+                        placeholder="Min"
+                        {% if filter.min_value.value %}value="{{ filter.min_value.value | money_without_currency }}"{% endif %}
+                        min="0"
+                        class="cf-filter-price__input">
+                    </label>
+                    <span class="cf-filter-price__sep">–</span>
+                    <label>
+                      <span>{{ localization.country.currency.symbol }}</span>
+                      <input type="number"
+                        name="{{ filter.max_value.param_name }}"
+                        placeholder="Max"
+                        {% if filter.max_value.value %}value="{{ filter.max_value.value | money_without_currency }}"{% endif %}
+                        class="cf-filter-price__input">
+                    </label>
+                  </div>
+                  <button type="submit" class="cf-filter-price__btn">Apply</button>
+                </div>
+
+                {%- comment -%} Quick-select price ranges in active currency {%- endcomment -%}
+                <div class="cf-filter-quick">
+                  {% assign ranges = "0-1500,1500-3000,3000-5000,5000-10000,10000-99999" | split: "," %}
+                  {% assign labels = "Under,, –,, –,, –,Over" | split: "," %}
+                  {% for range in ranges %}
+                    {% assign bounds = range | split: "-" %}
+                    {% assign min_cents = bounds[0] | times: 1 %}
+                    {% assign max_cents = bounds[1] | times: 1 %}
+                    <a href="{{ collection.url }}?filter.v.price.gte={{ min_cents }}&filter.v.price.lte={{ max_cents }}"
+                       class="cf-filter-quick__link">
+                      {% if min_cents == 0 %}
+                        Under {{ max_cents | money }}
+                      {% elsif max_cents >= 99999 %}
+                        Over {{ min_cents | money }}
+                      {% else %}
+                        {{ min_cents | money }} – {{ max_cents | money }}
+                      {% endif %}
+                    </a>
+                  {% endfor %}
+                </div>
+
+              {% elsif filter.type == 'list' %}
+                <ul class="cf-filter-list">
+                  {% for value in filter.values %}
+                    <li>
+                      <label class="cf-filter-check">
+                        <input type="checkbox"
+                          name="{{ value.param_name }}"
+                          value="{{ value.value }}"
+                          {% if value.active %}checked{% endif %}>
+                        <span>{{ value.label }} ({{ value.count }})</span>
+                      </label>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+            </div>
+          {% endfor %}
+
+          {% if collection.filters.size > 0 %}
+            <a href="{{ collection.url }}" class="cf-filter-clear">Clear all filters</a>
+          {% endif %}
+        </form>
+      </aside>
+
+      <!-- Product grid -->
+      <div class="cf-collection__products">
+        <div class="cf-collection__count">
+          {{ collection.products_count }} products
+        </div>
+        <div class="cf-related__grid">
+          {% paginate collection.products by 24 %}
+            {% for product in collection.products %}
+              <a href="{{ product.url }}" class="cf-product-card">
+                <div class="cf-product-card__img">
+                  {% if product.featured_image %}
+                    <img src="{{ product.featured_image | image_url: width: 400 }}"
+                         alt="{{ product.title }}" width="400" height="400" loading="lazy">
+                  {% endif %}
+                </div>
+                <h3 class="cf-product-card__title">{{ product.title | truncate: 60 }}</h3>
+                <span class="cf-product-card__price">{{ product.price | money }}</span>
+                {% if product.compare_at_price > product.price %}
+                  <span class="cf-product-card__compare">{{ product.compare_at_price | money }}</span>
+                {% endif %}
+              </a>
+            {% endfor %}
+
+            {% if paginate.pages > 1 %}
+              <div class="cf-pagination">
+                {{ paginate | default_pagination: next: '→', previous: '←' }}
+              </div>
+            {% endif %}
+          {% endpaginate %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+.cf-collection { padding: 32px 0 64px; }
+.cf-collection__desc { text-align: center; color: var(--cf-text-muted); margin-bottom: 32px; font-size: 15px; max-width: 600px; margin-left: auto; margin-right: auto; }
+.cf-collection__grid-wrap { display: grid; grid-template-columns: 240px 1fr; gap: 32px; }
+.cf-collection__sidebar { font-family: var(--cf-font-body); }
+.cf-filter-group { margin-bottom: 24px; }
+.cf-filter-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--cf-text); margin-bottom: 12px; }
+.cf-filter-list { list-style: none; padding: 0; }
+.cf-filter-list li { margin-bottom: 6px; }
+.cf-filter-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--cf-text-muted); cursor: pointer; }
+.cf-filter-check input[type="checkbox"] { accent-color: var(--cf-accent); }
+.cf-filter-price__row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cf-filter-price__input { width: 80px; padding: 6px 8px; background: var(--cf-bg-card); border: 1px solid var(--cf-border); border-radius: 4px; color: var(--cf-text); font-size: 13px; }
+.cf-filter-price__sep { color: var(--cf-text-muted); }
+.cf-filter-price__btn { padding: 6px 16px; background: var(--cf-accent); border: none; border-radius: 4px; color: #fff; font-size: 12px; cursor: pointer; }
+.cf-filter-quick { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.cf-filter-quick__link { font-size: 13px; color: var(--cf-text-muted); text-decoration: none; padding: 4px 0; }
+.cf-filter-quick__link:hover { color: var(--cf-accent); }
+.cf-filter-clear { display: inline-block; margin-top: 16px; font-size: 13px; color: var(--cf-accent); text-decoration: none; }
+.cf-collection__count { font-size: 13px; color: var(--cf-text-muted); margin-bottom: 16px; }
+.cf-product-card__compare { display: block; font-size: 13px; color: var(--cf-text-muted); text-decoration: line-through; padding: 0 14px 14px; }
+.cf-pagination { grid-column: 1 / -1; text-align: center; padding: 24px 0; }
+.cf-pagination a, .cf-pagination span { display: inline-block; padding: 8px 14px; margin: 0 2px; border: 1px solid var(--cf-border); border-radius: 4px; color: var(--cf-text); text-decoration: none; font-size: 14px; }
+.cf-pagination a:hover { border-color: var(--cf-accent); color: var(--cf-accent); }
+.cf-pagination .current { background: var(--cf-accent); border-color: var(--cf-accent); color: #fff; }
+@media (max-width: 768px) {
+  .cf-collection__grid-wrap { grid-template-columns: 1fr; }
+  .cf-collection__sidebar { display: none; } /* collapsed on mobile — use drawer instead */
+}
+</style>
+
+<script>
+// Auto-submit filter form on checkbox change
+document.querySelectorAll('.cf-filter-check input').forEach(cb => {
+  cb.addEventListener('change', () => {
+    const form = document.getElementById('cf-filter-form');
+    const params = new URLSearchParams(window.location.search);
+    // Toggle the filter param
+    if (cb.checked) {
+      params.append(cb.name, cb.value);
+    } else {
+      const entries = [...params.entries()].filter(([k, v]) => !(k === cb.name && v === cb.value));
+      params.forEach((_, k) => params.delete(k));
+      entries.forEach(([k, v]) => params.append(k, v));
+    }
+    window.location.href = '{{ collection.url }}?' + params.toString();
+  });
+});
+</script>
+
+{% schema %}
+{
+  "name": "Collection Page",
+  "tag": "section",
+  "class": "cf-section-collection"
+}
+{% endschema %}

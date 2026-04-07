@@ -1,0 +1,71 @@
+{% comment %}
+  Currency/Country selector — uses Shopify's built-in localization form.
+  Include in header: {% render 'localization-selector' %}
+  Requires Markets to be enabled in Shopify Admin → Settings → Markets.
+{% endcomment %}
+
+{% if localization.available_countries.size > 1 or localization.available_languages.size > 1 %}
+<div class="cf-localization">
+  {% form 'localization' %}
+    {% if localization.available_countries.size > 1 %}
+      <div class="cf-localization__group">
+        <label class="cf-localization__label" for="cf-country-select">
+          {{ localization.country.currency.iso_code }} ({{ localization.country.currency.symbol }})
+        </label>
+        <select class="cf-localization__select" id="cf-country-select" name="country_code" onchange="this.form.submit()">
+          {% for country in localization.available_countries %}
+            <option value="{{ country.iso_code }}" {% if country.iso_code == localization.country.iso_code %}selected{% endif %}>
+              {{ country.name }} ({{ country.currency.iso_code }} {{ country.currency.symbol }})
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+    {% endif %}
+
+    {% if localization.available_languages.size > 1 %}
+      <div class="cf-localization__group">
+        <select class="cf-localization__select" name="locale_code" onchange="this.form.submit()">
+          {% for language in localization.available_languages %}
+            <option value="{{ language.iso_code }}" {% if language.iso_code == localization.language.iso_code %}selected{% endif %}>
+              {{ language.endonym_name }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+    {% endif %}
+  {% endform %}
+</div>
+
+<style>
+.cf-localization {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.cf-localization__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cf-localization__label {
+  font-size: 12px;
+  color: var(--cf-text-muted, #888);
+  font-family: var(--cf-font-body, sans-serif);
+  white-space: nowrap;
+}
+.cf-localization__select {
+  padding: 4px 8px;
+  background: var(--cf-bg-card, #141414);
+  border: 1px solid var(--cf-border, #2a2a2a);
+  border-radius: 4px;
+  color: var(--cf-text, #e8e8e8);
+  font-size: 12px;
+  font-family: var(--cf-font-body, sans-serif);
+  cursor: pointer;
+}
+.cf-localization__select:focus {
+  border-color: var(--cf-accent, #FF6B1A);
+  outline: none;
+}
+</style>
+{% endif %}

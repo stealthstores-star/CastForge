@@ -81,7 +81,7 @@
           <div class="cf-klarna-text">
             or 4 payments of {{ product.selected_or_first_available_variant.price | divided_by: 4 | money }} with <strong>Klarna</strong>
           </div>
-          <meta itemprop="priceCurrency" content="{{ cart.currency.iso_code }}">
+          <meta itemprop="priceCurrency" content="{{ localization.country.currency.iso_code }}">
           <link itemprop="availability" href="https://schema.org/{% if product.available %}InStock{% else %}OutOfStock{% endif %}">
           <meta itemprop="url" content="{{ shop.url }}{{ product.url }}">
         </div>
