@@ -1,0 +1,36 @@
+{
+  "sections": {
+    "hero": {
+      "type": "home-hero",
+      "settings": {}
+    },
+    "categories": {
+      "type": "home-categories",
+      "settings": {}
+    },
+    "trending": {
+      "type": "home-trending",
+      "settings": {}
+    },
+    "filters": {
+      "type": "home-filters",
+      "settings": {}
+    },
+    "why": {
+      "type": "home-why",
+      "settings": {}
+    },
+    "newsletter": {
+      "type": "home-newsletter",
+      "settings": {}
+    }
+  },
+  "order": [
+    "hero",
+    "categories",
+    "trending",
+    "filters",
+    "why",
+    "newsletter"
+  ]
+}

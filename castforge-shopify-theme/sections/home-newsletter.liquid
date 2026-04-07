@@ -1,0 +1,35 @@
+<section class="cf-newsletter">
+  <div class="cf-container">
+    <div class="cf-newsletter__inner">
+      <h2 class="cf-newsletter__title">Get 10% Off Your First Order</h2>
+      <p class="cf-newsletter__sub">Join 4,000+ collectors. New arrivals, painting tips, and exclusive deals.</p>
+      {% form 'customer', id: 'cf-newsletter-form' %}
+        {{ form.errors | default_errors }}
+        <input type="hidden" name="contact[tags]" value="newsletter">
+        <div class="cf-newsletter__row">
+          <input type="email" name="contact[email]" placeholder="Enter your email" required class="cf-newsletter__input">
+          <button type="submit" class="cf-btn cf-btn--primary">Subscribe</button>
+        </div>
+      {% endform %}
+    </div>
+  </div>
+</section>
+
+<style>
+.cf-newsletter { padding: 64px 0; border-top: 1px solid var(--cf-border); }
+.cf-newsletter__inner { max-width: 520px; margin: 0 auto; text-align: center; }
+.cf-newsletter__title { font-family: var(--cf-font-display); font-size: 28px; color: var(--cf-accent); margin-bottom: 8px; }
+.cf-newsletter__sub { font-size: 15px; color: var(--cf-text-muted); margin-bottom: 24px; }
+.cf-newsletter__row { display: flex; gap: 8px; }
+.cf-newsletter__input {
+  flex: 1; padding: 14px 16px;
+  background: var(--cf-bg-card); border: 1px solid var(--cf-border); border-radius: 6px;
+  color: var(--cf-text); font-size: 14px; font-family: var(--cf-font-body);
+}
+.cf-newsletter__input:focus { border-color: var(--cf-accent); outline: none; }
+@media (max-width: 480px) { .cf-newsletter__row { flex-direction: column; } }
+</style>
+
+{% schema %}
+{ "name": "Newsletter Signup", "tag": "section" }
+{% endschema %}

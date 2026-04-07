@@ -1,0 +1,82 @@
+<section class="cf-categories" id="cf-categories">
+  <div class="cf-container">
+    <h2 class="cf-section-title">Shop by Category</h2>
+    <div class="cf-categories__grid">
+      {% assign cat_handles = "wargaming-heroes-characters,wargaming-infantry,scale-military-vehicles,scale-aircraft,scale-ships-naval,busts-portraits,fantasy-warriors,anime-characters,scifi-figures,accessories,terrain-buildings-ruins,scale-cars-motorcycles" | split: "," %}
+      {% assign cat_names = "Wargaming Heroes,Wargaming Infantry,Military Vehicles,Aircraft,Ships & Naval,Busts & Portraits,Fantasy Warriors,Anime Characters,Sci-Fi Figures,Accessories,Terrain & Buildings,Cars & Motorcycles" | split: "," %}
+      {% for handle in cat_handles %}
+        {% assign collection = collections[handle] %}
+        {% assign name = cat_names[forloop.index0] %}
+        {% if collection %}
+          <a href="{{ collection.url }}" class="cf-cat-card">
+            <div class="cf-cat-card__img">
+              {% if collection.image %}
+                <img src="{{ collection.image | image_url: width: 500 }}" alt="{{ name }}" width="500" height="400" loading="lazy">
+              {% elsif collection.products.first.featured_image %}
+                <img src="{{ collection.products.first.featured_image | image_url: width: 500 }}" alt="{{ name }}" width="500" height="400" loading="lazy">
+              {% else %}
+                <div class="cf-cat-card__placeholder">{{ name | slice: 0 }}</div>
+              {% endif %}
+            </div>
+            <div class="cf-cat-card__info">
+              <h3 class="cf-cat-card__name">{{ name }}</h3>
+              <span class="cf-cat-card__count">{{ collection.products_count }} models</span>
+            </div>
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<style>
+.cf-categories { padding: 64px 0; }
+.cf-categories__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+}
+.cf-cat-card {
+  position: relative;
+  border-radius: var(--cf-radius, 8px);
+  overflow: hidden;
+  text-decoration: none;
+  background: var(--cf-bg-card);
+  border: 1px solid var(--cf-border);
+  transition: all 0.25s;
+}
+.cf-cat-card:hover {
+  border-color: var(--cf-accent);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 32px rgba(255,107,26,0.15);
+}
+.cf-cat-card__img {
+  aspect-ratio: 5/4;
+  overflow: hidden;
+  background: #111;
+}
+.cf-cat-card__img img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.4s; }
+.cf-cat-card:hover .cf-cat-card__img img { transform: scale(1.06); }
+.cf-cat-card__placeholder {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--cf-font-display); font-size: 48px; color: var(--cf-border);
+}
+.cf-cat-card__info { padding: 14px 16px; }
+.cf-cat-card__name {
+  font-family: var(--cf-font-display);
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  color: var(--cf-text);
+  margin: 0;
+  text-transform: uppercase;
+}
+.cf-cat-card__count { font-size: 12px; color: var(--cf-text-muted); }
+@media (max-width: 768px) {
+  .cf-categories__grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+}
+</style>
+
+{% schema %}
+{ "name": "Shop by Category", "tag": "section" }
+{% endschema %}
