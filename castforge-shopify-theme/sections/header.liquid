@@ -1,115 +1,160 @@
-{% comment %}
-  CastForge Header — include in layout/theme.liquid or merge into existing header.
-  If your live theme already has a header section, just add this line where
-  the cart/account icons are (top-right area):
+{{ 'header.css' | asset_url | stylesheet_tag }}
 
-    {% render 'localization-selector' %}
+<!-- Announcement bar -->
+<div class="cf-announce">
+  <div class="cf-container">
+    <span>🚚 <strong>Free worldwide shipping</strong> on all orders · 5-7 day delivery</span>
+  </div>
+</div>
 
-  This file is a reference — copy the relevant parts into your live header.
-{% endcomment %}
-
-<header class="cf-header">
+<header class="cf-header" id="cf-header">
   <div class="cf-container">
     <div class="cf-header__inner">
+      <!-- Mobile hamburger -->
+      <button class="cf-hamburger" id="cf-hamburger" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+
       <!-- Logo -->
       <a href="/" class="cf-header__logo">
         {% if settings.logo %}
-          <img src="{{ settings.logo | image_url: width: 200 }}" alt="{{ shop.name }}" height="40">
+          <img src="{{ settings.logo | image_url: width: 200 }}" alt="{{ shop.name }}" height="36">
         {% else %}
-          <span class="cf-header__logo-text">CASTFORGE</span>
+          <span class="cf-logo-text">CASTFORGE</span>
         {% endif %}
       </a>
 
-      <!-- Nav -->
-      <nav class="cf-header__nav">
-        {% for link in linklists.main-menu.links %}
-          <a href="{{ link.url }}" class="cf-header__link">{{ link.title }}</a>
-        {% endfor %}
+      <!-- Desktop nav -->
+      <nav class="cf-nav" id="cf-nav">
+        <div class="cf-nav__item cf-nav__mega-trigger">
+          <a href="/collections/all" class="cf-nav__link">Shop All</a>
+          <!-- Mega menu -->
+          <div class="cf-mega" id="cf-mega">
+            <div class="cf-mega__inner">
+              <div class="cf-mega__col">
+                <h4 class="cf-mega__heading">Wargaming</h4>
+                <a href="/collections/wargaming-infantry" class="cf-mega__link">Infantry & Troops</a>
+                <a href="/collections/wargaming-heroes-characters" class="cf-mega__link">Heroes & Characters</a>
+                <a href="/collections/wargaming-vehicles-mechs" class="cf-mega__link">Vehicles & Mechs</a>
+                <a href="/collections/wargaming-monsters-creatures" class="cf-mega__link">Monsters & Creatures</a>
+                <a href="/collections/wargaming-army-bundles" class="cf-mega__link">Army Bundles</a>
+              </div>
+              <div class="cf-mega__col">
+                <h4 class="cf-mega__heading">Scale Models</h4>
+                <a href="/collections/scale-military-vehicles" class="cf-mega__link">Military Vehicles</a>
+                <a href="/collections/scale-aircraft" class="cf-mega__link">Aircraft</a>
+                <a href="/collections/scale-ships-naval" class="cf-mega__link">Ships & Naval</a>
+                <a href="/collections/scale-cars-motorcycles" class="cf-mega__link">Cars & Motorcycles</a>
+              </div>
+              <div class="cf-mega__col">
+                <h4 class="cf-mega__heading">Figures</h4>
+                <a href="/collections/busts-portraits" class="cf-mega__link">Busts & Portraits</a>
+                <a href="/collections/fantasy-warriors" class="cf-mega__link">Fantasy Warriors</a>
+                <a href="/collections/anime-characters" class="cf-mega__link">Anime Characters</a>
+                <a href="/collections/scifi-figures" class="cf-mega__link">Sci-Fi Figures</a>
+              </div>
+              <div class="cf-mega__col">
+                <h4 class="cf-mega__heading">Terrain & More</h4>
+                <a href="/collections/terrain-buildings-ruins" class="cf-mega__link">Buildings & Ruins</a>
+                <a href="/collections/terrain-scenery" class="cf-mega__link">Scenery & Scatter</a>
+                <a href="/collections/terrain-natural" class="cf-mega__link">Natural Elements</a>
+                <a href="/collections/terrain-props" class="cf-mega__link">Props & Accessories</a>
+                <a href="/collections/terrain-bases-plinths" class="cf-mega__link">Bases & Plinths</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        <a href="/collections/new-arrivals" class="cf-nav__link">New Arrivals</a>
+        <a href="/collections/best-sellers" class="cf-nav__link">Best Sellers</a>
+        <a href="/collections/accessories" class="cf-nav__link">Accessories</a>
       </nav>
 
-      <!-- Right: currency selector + cart -->
+      <!-- Right icons -->
       <div class="cf-header__right">
         {% render 'localization-selector' %}
-        <a href="/cart" class="cf-header__cart">
-          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1.003 1.003 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
-          <span class="cf-header__cart-count">{{ cart.item_count }}</span>
+        <a href="/search" class="cf-header__icon" aria-label="Search">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        </a>
+        <a href="/account" class="cf-header__icon" aria-label="Account">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+        </a>
+        <a href="/cart" class="cf-header__icon cf-header__cart" aria-label="Cart">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1.003 1.003 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
+          {% if cart.item_count > 0 %}
+            <span class="cf-cart-badge">{{ cart.item_count }}</span>
+          {% endif %}
         </a>
       </div>
     </div>
   </div>
 </header>
 
-<style>
-.cf-header {
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  background: var(--cf-bg, #0a0a0a);
-  border-bottom: 1px solid var(--cf-border, #2a2a2a);
-  padding: 12px 0;
-}
-.cf-header__inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-}
-.cf-header__logo-text {
-  font-family: var(--cf-font-display, 'Anton', sans-serif);
-  font-size: 24px;
-  letter-spacing: 2px;
-  color: var(--cf-accent, #FF6B1A);
-  text-decoration: none;
-}
-.cf-header__nav {
-  display: flex;
-  gap: 24px;
-}
-.cf-header__link {
-  font-family: var(--cf-font-body, 'Inter', sans-serif);
-  font-size: 14px;
-  color: var(--cf-text, #e8e8e8);
-  text-decoration: none;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.cf-header__link:hover { color: var(--cf-accent, #FF6B1A); }
-.cf-header__right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.cf-header__cart {
-  position: relative;
-  color: var(--cf-text, #e8e8e8);
-  text-decoration: none;
-}
-.cf-header__cart:hover { color: var(--cf-accent, #FF6B1A); }
-.cf-header__cart-count {
-  position: absolute;
-  top: -6px;
-  right: -8px;
-  background: var(--cf-accent, #FF6B1A);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-@media (max-width: 768px) {
-  .cf-header__nav { display: none; }
-  .cf-localization { display: none; }
-}
-</style>
+<!-- Mobile drawer -->
+<div class="cf-mobile-nav" id="cf-mobile-nav">
+  <div class="cf-mobile-nav__header">
+    <span class="cf-logo-text">CASTFORGE</span>
+    <button class="cf-mobile-nav__close" id="cf-mobile-close" aria-label="Close">✕</button>
+  </div>
+  <nav class="cf-mobile-nav__links">
+    <a href="/collections/all">Shop All Models</a>
+    <a href="/collections/new-arrivals">New Arrivals</a>
+    <a href="/collections/best-sellers">Best Sellers</a>
+    <details>
+      <summary>Wargaming</summary>
+      <a href="/collections/wargaming-infantry">Infantry & Troops</a>
+      <a href="/collections/wargaming-heroes-characters">Heroes & Characters</a>
+      <a href="/collections/wargaming-vehicles-mechs">Vehicles & Mechs</a>
+      <a href="/collections/wargaming-monsters-creatures">Monsters & Creatures</a>
+      <a href="/collections/wargaming-army-bundles">Army Bundles</a>
+    </details>
+    <details>
+      <summary>Scale Models</summary>
+      <a href="/collections/scale-military-vehicles">Military Vehicles</a>
+      <a href="/collections/scale-aircraft">Aircraft</a>
+      <a href="/collections/scale-ships-naval">Ships & Naval</a>
+      <a href="/collections/scale-cars-motorcycles">Cars & Motorcycles</a>
+    </details>
+    <details>
+      <summary>Figures</summary>
+      <a href="/collections/busts-portraits">Busts & Portraits</a>
+      <a href="/collections/fantasy-warriors">Fantasy Warriors</a>
+      <a href="/collections/anime-characters">Anime Characters</a>
+      <a href="/collections/scifi-figures">Sci-Fi Figures</a>
+    </details>
+    <details>
+      <summary>Terrain</summary>
+      <a href="/collections/terrain-buildings-ruins">Buildings & Ruins</a>
+      <a href="/collections/terrain-scenery">Scenery</a>
+      <a href="/collections/terrain-natural">Natural Elements</a>
+      <a href="/collections/terrain-props">Props</a>
+      <a href="/collections/terrain-bases-plinths">Bases & Plinths</a>
+    </details>
+    <a href="/collections/accessories">Accessories</a>
+  </nav>
+</div>
+<div class="cf-overlay" id="cf-overlay"></div>
+
+<script>
+(function(){
+  const ham = document.getElementById('cf-hamburger');
+  const nav = document.getElementById('cf-mobile-nav');
+  const overlay = document.getElementById('cf-overlay');
+  const close = document.getElementById('cf-mobile-close');
+  function toggle(open) {
+    nav.classList.toggle('is-open', open);
+    overlay.classList.toggle('is-visible', open);
+    document.body.style.overflow = open ? 'hidden' : '';
+  }
+  ham?.addEventListener('click', () => toggle(true));
+  close?.addEventListener('click', () => toggle(false));
+  overlay?.addEventListener('click', () => toggle(false));
+})();
+</script>
 
 {% schema %}
 {
   "name": "Header",
-  "tag": "section",
-  "class": "cf-section-header"
+  "tag": "div",
+  "class": "cf-header-wrap"
 }
 {% endschema %}
