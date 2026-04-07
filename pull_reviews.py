@@ -61,123 +61,109 @@ def anonymise_name(name):
     return name[:8] + "."
 
 # ── Scrape reviews via Playwright ──
-REVIEW_EXTRACT_JS = """() => {
-    const reviews = [];
-    // AliExpress review cards
-    const cards = document.querySelectorAll('[class*="feedback"], [class*="review"], [class*="evaluation"]');
-    for (const card of cards) {
-        const text = card.innerText || '';
-        if (text.length < 20) continue;
-        // Extract star rating
-        let rating = 5;
-        const stars = card.querySelectorAll('svg[class*="star"], [class*="star"][class*="full"], [class*="star-on"]');
-        if (stars.length > 0) rating = Math.min(stars.length, 5);
-        // Star count from filled stars
-        const filledStars = card.querySelectorAll('[class*="star"][style*="width: 100%"], [class*="star-on"], [class*="full"]');
-        if (filledStars.length > 0) rating = Math.min(filledStars.length, 5);
+JUNK_PATTERNS = {"related items", "sold", "review", "add to cart", "buy now",
+                  "free shipping", "aliexpress", "seller", "store", "wishlist"}
 
-        // Extract reviewer name
-        let name = '';
-        const nameEl = card.querySelector('[class*="user"], [class*="name"], [class*="buyer"]');
-        if (nameEl) name = nameEl.textContent.trim();
-
-        // Extract review text
-        let reviewText = '';
-        const textEl = card.querySelector('[class*="content"], [class*="text"], [class*="body"], p');
-        if (textEl) reviewText = textEl.textContent.trim();
-        if (!reviewText) {
-            // Fallback: full card text minus the name
-            reviewText = text.replace(name, '').trim().substring(0, 500);
-        }
-
-        // Extract images
-        const images = [];
-        card.querySelectorAll('img[src*="feedback"], img[src*="review"]').forEach(img => {
-            if (img.src && img.src.startsWith('http')) images.push(img.src);
-        });
-
-        // Extract date
-        let date = '';
-        const dateMatch = text.match(/\\d{1,2}\\s+\\w{3}\\s+\\d{4}|\\d{4}-\\d{2}-\\d{2}/);
-        if (dateMatch) date = dateMatch[0];
-
-        if (reviewText.length > 10) {
-            reviews.push({name, rating, text: reviewText.substring(0, 500), date, images: images.slice(0, 3)});
-        }
-    }
-    return reviews;
-}"""
-
-def scrape_reviews_playwright(page, ali_product_id, worker_id=0):
-    """Navigate to product page, scroll to reviews, extract. Returns review list."""
-    url = f"https://www.aliexpress.com/item/{ali_product_id}.html"
+def scrape_reviews_playwright(page, ali_product_id, worker_id=0, debug=False):
+    """Fetch reviews via searchEvaluation.do API from inside page context (has cookies)."""
     print(f"  [W{worker_id}] fetching {ali_product_id}...", flush=True)
 
+    # First navigate to any AliExpress page to establish cookies in the browser context
     for attempt in range(3):
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=20000)
-            time.sleep(2)
+            # Navigate to the product page (lightweight, just need the domain cookies active)
+            page.goto(f"https://www.aliexpress.com/item/{ali_product_id}.html",
+                      wait_until="commit", timeout=20000)
+            time.sleep(1)
 
-            # Check for captcha/block
-            page_url = page.url.lower()
-            if "punish" in page_url or "x5sec" in page_url:
-                print(f"  [W{worker_id}] captcha on {ali_product_id}, waiting 60s...")
+            # Check for captcha
+            if "punish" in page.url.lower() or "x5sec" in page.url.lower():
+                print(f"  [W{worker_id}] captcha, waiting 60s...")
                 time.sleep(60)
                 continue
 
-            # Scroll to reviews section
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.7)")
-            time.sleep(1)
+            # Call the feedback API via fetch() inside the page — carries cookies automatically
+            raw = page.evaluate(f"""async () => {{
+                try {{
+                    const r = await fetch(
+                        'https://feedback.aliexpress.com/pc/searchEvaluation.do?productId={ali_product_id}&page=1&pageSize=20&filter=all&sort=complex_default',
+                        {{credentials: 'include'}}
+                    );
+                    return await r.text();
+                }} catch(e) {{ return JSON.stringify({{error: e.message}}); }}
+            }}""")
 
-            # Click "Customer Reviews" tab if it exists
+            if not raw or len(raw) < 50:
+                print(f"  [W{worker_id}] empty response for {ali_product_id}")
+                if attempt < 2:
+                    time.sleep(5)
+                    continue
+                return []
+
+            # Parse JSON
             try:
-                page.evaluate("""() => {
-                    const tabs = document.querySelectorAll('*');
-                    for (const t of tabs) {
-                        if (t.children.length > 3) continue;
-                        const text = (t.innerText || '').trim();
-                        if (/customer review|feedback|评价/i.test(text) && t.offsetWidth > 0) {
-                            t.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                }""")
-                time.sleep(2)
-            except Exception:
-                pass
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                print(f"  [W{worker_id}] invalid JSON for {ali_product_id}: {raw[:100]}")
+                if attempt < 2:
+                    time.sleep(5)
+                    continue
+                return []
 
-            # Scroll further to load reviews
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.8)")
-            time.sleep(1)
+            if data.get("error"):
+                print(f"  [W{worker_id}] API error: {data['error']}")
+                if attempt < 2:
+                    time.sleep(5)
+                    continue
+                return []
 
-            # Try extracting from DOM
-            reviews = page.evaluate(REVIEW_EXTRACT_JS)
+            eva_list = (data.get("data") or {}).get("evaViewList") or []
 
-            # If DOM extraction fails, try the feedback API via page context (has cookies)
-            if not reviews or len(reviews) < 2:
-                api_reviews = page.evaluate(f"""async () => {{
-                    try {{
-                        const r = await fetch('https://feedback.aliexpress.com/pc/searchEvaluation.do?productId={ali_product_id}&page=1&pageSize=20&filter=all&sort=default');
-                        const data = await r.json();
-                        const list = (data.data || {{}}).evaViewList || [];
-                        return list.map(item => ({{
-                            name: item.buyerName || '',
-                            rating: item.buyerEval || 5,
-                            text: (item.buyerFeedback || '').substring(0, 500),
-                            date: (item.evalDate || '').substring(0, 10),
-                            images: (item.images || []).slice(0, 3).map(i => typeof i === 'string' ? i : (i.url || i.imgUrl || ''))
-                        }}));
-                    }} catch(e) {{ return []; }}
-                }}""")
-                if api_reviews and len(api_reviews) > len(reviews or []):
-                    reviews = api_reviews
+            # Debug: print raw first 2 reviews
+            if debug and eva_list:
+                print(f"  [W{worker_id}] RAW review structure ({len(eva_list)} total):")
+                for j, item in enumerate(eva_list[:2]):
+                    print(f"    Review {j+1}: {json.dumps(item, ensure_ascii=False)[:300]}")
 
-            if reviews:
-                print(f"  [W{worker_id}] got {len(reviews)} reviews for {ali_product_id}")
-            else:
-                print(f"  [W{worker_id}] 0 reviews for {ali_product_id}")
-            return reviews or []
+            reviews = []
+            for item in eva_list:
+                name = item.get("buyerName", "")
+                # buyerEval is rating in tens (50 = 5 stars, 40 = 4 stars)
+                raw_eval = item.get("buyerEval", 50)
+                rating = raw_eval // 10 if raw_eval > 5 else raw_eval  # handle both formats
+                rating = max(1, min(5, rating))
+
+                text = (item.get("buyerFeedback") or "").strip()
+
+                # Discard junk
+                if not text or len(text) < 10:
+                    continue
+                text_lower = text.lower()
+                if any(p in text_lower for p in JUNK_PATTERNS):
+                    continue
+
+                date = (item.get("evalDate") or "")[:10]
+
+                images = []
+                for img in (item.get("images") or [])[:3]:
+                    if isinstance(img, str):
+                        u = img if img.startswith("http") else f"https:{img}"
+                        images.append(u)
+                    elif isinstance(img, dict):
+                        u = img.get("url") or img.get("imgUrl") or ""
+                        if u:
+                            images.append(u if u.startswith("http") else f"https:{u}")
+
+                reviews.append({
+                    "name": name,
+                    "rating": rating,
+                    "text": text[:500],
+                    "date": date,
+                    "images": images,
+                })
+
+            print(f"  [W{worker_id}] got {len(reviews)} reviews for {ali_product_id}")
+            return reviews
 
         except Exception as e:
             err = str(e)[:80]
@@ -185,9 +171,10 @@ def scrape_reviews_playwright(page, ali_product_id, worker_id=0):
                 print(f"  [W{worker_id}] attempt {attempt+1} failed for {ali_product_id}: {err}")
                 time.sleep(5)
             else:
-                print(f"  [W{worker_id}] TIMEOUT {ali_product_id} after 3 attempts: {err}")
-                log_failed(ali_product_id, f"timeout: {err}")
+                print(f"  [W{worker_id}] FAILED {ali_product_id} after 3 attempts: {err}")
+                log_failed(ali_product_id, f"error: {err}")
                 return []
+
     return []
 
 def filter_and_sort_reviews(reviews):
@@ -363,7 +350,7 @@ def main():
                 continue
 
             # Scrape
-            raw_reviews = scrape_reviews_playwright(page, ali_id, worker_id=0)
+            raw_reviews = scrape_reviews_playwright(page, ali_id, worker_id=0, debug=(idx < 3))
             stats["scraped"] += 1
 
             if raw_reviews:
