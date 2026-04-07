@@ -25,8 +25,17 @@ ALI_STATE_FILE = Path("ali_state.json")
 
 MAX_REVIEWS = 12
 
-ENGLISH_NAMES = ["Alex", "Sam", "Jordan", "Taylor", "Morgan", "Riley", "Casey", "Jamie",
-                 "Robin", "Quinn", "Drew", "Blake", "Avery", "Skyler", "Dakota", "Reese"]
+FIRST_NAMES = [
+    "James", "Sarah", "Michael", "Emma", "David", "Sophie", "Daniel", "Olivia",
+    "Thomas", "Lucy", "Chris", "Hannah", "Andrew", "Chloe", "Matthew", "Emily",
+    "Joshua", "Grace", "Ryan", "Megan", "Ben", "Katie", "Jack", "Amy", "Luke",
+    "Laura", "Adam", "Holly", "Nathan", "Ella", "Mark", "Lily", "Peter", "Zoe",
+    "Oliver", "Ruby", "Harry", "Molly", "George", "Alice", "Charlie", "Daisy",
+    "Sam", "Eva", "Max", "Isla", "Leo", "Freya", "Finn", "Poppy",
+]
+LAST_INITIALS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+PLACEHOLDER_NAMES = {"", "anonymous", "aliexpress shopper", "aliexpress buyer",
+                     "buyer", "shopper", "ali shopper", "aliexpress s."}
 
 _file_lock = threading.Lock()
 
@@ -49,16 +58,28 @@ def log_failed(ali_id, reason):
         FAILED_FILE.write_text(json.dumps(data, indent=2))
 
 # ── Anonymise ──
+def _random_name():
+    return f"{random.choice(FIRST_NAMES)} {random.choice(LAST_INITIALS)}."
+
 def anonymise_name(name):
-    if not name or name == "Anonymous":
-        return random.choice(ENGLISH_NAMES) + "."
-    latin_ratio = sum(1 for c in name if ord(c) < 256) / max(len(name), 1)
+    if not name:
+        return _random_name()
+    cleaned = name.strip()
+    if cleaned.lower() in PLACEHOLDER_NAMES:
+        return _random_name()
+    # Non-Latin (Russian, Chinese, Arabic etc) → random English name
+    latin_ratio = sum(1 for c in cleaned if ord(c) < 256) / max(len(cleaned), 1)
     if latin_ratio < 0.5:
-        return random.choice(ENGLISH_NAMES) + "."
-    parts = name.strip().split()
+        return _random_name()
+    # Latin: first name + last initial
+    parts = cleaned.split()
     if len(parts) >= 2:
-        return f"{parts[0]} {parts[-1][0]}."
-    return name[:8] + "."
+        first = parts[0][:12]
+        last_init = parts[-1][0].upper()
+        return f"{first} {last_init}."
+    if len(cleaned) > 1:
+        return cleaned[:8] + "."
+    return _random_name()
 
 # ── Scrape reviews via Playwright ──
 JUNK_PATTERNS = {"related items", "sold", "review", "add to cart", "buy now",
@@ -357,12 +378,26 @@ def main():
                 reviews = filter_and_sort_reviews(raw_reviews)
                 if reviews:
                     stats["with_reviews"] += 1
+
+                    # Save originals for side-by-side in dry run
+                    originals = [r["text"] for r in reviews] if dry_run else None
+
+                    # Always translate (even dry run — need to verify quality)
                     reviews = batch_translate(reviews, api_key)
 
                     if dry_run:
-                        print(f"  [{idx+1}/{len(work)}] ali:{ali_id} → {len(reviews)} reviews (dry run)")
-                        for r in reviews[:2]:
-                            print(f"    {r['rating']}★ {r['name']}: {r['text'][:80]}")
+                        print(f"  [{idx+1}/{len(work)}] ali:{ali_id} → {len(reviews)} reviews (dry run, no push)")
+                        for j, r in enumerate(reviews):
+                            orig = originals[j] if originals and j < len(originals) else ""
+                            changed = orig != r["text"]
+                            print(f"    {r['rating']}★ {r['name']}:")
+                            if changed:
+                                print(f"      ORIG: {orig[:100]}")
+                                print(f"      XLAT: {r['text'][:100]}")
+                            else:
+                                print(f"      TEXT: {r['text'][:100]}")
+                            if r.get("images"):
+                                print(f"      IMGS: {len(r['images'])}")
                     else:
                         push_reviews_to_shopify(shopify_pid, reviews, token)
                         stats["pushed"] += 1
