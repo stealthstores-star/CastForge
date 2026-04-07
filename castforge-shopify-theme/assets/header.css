@@ -63,7 +63,7 @@
   z-index: 200;
   min-width: 640px;
 }
-.cf-nav__mega-trigger:hover .cf-mega { display: block; }
+/* Mega menu display controlled by JS with delay — no CSS :hover to prevent flicker */
 .cf-mega__inner { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; }
 .cf-mega__heading {
   font-family: var(--cf-font-display, 'Anton', sans-serif);
@@ -73,7 +73,8 @@
   text-transform: uppercase;
   margin-bottom: 12px;
 }
-.cf-mega__link {
+.cf-mega__link,
+.cf-mega__col a {
   display: block;
   font-size: 13px;
   color: var(--cf-text-muted, #888);
@@ -81,7 +82,8 @@
   padding: 4px 0;
   transition: color 0.15s;
 }
-.cf-mega__link:hover { color: var(--cf-text, #e8e8e8); }
+.cf-mega__link:hover,
+.cf-mega__col a:hover { color: var(--cf-text, #e8e8e8); }
 
 /* ── Right icons ── */
 .cf-header__right { display: flex; align-items: center; gap: 14px; margin-left: auto; }

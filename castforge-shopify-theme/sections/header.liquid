@@ -1,7 +1,7 @@
 {{ 'header.css' | asset_url | stylesheet_tag }}
 
-<!-- Announcement bar -->
-<div class="cf-announce">
+{%- comment -%} Single announcement bar — the ONLY one on the page {%- endcomment -%}
+<div class="cf-announce" id="cf-announce">
   <div class="cf-container">
     <span>🚚 <strong>Free worldwide shipping</strong> on all orders · 5-7 day delivery</span>
   </div>
@@ -10,12 +10,10 @@
 <header class="cf-header" id="cf-header">
   <div class="cf-container">
     <div class="cf-header__inner">
-      <!-- Mobile hamburger -->
       <button class="cf-hamburger" id="cf-hamburger" aria-label="Menu">
         <span></span><span></span><span></span>
       </button>
 
-      <!-- Logo -->
       <a href="/" class="cf-header__logo">
         {% if settings.logo %}
           <img src="{{ settings.logo | image_url: width: 200 }}" alt="{{ shop.name }}" height="36">
@@ -24,42 +22,41 @@
         {% endif %}
       </a>
 
-      <!-- Desktop nav -->
       <nav class="cf-nav" id="cf-nav">
-        <div class="cf-nav__item cf-nav__mega-trigger">
+        {%- comment -%} Shop All — click navigates, hover shows mega-menu {%- endcomment -%}
+        <div class="cf-nav__item cf-nav__mega-trigger" id="cf-mega-trigger">
           <a href="/collections/all" class="cf-nav__link">Shop All</a>
-          <!-- Mega menu -->
           <div class="cf-mega" id="cf-mega">
             <div class="cf-mega__inner">
               <div class="cf-mega__col">
                 <h4 class="cf-mega__heading">Wargaming</h4>
-                <a href="/collections/wargaming-infantry" class="cf-mega__link">Infantry & Troops</a>
-                <a href="/collections/wargaming-heroes-characters" class="cf-mega__link">Heroes & Characters</a>
-                <a href="/collections/wargaming-vehicles-mechs" class="cf-mega__link">Vehicles & Mechs</a>
-                <a href="/collections/wargaming-monsters-creatures" class="cf-mega__link">Monsters & Creatures</a>
-                <a href="/collections/wargaming-army-bundles" class="cf-mega__link">Army Bundles</a>
+                <a href="/collections/wargaming-infantry">Infantry & Troops</a>
+                <a href="/collections/wargaming-heroes-characters">Heroes & Characters</a>
+                <a href="/collections/wargaming-vehicles-mechs">Vehicles & Mechs</a>
+                <a href="/collections/wargaming-monsters-creatures">Monsters & Creatures</a>
+                <a href="/collections/wargaming-army-bundles">Army Bundles</a>
               </div>
               <div class="cf-mega__col">
                 <h4 class="cf-mega__heading">Scale Models</h4>
-                <a href="/collections/scale-military-vehicles" class="cf-mega__link">Military Vehicles</a>
-                <a href="/collections/scale-aircraft" class="cf-mega__link">Aircraft</a>
-                <a href="/collections/scale-ships-naval" class="cf-mega__link">Ships & Naval</a>
-                <a href="/collections/scale-cars-motorcycles" class="cf-mega__link">Cars & Motorcycles</a>
+                <a href="/collections/scale-military-vehicles">Military Vehicles</a>
+                <a href="/collections/scale-aircraft">Aircraft</a>
+                <a href="/collections/scale-ships-naval">Ships & Naval</a>
+                <a href="/collections/scale-cars-motorcycles">Cars & Motorcycles</a>
               </div>
               <div class="cf-mega__col">
                 <h4 class="cf-mega__heading">Figures</h4>
-                <a href="/collections/busts-portraits" class="cf-mega__link">Busts & Portraits</a>
-                <a href="/collections/fantasy-warriors" class="cf-mega__link">Fantasy Warriors</a>
-                <a href="/collections/anime-characters" class="cf-mega__link">Anime Characters</a>
-                <a href="/collections/scifi-figures" class="cf-mega__link">Sci-Fi Figures</a>
+                <a href="/collections/busts-portraits">Busts & Portraits</a>
+                <a href="/collections/fantasy-warriors">Fantasy Warriors</a>
+                <a href="/collections/anime-characters">Anime Characters</a>
+                <a href="/collections/scifi-figures">Sci-Fi Figures</a>
               </div>
               <div class="cf-mega__col">
                 <h4 class="cf-mega__heading">Terrain & More</h4>
-                <a href="/collections/terrain-buildings-ruins" class="cf-mega__link">Buildings & Ruins</a>
-                <a href="/collections/terrain-scenery" class="cf-mega__link">Scenery & Scatter</a>
-                <a href="/collections/terrain-natural" class="cf-mega__link">Natural Elements</a>
-                <a href="/collections/terrain-props" class="cf-mega__link">Props & Accessories</a>
-                <a href="/collections/terrain-bases-plinths" class="cf-mega__link">Bases & Plinths</a>
+                <a href="/collections/terrain-buildings-ruins">Buildings & Ruins</a>
+                <a href="/collections/terrain-scenery">Scenery & Scatter</a>
+                <a href="/collections/terrain-natural">Natural Elements</a>
+                <a href="/collections/terrain-props">Props & Accessories</a>
+                <a href="/collections/terrain-bases-plinths">Bases & Plinths</a>
               </div>
             </div>
           </div>
@@ -69,7 +66,6 @@
         <a href="/collections/accessories" class="cf-nav__link">Accessories</a>
       </nav>
 
-      <!-- Right icons -->
       <div class="cf-header__right">
         {% render 'localization-selector' %}
         <a href="/search" class="cf-header__icon" aria-label="Search">
@@ -80,9 +76,7 @@
         </a>
         <a href="/cart" class="cf-header__icon cf-header__cart" aria-label="Cart">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1.003 1.003 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
-          {% if cart.item_count > 0 %}
-            <span class="cf-cart-badge">{{ cart.item_count }}</span>
-          {% endif %}
+          {% if cart.item_count > 0 %}<span class="cf-cart-badge">{{ cart.item_count }}</span>{% endif %}
         </a>
       </div>
     </div>
@@ -99,30 +93,26 @@
     <a href="/collections/all">Shop All Models</a>
     <a href="/collections/new-arrivals">New Arrivals</a>
     <a href="/collections/best-sellers">Best Sellers</a>
-    <details>
-      <summary>Wargaming</summary>
+    <details><summary>Wargaming</summary>
       <a href="/collections/wargaming-infantry">Infantry & Troops</a>
       <a href="/collections/wargaming-heroes-characters">Heroes & Characters</a>
       <a href="/collections/wargaming-vehicles-mechs">Vehicles & Mechs</a>
       <a href="/collections/wargaming-monsters-creatures">Monsters & Creatures</a>
       <a href="/collections/wargaming-army-bundles">Army Bundles</a>
     </details>
-    <details>
-      <summary>Scale Models</summary>
+    <details><summary>Scale Models</summary>
       <a href="/collections/scale-military-vehicles">Military Vehicles</a>
       <a href="/collections/scale-aircraft">Aircraft</a>
       <a href="/collections/scale-ships-naval">Ships & Naval</a>
       <a href="/collections/scale-cars-motorcycles">Cars & Motorcycles</a>
     </details>
-    <details>
-      <summary>Figures</summary>
+    <details><summary>Figures</summary>
       <a href="/collections/busts-portraits">Busts & Portraits</a>
       <a href="/collections/fantasy-warriors">Fantasy Warriors</a>
       <a href="/collections/anime-characters">Anime Characters</a>
       <a href="/collections/scifi-figures">Sci-Fi Figures</a>
     </details>
-    <details>
-      <summary>Terrain</summary>
+    <details><summary>Terrain</summary>
       <a href="/collections/terrain-buildings-ruins">Buildings & Ruins</a>
       <a href="/collections/terrain-scenery">Scenery</a>
       <a href="/collections/terrain-natural">Natural Elements</a>
@@ -148,13 +138,23 @@
   ham?.addEventListener('click', () => toggle(true));
   close?.addEventListener('click', () => toggle(false));
   overlay?.addEventListener('click', () => toggle(false));
+
+  // Mega menu: show/hide with delay to prevent flicker
+  const trigger = document.getElementById('cf-mega-trigger');
+  const mega = document.getElementById('cf-mega');
+  let hideTimer;
+  if (trigger && mega) {
+    trigger.addEventListener('mouseenter', () => { clearTimeout(hideTimer); mega.style.display = 'block'; });
+    trigger.addEventListener('mouseleave', () => { hideTimer = setTimeout(() => mega.style.display = 'none', 150); });
+  }
+
+  // Kill any duplicate announcement bars from the live theme
+  document.querySelectorAll('[class*="announcement"]').forEach((el, i) => {
+    if (i > 0 && el.id !== 'cf-announce') el.style.display = 'none';
+  });
 })();
 </script>
 
 {% schema %}
-{
-  "name": "Header",
-  "tag": "div",
-  "class": "cf-header-wrap"
-}
+{ "name": "Header", "tag": "div", "class": "cf-header-wrap" }
 {% endschema %}

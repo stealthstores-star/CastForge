@@ -1,3 +1,5 @@
+{{ 'homepage.css' | asset_url | stylesheet_tag }}
+
 <section class="cf-home-hero">
   <div class="cf-container">
     <div class="cf-home-hero__content">
@@ -115,6 +117,16 @@
   .cf-home-hero__stat strong { font-size: 16px; }
 }
 </style>
+
+<script>
+// Scroll fade-in observer for all sections
+document.addEventListener('DOMContentLoaded', () => {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('cf-visible'); observer.unobserve(e.target); }});
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.cf-section').forEach(s => observer.observe(s));
+});
+</script>
 
 {% schema %}
 { "name": "Homepage Hero", "tag": "section" }
