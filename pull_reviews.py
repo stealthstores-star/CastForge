@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 Pull AliExpress reviews for ALL products → Shopify metafields.
+Uses Playwright with saved login cookies (ali_state.json) to avoid blocks.
 
 Usage:
-    python3 pull_reviews.py --dry-run --limit 10   # Test: scrape+translate, no push
-    python3 pull_reviews.py                         # Full run: all products
-    python3 pull_reviews.py --limit 100             # First 100 unprocessed
+    python3 pull_reviews.py --dry-run --limit 3   # Test 3 products, no push
+    python3 pull_reviews.py --limit 100            # First 100 unprocessed
+    python3 pull_reviews.py                        # All products (overnight)
 """
 import json, random, re, sys, time, threading
 from pathlib import Path
@@ -19,35 +20,15 @@ from uploader import get_shopify_token
 CHECKPOINT_FILE = Path("scrape_checkpoint.json")
 PUSHED_TITLES_FILE = Path("pushed_titles.json")
 PROGRESS_FILE = Path("reviews_progress.json")
+FAILED_FILE = Path("failed_review_pids.json")
+ALI_STATE_FILE = Path("ali_state.json")
 
 MAX_REVIEWS = 12
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0",
-]
 
 ENGLISH_NAMES = ["Alex", "Sam", "Jordan", "Taylor", "Morgan", "Riley", "Casey", "Jamie",
                  "Robin", "Quinn", "Drew", "Blake", "Avery", "Skyler", "Dakota", "Reese"]
 
-# ── Thread safety ──
 _file_lock = threading.Lock()
-_ali_lock = threading.Lock()
-_ali_last = [0.0]
-
-def _ali_throttle():
-    """Max ~2 req/s to AliExpress, shared across workers."""
-    with _ali_lock:
-        now = time.time()
-        wait = 0.5 - (now - _ali_last[0])
-        if wait > 0:
-            time.sleep(wait)
-        _ali_last[0] = time.time()
-    time.sleep(random.uniform(1.0, 3.0))
 
 # ── Progress ──
 def load_progress():
@@ -59,12 +40,18 @@ def save_progress(progress):
     with _file_lock:
         PROGRESS_FILE.write_text(json.dumps(progress, indent=2))
 
+def log_failed(ali_id, reason):
+    with _file_lock:
+        data = []
+        if FAILED_FILE.exists():
+            data = json.loads(FAILED_FILE.read_text())
+        data.append({"ali_id": ali_id, "reason": reason, "time": time.strftime("%Y-%m-%dT%H:%M:%S")})
+        FAILED_FILE.write_text(json.dumps(data, indent=2))
+
 # ── Anonymise ──
 def anonymise_name(name):
-    """First name + last initial. Non-Latin → random English name."""
     if not name or name == "Anonymous":
         return random.choice(ENGLISH_NAMES) + "."
-    # Check if mostly Latin
     latin_ratio = sum(1 for c in name if ord(c) < 256) / max(len(name), 1)
     if latin_ratio < 0.5:
         return random.choice(ENGLISH_NAMES) + "."
@@ -73,131 +60,171 @@ def anonymise_name(name):
         return f"{parts[0]} {parts[-1][0]}."
     return name[:8] + "."
 
-# ── Scrape reviews ──
-def scrape_reviews(ali_product_id):
-    """Fetch reviews from AliExpress feedback API. Returns raw review list."""
-    all_reviews = []
-    for page in range(1, 6):
-        _ali_throttle()
+# ── Scrape reviews via Playwright ──
+REVIEW_EXTRACT_JS = """() => {
+    const reviews = [];
+    // AliExpress review cards
+    const cards = document.querySelectorAll('[class*="feedback"], [class*="review"], [class*="evaluation"]');
+    for (const card of cards) {
+        const text = card.innerText || '';
+        if (text.length < 20) continue;
+        // Extract star rating
+        let rating = 5;
+        const stars = card.querySelectorAll('svg[class*="star"], [class*="star"][class*="full"], [class*="star-on"]');
+        if (stars.length > 0) rating = Math.min(stars.length, 5);
+        // Star count from filled stars
+        const filledStars = card.querySelectorAll('[class*="star"][style*="width: 100%"], [class*="star-on"], [class*="full"]');
+        if (filledStars.length > 0) rating = Math.min(filledStars.length, 5);
+
+        // Extract reviewer name
+        let name = '';
+        const nameEl = card.querySelector('[class*="user"], [class*="name"], [class*="buyer"]');
+        if (nameEl) name = nameEl.textContent.trim();
+
+        // Extract review text
+        let reviewText = '';
+        const textEl = card.querySelector('[class*="content"], [class*="text"], [class*="body"], p');
+        if (textEl) reviewText = textEl.textContent.trim();
+        if (!reviewText) {
+            // Fallback: full card text minus the name
+            reviewText = text.replace(name, '').trim().substring(0, 500);
+        }
+
+        // Extract images
+        const images = [];
+        card.querySelectorAll('img[src*="feedback"], img[src*="review"]').forEach(img => {
+            if (img.src && img.src.startsWith('http')) images.push(img.src);
+        });
+
+        // Extract date
+        let date = '';
+        const dateMatch = text.match(/\\d{1,2}\\s+\\w{3}\\s+\\d{4}|\\d{4}-\\d{2}-\\d{2}/);
+        if (dateMatch) date = dateMatch[0];
+
+        if (reviewText.length > 10) {
+            reviews.push({name, rating, text: reviewText.substring(0, 500), date, images: images.slice(0, 3)});
+        }
+    }
+    return reviews;
+}"""
+
+def scrape_reviews_playwright(page, ali_product_id, worker_id=0):
+    """Navigate to product page, scroll to reviews, extract. Returns review list."""
+    url = f"https://www.aliexpress.com/item/{ali_product_id}.html"
+    print(f"  [W{worker_id}] fetching {ali_product_id}...", flush=True)
+
+    for attempt in range(3):
         try:
-            url = "https://feedback.aliexpress.com/pc/searchEvaluation.do"
-            params = {
-                "productId": ali_product_id,
-                "page": page,
-                "pageSize": 20,
-                "filter": "all",
-                "sort": "default",
-            }
-            r = http.get(url, params=params, timeout=15,
-                headers={"User-Agent": random.choice(USER_AGENTS),
-                         "Referer": f"https://www.aliexpress.com/item/{ali_product_id}.html"})
+            page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            time.sleep(2)
 
-            if r.status_code == 429:
-                time.sleep(60)
-                continue
-            if r.status_code != 200:
-                break
-
-            # Check for captcha
-            text = r.text[:500]
-            if "captcha" in text.lower() or "punish" in text.lower():
+            # Check for captcha/block
+            page_url = page.url.lower()
+            if "punish" in page_url or "x5sec" in page_url:
+                print(f"  [W{worker_id}] captcha on {ali_product_id}, waiting 60s...")
                 time.sleep(60)
                 continue
 
+            # Scroll to reviews section
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.7)")
+            time.sleep(1)
+
+            # Click "Customer Reviews" tab if it exists
             try:
-                data = r.json()
+                page.evaluate("""() => {
+                    const tabs = document.querySelectorAll('*');
+                    for (const t of tabs) {
+                        if (t.children.length > 3) continue;
+                        const text = (t.innerText || '').trim();
+                        if (/customer review|feedback|评价/i.test(text) && t.offsetWidth > 0) {
+                            t.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }""")
+                time.sleep(2)
             except Exception:
-                break
+                pass
 
-            items = data.get("data", {}).get("evaViewList", [])
-            if not items:
-                break
+            # Scroll further to load reviews
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.8)")
+            time.sleep(1)
 
-            for item in items:
-                rating = item.get("buyerEval", 5)
-                if rating < 4:
-                    continue  # Skip 1-3★
+            # Try extracting from DOM
+            reviews = page.evaluate(REVIEW_EXTRACT_JS)
 
-                review_text = (item.get("buyerFeedback") or "").strip()
-                review_date = (item.get("evalDate") or "")[:10]
-                reviewer = item.get("buyerName", "")
+            # If DOM extraction fails, try the feedback API via page context (has cookies)
+            if not reviews or len(reviews) < 2:
+                api_reviews = page.evaluate(f"""async () => {{
+                    try {{
+                        const r = await fetch('https://feedback.aliexpress.com/pc/searchEvaluation.do?productId={ali_product_id}&page=1&pageSize=20&filter=all&sort=default');
+                        const data = await r.json();
+                        const list = (data.data || {{}}).evaViewList || [];
+                        return list.map(item => ({{
+                            name: item.buyerName || '',
+                            rating: item.buyerEval || 5,
+                            text: (item.buyerFeedback || '').substring(0, 500),
+                            date: (item.evalDate || '').substring(0, 10),
+                            images: (item.images || []).slice(0, 3).map(i => typeof i === 'string' ? i : (i.url || i.imgUrl || ''))
+                        }}));
+                    }} catch(e) {{ return []; }}
+                }}""")
+                if api_reviews and len(api_reviews) > len(reviews or []):
+                    reviews = api_reviews
 
-                images = []
-                for img in (item.get("images") or [])[:3]:
-                    if isinstance(img, str):
-                        images.append(img if img.startswith("http") else f"https:{img}")
-                    elif isinstance(img, dict):
-                        u = img.get("url") or img.get("imgUrl") or ""
-                        if u:
-                            images.append(u if u.startswith("http") else f"https:{u}")
+            if reviews:
+                print(f"  [W{worker_id}] got {len(reviews)} reviews for {ali_product_id}")
+            else:
+                print(f"  [W{worker_id}] 0 reviews for {ali_product_id}")
+            return reviews or []
 
-                all_reviews.append({
-                    "name": anonymise_name(reviewer),
-                    "rating": rating,
-                    "text": review_text[:500],
-                    "date": review_date,
-                    "images": images,
-                    "_has_images": bool(images),
-                    "_original_rating": rating,
-                })
+        except Exception as e:
+            err = str(e)[:80]
+            if attempt < 2:
+                print(f"  [W{worker_id}] attempt {attempt+1} failed for {ali_product_id}: {err}")
+                time.sleep(5)
+            else:
+                print(f"  [W{worker_id}] TIMEOUT {ali_product_id} after 3 attempts: {err}")
+                log_failed(ali_product_id, f"timeout: {err}")
+                return []
+    return []
 
-        except Exception:
-            break
-
-    # Prioritise: 5★+images > 5★ text > 4★+images > 4★ text
-    all_reviews.sort(key=lambda r: (
-        -(r["_original_rating"]),
-        -int(r["_has_images"]),
-    ))
-
-    # Take top MAX_REVIEWS, clean up internal keys
+def filter_and_sort_reviews(reviews):
+    """Filter 4-5★ only, prioritise images, cap at MAX_REVIEWS."""
+    filtered = [r for r in reviews if r.get("rating", 5) >= 4]
+    filtered.sort(key=lambda r: (-(r.get("rating", 5)), -int(bool(r.get("images")))))
     result = []
-    for r in all_reviews[:MAX_REVIEWS]:
+    for r in filtered[:MAX_REVIEWS]:
         result.append({
-            "name": r["name"],
-            "rating": r["rating"],
-            "text": r["text"],
-            "date": r["date"],
-            "images": r["images"],
+            "name": anonymise_name(r.get("name", "")),
+            "rating": r.get("rating", 5),
+            "text": r.get("text", "")[:500],
+            "date": r.get("date", ""),
+            "images": [i for i in r.get("images", []) if i.startswith("http")][:3],
         })
     return result
 
 # ── Batch translate ──
 def batch_translate(reviews, api_key):
-    """Translate non-English reviews in batches of 10."""
-    needs_translation = []
-    for i, r in enumerate(reviews):
-        text = r.get("text", "")
-        if not text or len(text) < 10:
-            continue
-        ascii_ratio = sum(1 for c in text if ord(c) < 128) / max(len(text), 1)
-        if ascii_ratio < 0.85:
-            needs_translation.append((i, text))
-
-    if not needs_translation:
+    needs = [(i, r["text"]) for i, r in enumerate(reviews)
+             if r.get("text") and len(r["text"]) > 10
+             and sum(1 for c in r["text"] if ord(c) < 128) / max(len(r["text"]), 1) < 0.85]
+    if not needs:
         return reviews
-
-    # Batch translate 10 at a time
-    for batch_start in range(0, len(needs_translation), 10):
-        batch = needs_translation[batch_start:batch_start + 10]
+    for batch_start in range(0, len(needs), 10):
+        batch = needs[batch_start:batch_start + 10]
         texts = [t for _, t in batch]
-
         try:
-            prompt = "Translate these product reviews to natural English. Preserve meaning and tone. Return as a JSON array of strings in the same order, one translation per input review.\n\n"
+            prompt = "Translate these product reviews to natural English. Preserve meaning and tone. Return as a JSON array of strings in the same order.\n\n"
             for j, t in enumerate(texts):
                 prompt += f"{j+1}. {t}\n"
-
             r = http.post("https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
-                         "content-type": "application/json"},
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
                 json={"model": "claude-haiku-4-5-20251001", "max_tokens": 2000,
-                      "messages": [{"role": "user", "content": prompt}]},
-                timeout=30)
-
+                      "messages": [{"role": "user", "content": prompt}]}, timeout=30)
             if r.status_code == 200:
-                response_text = r.json()["content"][0]["text"].strip()
-                # Extract JSON array
-                m = re.search(r'\[.*\]', response_text, re.DOTALL)
+                m = re.search(r'\[.*\]', r.json()["content"][0]["text"], re.DOTALL)
                 if m:
                     translations = json.loads(m.group())
                     for k, (idx, _) in enumerate(batch):
@@ -206,71 +233,46 @@ def batch_translate(reviews, api_key):
         except Exception:
             pass
         time.sleep(0.5)
-
     return reviews
 
-# ── Shopify metafield push ──
+# ── Shopify push ──
 def push_reviews_to_shopify(shopify_pid, reviews, token):
-    """Write reviews + stats to Shopify product metafields."""
     if not reviews:
-        return False
-
+        return
     total = sum(r["rating"] for r in reviews)
     avg = round(total / len(reviews), 1)
     count = len(reviews)
     dist = {str(i): 0 for i in range(1, 6)}
     for r in reviews:
         dist[str(min(max(r["rating"], 1), 5))] += 1
-
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
     base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
-
-    metafields = [
+    for mf in [
         {"namespace": "reviews", "key": "aliexpress", "value": json.dumps(reviews), "type": "json"},
         {"namespace": "reviews", "key": "average", "value": str(avg), "type": "single_line_text_field"},
         {"namespace": "reviews", "key": "count", "value": str(count), "type": "single_line_text_field"},
         {"namespace": "reviews", "key": "distribution", "value": json.dumps(dist), "type": "json"},
-    ]
-
-    for mf in metafields:
-        for attempt in range(3):
+    ]:
+        for _ in range(3):
             try:
                 r = http.post(f"{base}/products/{shopify_pid}/metafields.json",
                     headers=headers, json={"metafield": mf}, timeout=15)
-                if r.status_code == 429:
-                    time.sleep(float(r.headers.get("Retry-After", 2)))
-                    continue
-                break
+                if r.status_code != 429:
+                    break
+                time.sleep(float(r.headers.get("Retry-After", 2)))
             except Exception:
                 time.sleep(1)
         time.sleep(0.3)
 
-    return True
-
 def check_existing_reviews(shopify_pid, token):
-    """Check if product already has reviews metafield. Returns True if fresh reviews exist."""
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
     base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
     try:
-        r = http.get(f"{base}/products/{shopify_pid}/metafields.json?namespace=reviews",
-            headers=headers, timeout=15)
+        r = http.get(f"{base}/products/{shopify_pid}/metafields.json?namespace=reviews", headers=headers, timeout=15)
         if r.status_code == 200:
-            mfs = r.json().get("metafields", [])
-            for mf in mfs:
-                if mf.get("key") == "count":
-                    count = int(mf.get("value", "0"))
-                    if count > 0:
-                        # Check age — skip if updated within 30 days
-                        updated = mf.get("updated_at", "")
-                        if updated:
-                            from datetime import datetime, timezone
-                            try:
-                                updated_dt = datetime.fromisoformat(updated.replace("Z", "+00:00"))
-                                age_days = (datetime.now(timezone.utc) - updated_dt).days
-                                return age_days < 30
-                            except Exception:
-                                pass
-                        return True
+            for mf in r.json().get("metafields", []):
+                if mf.get("key") == "count" and int(mf.get("value", "0")) > 0:
+                    return True
     except Exception:
         pass
     return False
@@ -286,9 +288,11 @@ def main():
     api_key = config.ANTHROPIC_API_KEY
     token = get_shopify_token() if not dry_run else None
 
-    # Load checkpoint + pushed titles
     if not CHECKPOINT_FILE.exists():
         print("No scrape_checkpoint.json"); return
+    if not ALI_STATE_FILE.exists():
+        print("No ali_state.json — run the price scraper first to create login cookies"); return
+
     cp = json.loads(CHECKPOINT_FILE.read_text())
     products = cp.get("products", [])
 
@@ -296,132 +300,105 @@ def main():
     if PUSHED_TITLES_FILE.exists():
         pushed = json.loads(PUSHED_TITLES_FILE.read_text())
 
-    # Build work list: products with AliExpress IDs matched to Shopify
-    # Cross-reference pushed_titles.json for Shopify product IDs
-    shopify_by_ali_id = {}  # ali_product_id → shopify_product_id
-    for spid, data in pushed.items():
-        raw_title = data.get("raw_title", "")
-        # Find this product in checkpoint to get AliExpress ID
-        for p in products:
-            if p.get("product_title") == raw_title:
-                ali_url = p.get("product_url", "")
-                m = re.search(r"/item/(\d+)\.html", ali_url)
-                if m:
-                    shopify_by_ali_id[m.group(1)] = int(spid)
-                break
-
-    # Also try matching by product ID directly
+    # Build work list
+    shopify_by_ali_id = {}
     for p in products:
-        pid = p.get("id", "")
         url = p.get("product_url", "")
         m = re.search(r"/item/(\d+)\.html", url)
-        ali_id = m.group(1) if m else pid
-        if ali_id and ali_id not in shopify_by_ali_id:
-            # Try to find Shopify ID from pushed titles
-            for spid, data in pushed.items():
-                if data.get("raw_title") == p.get("product_title"):
-                    shopify_by_ali_id[ali_id] = int(spid)
-                    break
+        if not m:
+            continue
+        ali_id = m.group(1)
+        raw_title = p.get("product_title", "")
+        for spid, data in pushed.items():
+            if data.get("raw_title") == raw_title:
+                shopify_by_ali_id[ali_id] = int(spid)
+                break
 
-    # Load progress
     progress = load_progress()
     processed_set = set(progress["processed_ids"])
 
-    work = []
-    for ali_id, shopify_pid in shopify_by_ali_id.items():
-        if shopify_pid in processed_set:
-            continue
-        work.append((ali_id, shopify_pid))
-
+    work = [(ali_id, spid) for ali_id, spid in shopify_by_ali_id.items() if spid not in processed_set]
     if limit:
         work = work[:limit]
 
     print(f"\n══════════════════════════════════════")
-    print(f"  CastForge Review Puller")
+    print(f"  CastForge Review Puller (Playwright)")
     print(f"══════════════════════════════════════")
     print(f"  Products matched: {len(shopify_by_ali_id)}")
     print(f"  Already processed: {len(processed_set)}")
     print(f"  To process: {len(work)}")
     print(f"  Dry run: {dry_run}")
-    print(f"  Workers: 8\n")
+    print(f"  Using ali_state.json for cookies\n")
 
     if not work:
         print("  Nothing to process.")
         return
 
-    stats = {"scraped": 0, "with_reviews": 0, "translated": 0, "pushed": 0, "skipped_existing": 0, "errors": 0}
-    stats_lock = threading.Lock()
+    # Use Playwright with saved cookies — sequential scraping (Playwright is not thread-safe)
+    # but translation + Shopify push happen in parallel
+    from playwright.sync_api import sync_playwright
+
+    stats = {"scraped": 0, "with_reviews": 0, "pushed": 0, "skipped": 0, "timeout": 0}
     t0 = time.time()
 
-    def process_one(item):
-        idx, (ali_id, shopify_pid) = item
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=False, channel="msedge",
+            args=["--disable-blink-features=AutomationControlled"])
+        ctx = browser.new_context(
+            viewport={"width": 1366, "height": 768},
+            locale="en-GB",
+            storage_state=str(ALI_STATE_FILE))
+        ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
+        # Block images to speed up page loads
+        ctx.route("**/*.{png,jpg,jpeg,gif,svg,webp,avif,ico,woff,woff2,ttf,mp4,webm}",
+                  lambda route: route.abort())
+        page = ctx.new_page()
 
-        # Check if already has fresh reviews
-        if not dry_run and token:
-            if check_existing_reviews(shopify_pid, token):
-                with stats_lock:
-                    stats["skipped_existing"] += 1
-                with _file_lock:
-                    progress["processed_ids"].append(shopify_pid)
-                    save_progress(progress)
-                return
-
-        # Scrape reviews
-        reviews = scrape_reviews(ali_id)
-        with stats_lock:
-            stats["scraped"] += 1
-
-        if not reviews:
-            with _file_lock:
+        for idx, (ali_id, shopify_pid) in enumerate(work):
+            # Skip if has existing reviews
+            if not dry_run and token and check_existing_reviews(shopify_pid, token):
+                stats["skipped"] += 1
                 progress["processed_ids"].append(shopify_pid)
                 save_progress(progress)
-            return
+                continue
 
-        with stats_lock:
-            stats["with_reviews"] += 1
+            # Scrape
+            raw_reviews = scrape_reviews_playwright(page, ali_id, worker_id=0)
+            stats["scraped"] += 1
 
-        # Translate
-        reviews = batch_translate(reviews, api_key)
-        with stats_lock:
-            stats["translated"] += 1
+            if raw_reviews:
+                reviews = filter_and_sort_reviews(raw_reviews)
+                if reviews:
+                    stats["with_reviews"] += 1
+                    reviews = batch_translate(reviews, api_key)
 
-        # Push to Shopify
-        if not dry_run and token:
-            push_reviews_to_shopify(shopify_pid, reviews, token)
-            with stats_lock:
-                stats["pushed"] += 1
+                    if dry_run:
+                        print(f"  [{idx+1}/{len(work)}] ali:{ali_id} → {len(reviews)} reviews (dry run)")
+                        for r in reviews[:2]:
+                            print(f"    {r['rating']}★ {r['name']}: {r['text'][:80]}")
+                    else:
+                        push_reviews_to_shopify(shopify_pid, reviews, token)
+                        stats["pushed"] += 1
 
-        with _file_lock:
             progress["processed_ids"].append(shopify_pid)
             save_progress(progress)
 
-        # Log
-        if dry_run:
-            print(f"  [{idx+1}/{len(work)}] ali:{ali_id} → {len(reviews)} reviews (dry run)")
-            if reviews:
-                print(f"    Sample: {reviews[0]['rating']}★ {reviews[0]['name']}: {reviews[0]['text'][:80]}")
-        elif (idx + 1) % 50 == 0 or idx < 5:
-            elapsed = time.time() - t0
-            rate = (idx + 1) / max(elapsed, 1) * 60
-            print(f"  [{idx+1}/{len(work)}] ali:{ali_id} — {len(reviews)} reviews | "
-                  f"scraped={stats['scraped']} pushed={stats['pushed']} skip={stats['skipped_existing']} | {rate:.0f}/min")
+            if (idx + 1) % 50 == 0 or idx < 3:
+                elapsed = time.time() - t0
+                rate = (idx + 1) / max(elapsed, 1) * 60
+                print(f"  [{idx+1}/{len(work)}] scraped={stats['scraped']} reviews={stats['with_reviews']} "
+                      f"pushed={stats['pushed']} skip={stats['skipped']} timeout={stats['timeout']} | {rate:.0f}/min")
 
-    # Run with thread pool
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(process_one, (i, item)) for i, item in enumerate(work)]
-        for f in as_completed(futures):
-            try:
-                f.result()
-            except Exception as e:
-                with stats_lock:
-                    stats["errors"] += 1
-                print(f"  Worker error: {e}")
+            time.sleep(random.uniform(1.0, 2.0))
+
+        page.close()
+        ctx.close()
+        browser.close()
 
     elapsed = time.time() - t0
     print(f"\n  Done in {elapsed/60:.0f} min")
     print(f"  Scraped: {stats['scraped']}, With reviews: {stats['with_reviews']}")
-    print(f"  Translated: {stats['translated']}, Pushed: {stats['pushed']}")
-    print(f"  Skipped (existing): {stats['skipped_existing']}, Errors: {stats['errors']}\n")
+    print(f"  Pushed: {stats['pushed']}, Skipped: {stats['skipped']}, Timeouts: {stats['timeout']}\n")
 
 if __name__ == "__main__":
     main()
