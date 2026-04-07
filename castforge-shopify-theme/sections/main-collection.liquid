@@ -16,14 +16,18 @@
               <h3 class="cf-filter-title">{{ filter.label }}</h3>
 
               {% if filter.type == 'price_range' %}
-                {%- comment -%} Dynamic price range — respects active currency {%- endcomment -%}
+                {%- comment -%}
+                  Native price range filter from Search & Discovery app.
+                  Values auto-format in the visitor's active currency.
+                  No hardcoded ranges — Shopify handles conversion.
+                {%- endcomment -%}
                 <div class="cf-filter-price">
                   <div class="cf-filter-price__row">
                     <label>
                       <span>{{ localization.country.currency.symbol }}</span>
                       <input type="number"
                         name="{{ filter.min_value.param_name }}"
-                        placeholder="Min"
+                        placeholder="{{ filter.min_value.min | money_without_currency }}"
                         {% if filter.min_value.value %}value="{{ filter.min_value.value | money_without_currency }}"{% endif %}
                         min="0"
                         class="cf-filter-price__input">
@@ -33,33 +37,12 @@
                       <span>{{ localization.country.currency.symbol }}</span>
                       <input type="number"
                         name="{{ filter.max_value.param_name }}"
-                        placeholder="Max"
+                        placeholder="{{ filter.max_value.max | money_without_currency }}"
                         {% if filter.max_value.value %}value="{{ filter.max_value.value | money_without_currency }}"{% endif %}
                         class="cf-filter-price__input">
                     </label>
                   </div>
                   <button type="submit" class="cf-filter-price__btn">Apply</button>
-                </div>
-
-                {%- comment -%} Quick-select price ranges in active currency {%- endcomment -%}
-                <div class="cf-filter-quick">
-                  {% assign ranges = "0-1500,1500-3000,3000-5000,5000-10000,10000-99999" | split: "," %}
-                  {% assign labels = "Under,, –,, –,, –,Over" | split: "," %}
-                  {% for range in ranges %}
-                    {% assign bounds = range | split: "-" %}
-                    {% assign min_cents = bounds[0] | times: 1 %}
-                    {% assign max_cents = bounds[1] | times: 1 %}
-                    <a href="{{ collection.url }}?filter.v.price.gte={{ min_cents }}&filter.v.price.lte={{ max_cents }}"
-                       class="cf-filter-quick__link">
-                      {% if min_cents == 0 %}
-                        Under {{ max_cents | money }}
-                      {% elsif max_cents >= 99999 %}
-                        Over {{ min_cents | money }}
-                      {% else %}
-                        {{ min_cents | money }} – {{ max_cents | money }}
-                      {% endif %}
-                    </a>
-                  {% endfor %}
                 </div>
 
               {% elsif filter.type == 'list' %}
