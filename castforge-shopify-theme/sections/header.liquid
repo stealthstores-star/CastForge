@@ -1,0 +1,115 @@
+{% comment %}
+  CastForge Header — include in layout/theme.liquid or merge into existing header.
+  If your live theme already has a header section, just add this line where
+  the cart/account icons are (top-right area):
+
+    {% render 'localization-selector' %}
+
+  This file is a reference — copy the relevant parts into your live header.
+{% endcomment %}
+
+<header class="cf-header">
+  <div class="cf-container">
+    <div class="cf-header__inner">
+      <!-- Logo -->
+      <a href="/" class="cf-header__logo">
+        {% if settings.logo %}
+          <img src="{{ settings.logo | image_url: width: 200 }}" alt="{{ shop.name }}" height="40">
+        {% else %}
+          <span class="cf-header__logo-text">CASTFORGE</span>
+        {% endif %}
+      </a>
+
+      <!-- Nav -->
+      <nav class="cf-header__nav">
+        {% for link in linklists.main-menu.links %}
+          <a href="{{ link.url }}" class="cf-header__link">{{ link.title }}</a>
+        {% endfor %}
+      </nav>
+
+      <!-- Right: currency selector + cart -->
+      <div class="cf-header__right">
+        {% render 'localization-selector' %}
+        <a href="/cart" class="cf-header__cart">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1.003 1.003 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
+          <span class="cf-header__cart-count">{{ cart.item_count }}</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</header>
+
+<style>
+.cf-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--cf-bg, #0a0a0a);
+  border-bottom: 1px solid var(--cf-border, #2a2a2a);
+  padding: 12px 0;
+}
+.cf-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.cf-header__logo-text {
+  font-family: var(--cf-font-display, 'Anton', sans-serif);
+  font-size: 24px;
+  letter-spacing: 2px;
+  color: var(--cf-accent, #FF6B1A);
+  text-decoration: none;
+}
+.cf-header__nav {
+  display: flex;
+  gap: 24px;
+}
+.cf-header__link {
+  font-family: var(--cf-font-body, 'Inter', sans-serif);
+  font-size: 14px;
+  color: var(--cf-text, #e8e8e8);
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.cf-header__link:hover { color: var(--cf-accent, #FF6B1A); }
+.cf-header__right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.cf-header__cart {
+  position: relative;
+  color: var(--cf-text, #e8e8e8);
+  text-decoration: none;
+}
+.cf-header__cart:hover { color: var(--cf-accent, #FF6B1A); }
+.cf-header__cart-count {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  background: var(--cf-accent, #FF6B1A);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+@media (max-width: 768px) {
+  .cf-header__nav { display: none; }
+  .cf-localization { display: none; }
+}
+</style>
+
+{% schema %}
+{
+  "name": "Header",
+  "tag": "section",
+  "class": "cf-section-header"
+}
+{% endschema %}
