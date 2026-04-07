@@ -1,0 +1,46 @@
+{
+  "sections": {
+    "main-product": {
+      "type": "product-hero",
+      "settings": {}
+    },
+    "urgency": {
+      "type": "product-urgency",
+      "settings": {}
+    },
+    "trust-badges": {
+      "type": "product-trust-badges",
+      "settings": {}
+    },
+    "tabs": {
+      "type": "product-tabs",
+      "settings": {}
+    },
+    "reviews": {
+      "type": "product-reviews",
+      "settings": {}
+    },
+    "related": {
+      "type": "product-related",
+      "settings": {}
+    },
+    "recently-viewed": {
+      "type": "product-recently-viewed",
+      "settings": {}
+    },
+    "faq": {
+      "type": "product-faq",
+      "settings": {}
+    }
+  },
+  "order": [
+    "main-product",
+    "urgency",
+    "trust-badges",
+    "tabs",
+    "reviews",
+    "related",
+    "recently-viewed",
+    "faq"
+  ]
+}

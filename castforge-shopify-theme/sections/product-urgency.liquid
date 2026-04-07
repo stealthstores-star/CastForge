@@ -1,0 +1,58 @@
+<section class="cf-urgency">
+  <div class="cf-container">
+    <div class="cf-urgency__grid">
+      <div class="cf-urgency__item">
+        <span class="cf-urgency__icon">🔥</span>
+        <span class="cf-urgency__text"><strong id="cf-viewers">{{ product.id | modulo: 15 | plus: 8 }}</strong> people viewing this now</span>
+      </div>
+      <div class="cf-urgency__item">
+        <span class="cf-urgency__icon">⏱</span>
+        <span class="cf-urgency__text">Order in next <strong id="cf-countdown"></strong> for dispatch tomorrow</span>
+      </div>
+      <div class="cf-urgency__item">
+        <span class="cf-urgency__icon">📦</span>
+        <span class="cf-urgency__text">Only <strong>{{ product.selected_or_first_available_variant.inventory_quantity | default: 5 }}</strong> left in stock at this price</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+(function() {
+  // Fake viewer count — rotates 5-25
+  const viewerEl = document.getElementById('cf-viewers');
+  if (viewerEl) {
+    setInterval(() => {
+      const delta = Math.random() > 0.5 ? 1 : -1;
+      let v = parseInt(viewerEl.textContent) + delta;
+      v = Math.max(5, Math.min(25, v));
+      viewerEl.textContent = v;
+    }, 8000);
+  }
+
+  // Real countdown to 4pm UK (16:00 GMT/BST)
+  function updateCountdown() {
+    const now = new Date();
+    const uk = new Date(now.toLocaleString("en-US", {timeZone: "Europe/London"}));
+    let cutoff = new Date(uk);
+    cutoff.setHours(16, 0, 0, 0);
+    if (uk >= cutoff) cutoff.setDate(cutoff.getDate() + 1);
+    const diff = cutoff - uk;
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    const el = document.getElementById('cf-countdown');
+    if (el) el.textContent = `${h}h ${m}m ${s}s`;
+  }
+  updateCountdown();
+  setInterval(updateCountdown, 1000);
+})();
+</script>
+
+{% schema %}
+{
+  "name": "Urgency Strip",
+  "tag": "section",
+  "class": "cf-section-urgency"
+}
+{% endschema %}

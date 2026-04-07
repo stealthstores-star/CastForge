@@ -1,0 +1,101 @@
+<section class="cf-tabs">
+  <div class="cf-container">
+    <div class="cf-tabs__nav">
+      <button class="cf-tab-btn is-active" data-tab="description">Description</button>
+      <button class="cf-tab-btn" data-tab="specifications">Specifications</button>
+      <button class="cf-tab-btn" data-tab="shipping">Shipping & Returns</button>
+    </div>
+
+    <!-- Description Tab -->
+    <div class="cf-tab-panel is-active" id="cf-tab-description">
+      <div class="cf-tab-content">
+        <h3 class="cf-tab-heading">About This Kit</h3>
+        {{ product.description }}
+
+        {% if product.metafields.custom.whats_in_box %}
+          <h3 class="cf-tab-heading">What's in the Box</h3>
+          <p>{{ product.metafields.custom.whats_in_box }}</p>
+        {% else %}
+          <h3 class="cf-tab-heading">What's in the Box</h3>
+          <ul>
+            <li>Unassembled resin model kit components</li>
+            <li>Assembly reference imagery</li>
+            <li>Protective packaging for safe delivery</li>
+          </ul>
+        {% endif %}
+
+        <h3 class="cf-tab-heading">Painting & Assembly</h3>
+        {% if product.metafields.custom.assembly_notes %}
+          <p>{{ product.metafields.custom.assembly_notes }}</p>
+        {% else %}
+          <p>This kit arrives unassembled and unpainted, giving you complete creative freedom. We recommend using cyanoacrylate (super glue) for resin assembly. Clean parts with warm soapy water before priming. Use a quality resin primer before painting with acrylics or enamels. Pin larger joints for a stronger bond. Assembly experience is recommended but not required — plenty of YouTube tutorials cover resin kit basics.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Specifications Tab -->
+    <div class="cf-tab-panel" id="cf-tab-specifications">
+      <div class="cf-tab-content">
+        <table class="cf-spec-table">
+          <tbody>
+            {% if product.metafields.custom.scale %}
+              <tr><td>Scale</td><td>{{ product.metafields.custom.scale }}</td></tr>
+            {% endif %}
+            <tr><td>Material</td><td>{{ product.metafields.custom.material | default: 'High-quality resin' }}</td></tr>
+            {% if product.metafields.custom.pieces %}
+              <tr><td>Pieces</td><td>{{ product.metafields.custom.pieces }}</td></tr>
+            {% endif %}
+            <tr><td>Assembly Required</td><td>{{ product.metafields.custom.assembly | default: 'Yes — unassembled kit' }}</td></tr>
+            <tr><td>Painted</td><td>{{ product.metafields.custom.painted | default: 'No — unpainted' }}</td></tr>
+            <tr><td>Recommended For</td><td>{{ product.metafields.custom.recommended_for | default: 'Experienced modellers, collectors 14+' }}</td></tr>
+            <tr><td>SKU</td><td>{{ product.selected_or_first_available_variant.sku | default: product.id }}</td></tr>
+            {% if product.selected_or_first_available_variant.weight > 0 %}
+              <tr><td>Weight</td><td>{{ product.selected_or_first_available_variant.weight }}{{ product.selected_or_first_available_variant.weight_unit }}</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Shipping Tab -->
+    <div class="cf-tab-panel" id="cf-tab-shipping">
+      <div class="cf-tab-content">
+        <h3 class="cf-tab-heading">Delivery Times</h3>
+        <table class="cf-spec-table">
+          <tbody>
+            <tr><td>🇬🇧 United Kingdom</td><td>5–7 business days</td></tr>
+            <tr><td>🇪🇺 Europe</td><td>7–12 business days</td></tr>
+            <tr><td>🇺🇸 United States</td><td>7–14 business days</td></tr>
+            <tr><td>🌍 Rest of World</td><td>10–21 business days</td></tr>
+          </tbody>
+        </table>
+        <p>All orders include free tracked shipping. You'll receive a tracking number by email once dispatched.</p>
+
+        <h3 class="cf-tab-heading">Returns Policy</h3>
+        <p>Not happy with your order? Return it within 30 days for a full refund. Items must be in original packaging and unused. We cover return shipping for damaged or defective items.</p>
+
+        <h3 class="cf-tab-heading">Packaging Guarantee</h3>
+        <p>Every kit is individually wrapped in foam and bubble wrap, then packed in a sturdy box. We double-check packaging before dispatch to ensure your model arrives in perfect condition. If anything arrives damaged, send us a photo and we'll send a replacement or full refund — no return needed.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+document.querySelectorAll('.cf-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.cf-tab-btn').forEach(b => b.classList.remove('is-active'));
+    document.querySelectorAll('.cf-tab-panel').forEach(p => p.classList.remove('is-active'));
+    btn.classList.add('is-active');
+    document.getElementById('cf-tab-' + btn.dataset.tab)?.classList.add('is-active');
+  });
+});
+</script>
+
+{% schema %}
+{
+  "name": "Product Tabs",
+  "tag": "section",
+  "class": "cf-section-tabs"
+}
+{% endschema %}

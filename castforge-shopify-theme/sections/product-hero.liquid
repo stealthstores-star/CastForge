@@ -1,0 +1,285 @@
+{{ 'product-hero.css' | asset_url | stylesheet_tag }}
+
+<section class="cf-product-hero" itemscope itemtype="https://schema.org/Product">
+  <div class="cf-container">
+    <!-- Breadcrumbs -->
+    <nav class="cf-breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span class="cf-breadcrumb__sep">›</span>
+      {% if product.collections.size > 0 %}
+        <a href="{{ product.collections.first.url }}">{{ product.collections.first.title }}</a>
+        <span class="cf-breadcrumb__sep">›</span>
+      {% endif %}
+      <span>{{ product.title | truncate: 50 }}</span>
+    </nav>
+
+    <div class="cf-product-hero__grid">
+      <!-- Gallery (60%) -->
+      <div class="cf-gallery">
+        <div class="cf-gallery__main" id="cf-gallery-main">
+          {% for image in product.images %}
+            <div class="cf-gallery__slide {% if forloop.first %}is-active{% endif %}"
+                 data-index="{{ forloop.index0 }}"
+                 data-zoom-src="{{ image | image_url: width: 1800 }}">
+              <img src="{{ image | image_url: width: 900 }}"
+                   alt="{{ image.alt | default: product.title }}"
+                   width="900" height="900"
+                   loading="{% if forloop.first %}eager{% else %}lazy{% endif %}"
+                   itemprop="image">
+            </div>
+          {% endfor %}
+        </div>
+        <div class="cf-gallery__thumbs" id="cf-gallery-thumbs">
+          {% for image in product.images %}
+            <button class="cf-gallery__thumb {% if forloop.first %}is-active{% endif %}"
+                    data-index="{{ forloop.index0 }}"
+                    aria-label="View image {{ forloop.index }}">
+              <img src="{{ image | image_url: width: 120 }}"
+                   alt="" width="80" height="80" loading="lazy">
+            </button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Product Info (40%) -->
+      <div class="cf-product-info">
+        <h1 class="cf-product-info__title" itemprop="name">{{ product.title }}</h1>
+
+        <!-- Rating -->
+        <div class="cf-product-info__rating" itemprop="aggregateRating" itemscope itemtype="https://schema.org/AggregateRating">
+          {% assign avg_rating = product.metafields.reviews.average | default: 0 %}
+          {% assign review_count = product.metafields.reviews.count | default: 0 %}
+          {% if review_count > 0 %}
+            <div class="cf-stars">
+              {% for i in (1..5) %}
+                <svg class="cf-star {% if i <= avg_rating %}cf-star--filled{% endif %}" viewBox="0 0 20 20" width="18" height="18">
+                  <path d="M10 1l2.39 4.84 5.34.78-3.87 3.77.91 5.33L10 13.28l-4.77 2.44.91-5.33L2.27 6.62l5.34-.78z"/>
+                </svg>
+              {% endfor %}
+            </div>
+            <span class="cf-rating-text">{{ avg_rating }} ({{ review_count }} reviews)</span>
+            <meta itemprop="ratingValue" content="{{ avg_rating }}">
+            <meta itemprop="reviewCount" content="{{ review_count }}">
+          {% else %}
+            <span class="cf-rating-text cf-rating-text--new">★ New listing</span>
+          {% endif %}
+        </div>
+
+        <!-- Price -->
+        <div class="cf-product-info__price" itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+          <span class="cf-price" itemprop="price" content="{{ product.selected_or_first_available_variant.price | money_without_currency }}">
+            {{ product.selected_or_first_available_variant.price | money }}
+          </span>
+          {% if product.selected_or_first_available_variant.compare_at_price > product.selected_or_first_available_variant.price %}
+            <span class="cf-price--compare">
+              {{ product.selected_or_first_available_variant.compare_at_price | money }}
+            </span>
+            <span class="cf-price--save">
+              Save {{ product.selected_or_first_available_variant.compare_at_price | minus: product.selected_or_first_available_variant.price | money }}
+            </span>
+          {% endif %}
+          <div class="cf-klarna-text">
+            or 4 payments of {{ product.selected_or_first_available_variant.price | divided_by: 4 | money }} with <strong>Klarna</strong>
+          </div>
+          <meta itemprop="priceCurrency" content="{{ cart.currency.iso_code }}">
+          <link itemprop="availability" href="https://schema.org/{% if product.available %}InStock{% else %}OutOfStock{% endif %}">
+          <meta itemprop="url" content="{{ shop.url }}{{ product.url }}">
+        </div>
+
+        <!-- Tagline -->
+        {% if product.metafields.custom.tagline %}
+          <p class="cf-product-info__tagline">{{ product.metafields.custom.tagline }}</p>
+        {% endif %}
+
+        <!-- Description bullets -->
+        <div class="cf-product-info__desc" itemprop="description">
+          {{ product.description }}
+        </div>
+
+        <!-- Variant selector -->
+        {% if product.has_only_default_variant == false %}
+          <div class="cf-variants">
+            {% for option in product.options_with_values %}
+              <div class="cf-variant-group">
+                <label class="cf-variant-label">{{ option.name }}</label>
+                <select class="cf-variant-select" data-option-index="{{ forloop.index0 }}">
+                  {% for value in option.values %}
+                    <option value="{{ value }}" {% if option.selected_value == value %}selected{% endif %}>
+                      {{ value }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <!-- Quantity + Add to Cart -->
+        <form method="post" action="/cart/add" class="cf-add-form" id="cf-product-form">
+          <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}" id="cf-variant-id">
+          <div class="cf-qty-row">
+            <div class="cf-qty">
+              <button type="button" class="cf-qty__btn" data-action="minus" aria-label="Decrease">−</button>
+              <input type="number" name="quantity" value="1" min="1" max="10" class="cf-qty__input" id="cf-qty-input">
+              <button type="button" class="cf-qty__btn" data-action="plus" aria-label="Increase">+</button>
+            </div>
+            <button type="submit" class="cf-add-btn" {% unless product.available %}disabled{% endunless %}>
+              {% if product.available %}
+                ADD TO CART — {{ product.selected_or_first_available_variant.price | money }}
+              {% else %}
+                SOLD OUT
+              {% endif %}
+            </button>
+          </div>
+        </form>
+
+        <!-- Trust row -->
+        <div class="cf-trust-row">
+          <div class="cf-trust-item">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+            <span>Free shipping</span>
+          </div>
+          <div class="cf-trust-item">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+            <span>48hr dispatch</span>
+          </div>
+          <div class="cf-trust-item">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
+            <span>Secure checkout</span>
+          </div>
+          <div class="cf-trust-item">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+            <span>30-day returns</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div class="cf-lightbox" id="cf-lightbox" hidden>
+    <button class="cf-lightbox__close" aria-label="Close">&times;</button>
+    <button class="cf-lightbox__prev" aria-label="Previous">&lsaquo;</button>
+    <button class="cf-lightbox__next" aria-label="Next">&rsaquo;</button>
+    <img class="cf-lightbox__img" id="cf-lightbox-img" src="" alt="">
+  </div>
+</section>
+
+<!-- Mobile sticky Add to Cart -->
+<div class="cf-sticky-cart" id="cf-sticky-cart">
+  <span class="cf-sticky-cart__price">{{ product.selected_or_first_available_variant.price | money }}</span>
+  <button class="cf-sticky-cart__btn" onclick="document.getElementById('cf-product-form').requestSubmit()">
+    ADD TO CART
+  </button>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  // Gallery
+  const slides = document.querySelectorAll('.cf-gallery__slide');
+  const thumbs = document.querySelectorAll('.cf-gallery__thumb');
+  const lightbox = document.getElementById('cf-lightbox');
+  const lightboxImg = document.getElementById('cf-lightbox-img');
+  let currentSlide = 0;
+
+  function showSlide(idx) {
+    slides.forEach(s => s.classList.remove('is-active'));
+    thumbs.forEach(t => t.classList.remove('is-active'));
+    slides[idx]?.classList.add('is-active');
+    thumbs[idx]?.classList.add('is-active');
+    currentSlide = idx;
+  }
+
+  thumbs.forEach(t => t.addEventListener('click', () => showSlide(+t.dataset.index)));
+
+  // Lightbox
+  slides.forEach(s => s.addEventListener('click', () => {
+    lightboxImg.src = s.dataset.zoomSrc;
+    lightbox.hidden = false;
+    document.body.style.overflow = 'hidden';
+  }));
+  document.querySelector('.cf-lightbox__close')?.addEventListener('click', () => {
+    lightbox.hidden = true;
+    document.body.style.overflow = '';
+  });
+  document.querySelector('.cf-lightbox__prev')?.addEventListener('click', () => {
+    showSlide((currentSlide - 1 + slides.length) % slides.length);
+    lightboxImg.src = slides[currentSlide].dataset.zoomSrc;
+  });
+  document.querySelector('.cf-lightbox__next')?.addEventListener('click', () => {
+    showSlide((currentSlide + 1) % slides.length);
+    lightboxImg.src = slides[currentSlide].dataset.zoomSrc;
+  });
+  lightbox?.addEventListener('click', e => { if (e.target === lightbox) lightbox.hidden = true; });
+
+  // Touch swipe on mobile
+  let touchStartX = 0;
+  const gallery = document.getElementById('cf-gallery-main');
+  gallery?.addEventListener('touchstart', e => touchStartX = e.touches[0].clientX, {passive: true});
+  gallery?.addEventListener('touchend', e => {
+    const diff = touchStartX - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 50) showSlide(diff > 0 ? Math.min(currentSlide+1, slides.length-1) : Math.max(currentSlide-1, 0));
+  });
+
+  // Quantity
+  document.querySelectorAll('.cf-qty__btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = document.getElementById('cf-qty-input');
+      const val = parseInt(input.value);
+      input.value = btn.dataset.action === 'plus' ? Math.min(val+1, 10) : Math.max(val-1, 1);
+    });
+  });
+
+  // Variant selector
+  const variantData = {{ product.variants | json }};
+  document.querySelectorAll('.cf-variant-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const selected = [];
+      document.querySelectorAll('.cf-variant-select').forEach(s => selected.push(s.value));
+      const variant = variantData.find(v => {
+        return selected.every((val, i) => v[`option${i+1}`] === val);
+      });
+      if (variant) {
+        document.getElementById('cf-variant-id').value = variant.id;
+        document.querySelector('.cf-price').textContent = Shopify.formatMoney(variant.price);
+        document.querySelector('.cf-add-btn').textContent = variant.available
+          ? `ADD TO CART — ${Shopify.formatMoney(variant.price)}` : 'SOLD OUT';
+        document.querySelector('.cf-add-btn').disabled = !variant.available;
+      }
+    });
+  });
+
+  // Sticky cart on mobile
+  const stickyCart = document.getElementById('cf-sticky-cart');
+  const form = document.getElementById('cf-product-form');
+  if (stickyCart && form) {
+    const observer = new IntersectionObserver(([e]) => {
+      stickyCart.classList.toggle('is-visible', !e.isIntersecting);
+    }, { threshold: 0 });
+    observer.observe(form);
+  }
+
+  // Recently viewed
+  try {
+    const rv = JSON.parse(localStorage.getItem('cf_recently_viewed') || '[]');
+    const pid = {{ product.id }};
+    const filtered = rv.filter(p => p.id !== pid).slice(0, 7);
+    filtered.unshift({
+      id: pid,
+      title: {{ product.title | json }},
+      url: {{ product.url | json }},
+      price: {{ product.selected_or_first_available_variant.price | json }},
+      image: {{ product.featured_image | image_url: width: 400 | json }}
+    });
+    localStorage.setItem('cf_recently_viewed', JSON.stringify(filtered.slice(0, 8)));
+  } catch(e) {}
+});
+</script>
+
+{% schema %}
+{
+  "name": "Product Hero",
+  "tag": "section",
+  "class": "cf-section-hero"
+}
+{% endschema %}

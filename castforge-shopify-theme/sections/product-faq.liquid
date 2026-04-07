@@ -1,0 +1,87 @@
+<section class="cf-faq">
+  <div class="cf-container">
+    <h2 class="cf-section-title">Frequently Asked Questions</h2>
+    <div class="cf-faq__list">
+
+      <div class="cf-faq__item">
+        <button class="cf-faq__question" aria-expanded="false">
+          Is this model painted?
+          <span class="cf-faq__icon">+</span>
+        </button>
+        <div class="cf-faq__answer">
+          <p>{{ product.metafields.custom.faq_painted | default: 'No — all our resin kits arrive unpainted. This gives you complete creative freedom to paint and finish the model however you like. We recommend using a quality primer before painting with acrylic or enamel paints.' }}</p>
+        </div>
+      </div>
+
+      <div class="cf-faq__item">
+        <button class="cf-faq__question" aria-expanded="false">
+          How long does shipping take?
+          <span class="cf-faq__icon">+</span>
+        </button>
+        <div class="cf-faq__answer">
+          <p>UK orders arrive within 5–7 business days. European orders take 7–12 days, US orders 7–14 days. All orders include free tracked shipping — you'll receive a tracking number by email once dispatched.</p>
+        </div>
+      </div>
+
+      <div class="cf-faq__item">
+        <button class="cf-faq__question" aria-expanded="false">
+          Do you ship internationally?
+          <span class="cf-faq__icon">+</span>
+        </button>
+        <div class="cf-faq__answer">
+          <p>Yes — we ship worldwide with free tracked shipping. Delivery times vary by region: UK 5–7 days, Europe 7–12 days, US 7–14 days, rest of world 10–21 days.</p>
+        </div>
+      </div>
+
+      <div class="cf-faq__item">
+        <button class="cf-faq__question" aria-expanded="false">
+          What scale is this model?
+          <span class="cf-faq__icon">+</span>
+        </button>
+        <div class="cf-faq__answer">
+          <p>{% if product.metafields.custom.scale %}This model is {{ product.metafields.custom.scale }} scale.{% else %}The scale is listed in the product title and specifications tab above. Common scales we carry include 1/35, 1/72, 75mm, and 28mm.{% endif %}</p>
+        </div>
+      </div>
+
+      <div class="cf-faq__item">
+        <button class="cf-faq__question" aria-expanded="false">
+          Is assembly required?
+          <span class="cf-faq__icon">+</span>
+        </button>
+        <div class="cf-faq__answer">
+          <p>{{ product.metafields.custom.faq_assembly | default: 'Yes — this is a multi-part resin kit that requires assembly. We recommend cyanoacrylate (super glue) and some modelling experience. Clean parts with warm soapy water before priming. Pin larger joints for a stronger bond.' }}</p>
+        </div>
+      </div>
+
+      <div class="cf-faq__item">
+        <button class="cf-faq__question" aria-expanded="false">
+          What if I receive a damaged item?
+          <span class="cf-faq__icon">+</span>
+        </button>
+        <div class="cf-faq__answer">
+          <p>We carefully package every order with foam and bubble wrap. If anything arrives damaged, email us a photo within 48 hours and we'll send a free replacement or full refund — no need to return the damaged item.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<script>
+document.querySelectorAll('.cf-faq__question').forEach(q => {
+  q.addEventListener('click', () => {
+    const item = q.parentElement;
+    const expanded = item.classList.toggle('is-open');
+    q.setAttribute('aria-expanded', expanded);
+    q.querySelector('.cf-faq__icon').textContent = expanded ? '−' : '+';
+  });
+});
+</script>
+
+{% schema %}
+{
+  "name": "Product FAQ",
+  "tag": "section",
+  "class": "cf-section-faq"
+}
+{% endschema %}

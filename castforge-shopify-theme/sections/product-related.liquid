@@ -1,0 +1,32 @@
+<section class="cf-related">
+  <div class="cf-container">
+    <h2 class="cf-section-title">You May Also Like</h2>
+    <div class="cf-related__grid">
+      {% assign collection = product.collections.first %}
+      {% if collection %}
+        {% for item in collection.products limit: 8 %}
+          {% unless item.id == product.id %}
+            <a href="{{ item.url }}" class="cf-product-card">
+              <div class="cf-product-card__img">
+                {% if item.featured_image %}
+                  <img src="{{ item.featured_image | image_url: width: 400 }}"
+                       alt="{{ item.title }}" width="400" height="400" loading="lazy">
+                {% endif %}
+              </div>
+              <h3 class="cf-product-card__title">{{ item.title | truncate: 60 }}</h3>
+              <span class="cf-product-card__price">{{ item.price | money }}</span>
+            </a>
+          {% endunless %}
+        {% endfor %}
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Related Products",
+  "tag": "section",
+  "class": "cf-section-related"
+}
+{% endschema %}
