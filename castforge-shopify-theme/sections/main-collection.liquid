@@ -1,163 +1,142 @@
-{{ 'product-hero.css' | asset_url | stylesheet_tag }}
+{{ 'homepage.css' | asset_url | stylesheet_tag }}
+
+<!-- Collection hero banner -->
+<div class="cf-col-hero">
+  {%- if collection.image -%}
+    <img src="{{ collection.image | image_url: width: 1600 }}" alt="{{ collection.title }}" class="cf-col-hero__bg" loading="eager">
+  {%- endif -%}
+  <div class="cf-col-hero__overlay">
+    <div class="cf-container">
+      <h1 class="cf-col-hero__title">{{ collection.title }}</h1>
+      {%- if collection.description != blank -%}
+        <p class="cf-col-hero__desc">{{ collection.description | strip_html | truncate: 160 }}</p>
+      {%- endif -%}
+      <span class="cf-col-hero__count">{{ collection.products_count }} models</span>
+    </div>
+  </div>
+</div>
+
+<!-- Scale filter bar -->
+{% render 'scale-filter-bar' %}
 
 <section class="cf-collection">
   <div class="cf-container">
-    <h1 class="cf-section-title">{{ collection.title }}</h1>
-    {% if collection.description != blank %}
-      <p class="cf-collection__desc">{{ collection.description }}</p>
-    {% endif %}
+    <!-- Sort + count bar -->
+    <div class="cf-col-toolbar">
+      <span class="cf-col-toolbar__count">{{ collection.products_count }} products</span>
+      <div class="cf-col-toolbar__sort">
+        <label for="cf-sort">Sort:</label>
+        <select id="cf-sort" onchange="window.location.href=this.value">
+          {%- assign current_sort = collection.sort_by | default: collection.default_sort_by -%}
+          <option value="{{ collection.url }}?sort_by=manual" {% if current_sort == 'manual' %}selected{% endif %}>Featured</option>
+          <option value="{{ collection.url }}?sort_by=price-ascending" {% if current_sort == 'price-ascending' %}selected{% endif %}>Price: Low → High</option>
+          <option value="{{ collection.url }}?sort_by=price-descending" {% if current_sort == 'price-descending' %}selected{% endif %}>Price: High → Low</option>
+          <option value="{{ collection.url }}?sort_by=created-descending" {% if current_sort == 'created-descending' %}selected{% endif %}>Newest</option>
+          <option value="{{ collection.url }}?sort_by=best-selling" {% if current_sort == 'best-selling' %}selected{% endif %}>Best Selling</option>
+        </select>
+      </div>
+    </div>
 
-    <div class="cf-collection__grid-wrap">
+    <!-- Filters sidebar + product grid -->
+    <div class="cf-col-layout">
       <!-- Sidebar filters -->
-      <aside class="cf-collection__sidebar">
-        <form id="cf-filter-form">
-          {% for filter in collection.filters %}
+      {%- if collection.filters.size > 0 -%}
+        <aside class="cf-col-sidebar">
+          <details class="cf-col-sidebar__mobile-toggle" open>
+            <summary>Filters</summary>
+          {%- for filter in collection.filters -%}
             <div class="cf-filter-group">
               <h3 class="cf-filter-title">{{ filter.label }}</h3>
-
-              {% if filter.type == 'price_range' %}
-                {%- comment -%}
-                  Native price range filter from Search & Discovery app.
-                  Values auto-format in the visitor's active currency.
-                  No hardcoded ranges — Shopify handles conversion.
-                {%- endcomment -%}
+              {%- if filter.type == 'price_range' -%}
                 <div class="cf-filter-price">
-                  <div class="cf-filter-price__row">
-                    <label>
-                      <span>{{ localization.country.currency.symbol }}</span>
-                      <input type="number"
-                        name="{{ filter.min_value.param_name }}"
-                        placeholder="{{ filter.min_value.min | money_without_currency }}"
-                        {% if filter.min_value.value %}value="{{ filter.min_value.value | money_without_currency }}"{% endif %}
-                        min="0"
-                        class="cf-filter-price__input">
-                    </label>
-                    <span class="cf-filter-price__sep">–</span>
-                    <label>
-                      <span>{{ localization.country.currency.symbol }}</span>
-                      <input type="number"
-                        name="{{ filter.max_value.param_name }}"
-                        placeholder="{{ filter.max_value.max | money_without_currency }}"
-                        {% if filter.max_value.value %}value="{{ filter.max_value.value | money_without_currency }}"{% endif %}
-                        class="cf-filter-price__input">
-                    </label>
-                  </div>
-                  <button type="submit" class="cf-filter-price__btn">Apply</button>
+                  <input type="number" name="{{ filter.min_value.param_name }}" placeholder="{{ filter.min_value.min | money_without_currency }}" {% if filter.min_value.value %}value="{{ filter.min_value.value | money_without_currency }}"{% endif %} class="cf-filter-input">
+                  <span>–</span>
+                  <input type="number" name="{{ filter.max_value.param_name }}" placeholder="{{ filter.max_value.max | money_without_currency }}" {% if filter.max_value.value %}value="{{ filter.max_value.value | money_without_currency }}"{% endif %} class="cf-filter-input">
                 </div>
-
-              {% elsif filter.type == 'list' %}
+              {%- elsif filter.type == 'list' -%}
                 <ul class="cf-filter-list">
-                  {% for value in filter.values %}
-                    <li>
-                      <label class="cf-filter-check">
-                        <input type="checkbox"
-                          name="{{ value.param_name }}"
-                          value="{{ value.value }}"
-                          {% if value.active %}checked{% endif %}>
-                        <span>{{ value.label }} ({{ value.count }})</span>
-                      </label>
-                    </li>
-                  {% endfor %}
+                  {%- for value in filter.values limit: 10 -%}
+                    <li><label><input type="checkbox" {% if value.active %}checked{% endif %} onchange="window.location.href='{{ value.url }}'"> {{ value.label }} ({{ value.count }})</label></li>
+                  {%- endfor -%}
                 </ul>
-              {% endif %}
+              {%- endif -%}
             </div>
-          {% endfor %}
-
-          {% if collection.filters.size > 0 %}
-            <a href="{{ collection.url }}" class="cf-filter-clear">Clear all filters</a>
-          {% endif %}
-        </form>
-      </aside>
+          {%- endfor -%}
+          <a href="{{ collection.url }}" class="cf-filter-clear">Clear filters</a>
+          </details>
+        </aside>
+      {%- endif -%}
 
       <!-- Product grid -->
-      <div class="cf-collection__products">
-        <div class="cf-collection__count">
-          {{ collection.products_count }} products
-        </div>
-        <div class="cf-related__grid">
-          {% paginate collection.products by 24 %}
-            {% for product in collection.products %}
-              <a href="{{ product.url }}" class="cf-product-card">
-                <div class="cf-product-card__img">
-                  {% if product.featured_image %}
-                    <img src="{{ product.featured_image | image_url: width: 400 }}"
-                         alt="{{ product.title }}" width="400" height="400" loading="lazy">
-                  {% endif %}
-                </div>
-                <h3 class="cf-product-card__title">{{ product.title | truncate: 60 }}</h3>
-                <span class="cf-product-card__price">{{ product.price | money }}</span>
-                {% if product.compare_at_price > product.price %}
-                  <span class="cf-product-card__compare">{{ product.compare_at_price | money }}</span>
-                {% endif %}
-              </a>
-            {% endfor %}
+      <div class="cf-col-grid">
+        {%- paginate collection.products by 48 -%}
+          <div class="cf-col-products">
+            {%- for product in collection.products -%}
+              {% render 'product-card', product: product %}
+            {%- endfor -%}
+          </div>
 
-            {% if paginate.pages > 1 %}
-              <div class="cf-pagination">
-                {{ paginate | default_pagination: next: '→', previous: '←' }}
-              </div>
-            {% endif %}
-          {% endpaginate %}
-        </div>
+          {%- if paginate.pages > 1 -%}
+            <div class="cf-pagination">
+              {{ paginate | default_pagination: next: '→', previous: '←' }}
+            </div>
+          {%- endif -%}
+        {%- endpaginate -%}
       </div>
     </div>
   </div>
 </section>
 
 <style>
-.cf-collection { padding: 32px 0 64px; }
-.cf-collection__desc { text-align: center; color: var(--cf-text-muted); margin-bottom: 32px; font-size: 15px; max-width: 600px; margin-left: auto; margin-right: auto; }
-.cf-collection__grid-wrap { display: grid; grid-template-columns: 240px 1fr; gap: 32px; }
-.cf-collection__sidebar { font-family: var(--cf-font-body); }
-.cf-filter-group { margin-bottom: 24px; }
-.cf-filter-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--cf-text); margin-bottom: 12px; }
-.cf-filter-list { list-style: none; padding: 0; }
-.cf-filter-list li { margin-bottom: 6px; }
-.cf-filter-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--cf-text-muted); cursor: pointer; }
-.cf-filter-check input[type="checkbox"] { accent-color: var(--cf-accent); }
-.cf-filter-price__row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.cf-filter-price__input { width: 80px; padding: 6px 8px; background: var(--cf-bg-card); border: 1px solid var(--cf-border); border-radius: 4px; color: var(--cf-text); font-size: 13px; }
-.cf-filter-price__sep { color: var(--cf-text-muted); }
-.cf-filter-price__btn { padding: 6px 16px; background: var(--cf-accent); border: none; border-radius: 4px; color: #fff; font-size: 12px; cursor: pointer; }
-.cf-filter-quick { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
-.cf-filter-quick__link { font-size: 13px; color: var(--cf-text-muted); text-decoration: none; padding: 4px 0; }
-.cf-filter-quick__link:hover { color: var(--cf-accent); }
-.cf-filter-clear { display: inline-block; margin-top: 16px; font-size: 13px; color: var(--cf-accent); text-decoration: none; }
-.cf-collection__count { font-size: 13px; color: var(--cf-text-muted); margin-bottom: 16px; }
-.cf-product-card__compare { display: block; font-size: 13px; color: var(--cf-text-muted); text-decoration: line-through; padding: 0 14px 14px; }
-.cf-pagination { grid-column: 1 / -1; text-align: center; padding: 24px 0; }
-.cf-pagination a, .cf-pagination span { display: inline-block; padding: 8px 14px; margin: 0 2px; border: 1px solid var(--cf-border); border-radius: 4px; color: var(--cf-text); text-decoration: none; font-size: 14px; }
-.cf-pagination a:hover { border-color: var(--cf-accent); color: var(--cf-accent); }
-.cf-pagination .current { background: var(--cf-accent); border-color: var(--cf-accent); color: #fff; }
-@media (max-width: 768px) {
-  .cf-collection__grid-wrap { grid-template-columns: 1fr; }
-  .cf-collection__sidebar { display: none; } /* collapsed on mobile — use drawer instead */
+/* Hero */
+.cf-col-hero{position:relative;height:200px;overflow:hidden;background:#111;}
+.cf-col-hero__bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:blur(4px) brightness(0.3);transform:scale(1.1);}
+.cf-col-hero__overlay{position:absolute;inset:0;display:flex;align-items:center;}
+.cf-col-hero__title{font-family:var(--cf-font-display);font-size:36px;color:#fff;margin:0;text-transform:uppercase;letter-spacing:1px;}
+.cf-col-hero__desc{font-size:14px;color:rgba(255,255,255,0.7);margin:6px 0 0;max-width:500px;}
+.cf-col-hero__count{font-size:12px;color:var(--cf-accent);font-weight:600;margin-top:4px;display:block;}
+
+/* Toolbar */
+.cf-col-toolbar{display:flex;align-items:center;justify-content:space-between;padding:16px 0;border-bottom:1px solid var(--cf-border);}
+.cf-col-toolbar__count{font-size:13px;color:var(--cf-text-muted);}
+.cf-col-toolbar__sort{display:flex;align-items:center;gap:6px;}
+.cf-col-toolbar__sort label{font-size:12px;color:var(--cf-text-muted);}
+.cf-col-toolbar__sort select{background:var(--cf-bg-card);border:1px solid var(--cf-border);border-radius:6px;color:var(--cf-text);font-size:13px;padding:6px 10px;font-family:var(--cf-font-body);}
+
+/* Layout */
+.cf-col-layout{display:grid;grid-template-columns:220px 1fr;gap:24px;padding-top:20px;}
+.cf-col-sidebar{font-family:var(--cf-font-body);}
+.cf-filter-group{margin-bottom:20px;}
+.cf-filter-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--cf-text);margin:0 0 8px;}
+.cf-filter-list{list-style:none;padding:0;margin:0;}
+.cf-filter-list li{margin-bottom:4px;}
+.cf-filter-list label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--cf-text-muted);cursor:pointer;}
+.cf-filter-list input{accent-color:var(--cf-accent);}
+.cf-filter-price{display:flex;align-items:center;gap:6px;}
+.cf-filter-input{width:80px;padding:6px 8px;background:var(--cf-bg);border:1px solid var(--cf-border);border-radius:4px;color:var(--cf-text);font-size:13px;}
+.cf-filter-clear{display:block;font-size:12px;color:var(--cf-accent);text-decoration:none;margin-top:12px;}
+
+/* Product grid */
+.cf-col-products{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+.cf-pagination{text-align:center;padding:28px 0;}
+.cf-pagination a,.cf-pagination span{display:inline-block;padding:8px 14px;margin:0 2px;border:1px solid var(--cf-border);border-radius:4px;color:var(--cf-text);text-decoration:none;font-size:14px;}
+.cf-pagination a:hover{border-color:var(--cf-accent);color:var(--cf-accent);}
+.cf-pagination .current{background:var(--cf-accent);border-color:var(--cf-accent);color:#fff;}
+
+@media(max-width:768px){
+  .cf-col-hero{height:140px;}
+  .cf-col-hero__title{font-size:24px;}
+  .cf-col-layout{grid-template-columns:1fr;}
+  .cf-col-sidebar{border-bottom:1px solid var(--cf-border);padding-bottom:16px;margin-bottom:8px;}
+  .cf-col-sidebar__mobile-toggle summary{font-size:14px;font-weight:600;color:var(--cf-text);cursor:pointer;}
+  .cf-col-products{grid-template-columns:repeat(2,1fr);gap:8px;}
+}
+@media(min-width:769px){
+  .cf-col-sidebar__mobile-toggle{display:contents;}
+  .cf-col-sidebar__mobile-toggle summary{display:none;}
 }
 </style>
 
-<script>
-// Auto-submit filter form on checkbox change
-document.querySelectorAll('.cf-filter-check input').forEach(cb => {
-  cb.addEventListener('change', () => {
-    const form = document.getElementById('cf-filter-form');
-    const params = new URLSearchParams(window.location.search);
-    // Toggle the filter param
-    if (cb.checked) {
-      params.append(cb.name, cb.value);
-    } else {
-      const entries = [...params.entries()].filter(([k, v]) => !(k === cb.name && v === cb.value));
-      params.forEach((_, k) => params.delete(k));
-      entries.forEach(([k, v]) => params.append(k, v));
-    }
-    window.location.href = '{{ collection.url }}?' + params.toString();
-  });
-});
-</script>
-
 {% schema %}
-{
-  "name": "Collection Page",
-  "tag": "section",
-  "class": "cf-section-collection"
-}
+{ "name": "Collection Page", "tag": "section", "class": "cf-section-collection" }
 {% endschema %}

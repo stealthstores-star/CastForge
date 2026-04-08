@@ -1,0 +1,15 @@
+{%- comment -%} Safe checkout badges — render below add-to-cart: {% render 'checkout-badges' %} {%- endcomment -%}
+<div class="cf-checkout-badges">
+  <p class="cf-checkout-badges__title">Guaranteed Safe Checkout</p>
+  <div class="cf-checkout-badges__icons">
+    {% for type in shop.enabled_payment_types %}
+      {{ type | payment_type_svg_tag }}
+    {% endfor %}
+  </div>
+</div>
+<style>
+.cf-checkout-badges{margin-top:16px;padding:14px;border:1px solid var(--cf-border,#222);border-radius:8px;text-align:center;}
+.cf-checkout-badges__title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--cf-text-muted);margin:0 0 8px;}
+.cf-checkout-badges__icons{display:flex;justify-content:center;gap:6px;flex-wrap:wrap;}
+.cf-checkout-badges__icons svg{height:24px;width:auto;opacity:0.7;}
+</style>

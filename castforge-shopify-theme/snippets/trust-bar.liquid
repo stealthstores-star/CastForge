@@ -1,0 +1,15 @@
+{%- comment -%} Trust bar — render below header on every page: {% render 'trust-bar' %} {%- endcomment -%}
+<div class="cf-trust-bar">
+  <div class="cf-container">
+    <span>🔒 Stripe-encrypted checkout</span>
+    <span>🚚 Free worldwide shipping</span>
+    <span>↩️ 30-day returns</span>
+    <span>🏆 4,000+ happy collectors</span>
+  </div>
+</div>
+<style>
+.cf-trust-bar{background:var(--cf-bg-card,#141414);border-bottom:1px solid var(--cf-border,#222);padding:8px 0;}
+.cf-trust-bar .cf-container{display:flex;justify-content:center;gap:28px;flex-wrap:wrap;}
+.cf-trust-bar span{font-size:12px;color:var(--cf-text-muted,#888);font-family:var(--cf-font-body);white-space:nowrap;}
+@media(max-width:768px){.cf-trust-bar .cf-container{gap:12px;}.cf-trust-bar span{font-size:11px;}}
+</style>

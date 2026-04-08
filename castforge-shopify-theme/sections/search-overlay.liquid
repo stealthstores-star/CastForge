@@ -1,0 +1,132 @@
+<div class="cf-search-overlay" id="cf-search-overlay" hidden>
+  <div class="cf-search-overlay__backdrop" id="cf-search-backdrop"></div>
+  <div class="cf-search-overlay__content">
+    <div class="cf-search-overlay__header">
+      <input type="text" class="cf-search-overlay__input" id="cf-search-input" placeholder="Search 13,000+ models..." autocomplete="off" autofocus>
+      <button class="cf-search-overlay__close" id="cf-search-close">✕</button>
+    </div>
+    <div class="cf-search-overlay__body" id="cf-search-body">
+      <!-- Default state: popular -->
+      <div class="cf-search-overlay__default" id="cf-search-default">
+        <p class="cf-search-overlay__label">Popular Scales</p>
+        <div class="cf-search-overlay__pills">
+          {%- assign scales = "1/35,1/72,1/24,1/10,75mm,28mm" | split: "," -%}
+          {%- for s in scales -%}
+            <a href="/search?q={{ s | url_encode }}" class="cf-scale-pill">{{ s }}</a>
+          {%- endfor -%}
+        </div>
+        <p class="cf-search-overlay__label" style="margin-top:20px">Popular Categories</p>
+        <div class="cf-search-overlay__cats">
+          <a href="/collections/wargaming-heroes-characters">Wargaming Heroes</a>
+          <a href="/collections/busts-portraits">Busts & Portraits</a>
+          <a href="/collections/scale-military-vehicles">Military Vehicles</a>
+          <a href="/collections/fantasy-warriors">Fantasy Warriors</a>
+          <a href="/collections/anime-characters">Anime Characters</a>
+          <a href="/collections/accessories">Accessories</a>
+        </div>
+      </div>
+      <!-- Results -->
+      <div class="cf-search-overlay__results" id="cf-search-results" hidden></div>
+    </div>
+  </div>
+</div>
+
+<style>
+.cf-search-overlay{position:fixed;inset:0;z-index:500;display:flex;align-items:flex-start;justify-content:center;padding-top:10vh;}
+.cf-search-overlay[hidden]{display:none;}
+.cf-search-overlay__backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}
+.cf-search-overlay__content{position:relative;width:100%;max-width:680px;background:var(--cf-bg-card,#141414);border:1px solid var(--cf-border,#222);border-radius:12px;overflow:hidden;max-height:80vh;display:flex;flex-direction:column;}
+.cf-search-overlay__header{display:flex;align-items:center;border-bottom:1px solid var(--cf-border,#222);padding:0 16px;}
+.cf-search-overlay__input{flex:1;padding:18px 8px;background:transparent;border:none;color:var(--cf-text,#e8e8e8);font-size:18px;font-family:var(--cf-font-body);outline:none;}
+.cf-search-overlay__input::placeholder{color:var(--cf-text-muted,#888);}
+.cf-search-overlay__close{background:none;border:none;color:var(--cf-text-muted);font-size:22px;cursor:pointer;padding:8px;transition:color 0.15s;}
+.cf-search-overlay__close:hover{color:var(--cf-accent);}
+.cf-search-overlay__body{padding:20px;overflow-y:auto;}
+.cf-search-overlay__label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--cf-accent);margin:0 0 10px;}
+.cf-search-overlay__pills{display:flex;gap:6px;flex-wrap:wrap;}
+.cf-search-overlay__cats{display:flex;flex-direction:column;gap:4px;}
+.cf-search-overlay__cats a{color:var(--cf-text-muted);text-decoration:none;font-size:14px;padding:4px 0;}
+.cf-search-overlay__cats a:hover{color:var(--cf-accent);}
+.cf-search-results__grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+.cf-search-results__item{display:flex;gap:12px;padding:10px;border-radius:8px;text-decoration:none;transition:background 0.15s;}
+.cf-search-results__item:hover{background:rgba(255,255,255,0.03);}
+.cf-search-results__img{width:64px;height:64px;border-radius:6px;object-fit:cover;background:#111;flex-shrink:0;}
+.cf-search-results__info{}
+.cf-search-results__title{font-size:13px;color:var(--cf-text);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.cf-search-results__price{font-family:var(--cf-font-display);font-size:15px;color:var(--cf-accent);margin-top:2px;}
+.cf-search-results__empty{text-align:center;color:var(--cf-text-muted);padding:24px;font-size:14px;}
+@media(max-width:768px){
+  .cf-search-overlay{padding-top:0;}
+  .cf-search-overlay__content{max-width:100%;border-radius:0;max-height:100vh;height:100vh;}
+  .cf-search-results__grid{grid-template-columns:1fr;}
+}
+</style>
+
+<script>
+(function(){
+  const overlay=document.getElementById('cf-search-overlay');
+  const input=document.getElementById('cf-search-input');
+  const results=document.getElementById('cf-search-results');
+  const defaults=document.getElementById('cf-search-default');
+  const backdrop=document.getElementById('cf-search-backdrop');
+  const closeBtn=document.getElementById('cf-search-close');
+  let timer;
+
+  window.openSearchOverlay=function(){
+    overlay.hidden=false;
+    document.body.style.overflow='hidden';
+    setTimeout(()=>input.focus(),100);
+  };
+  function close(){
+    overlay.hidden=true;
+    document.body.style.overflow='';
+    input.value='';
+    results.hidden=true;
+    defaults.hidden=false;
+  }
+  backdrop?.addEventListener('click',close);
+  closeBtn?.addEventListener('click',close);
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')close();});
+
+  input?.addEventListener('input',()=>{
+    clearTimeout(timer);
+    const q=input.value.trim();
+    if(q.length<2){results.hidden=true;defaults.hidden=false;return;}
+    defaults.hidden=true;
+    results.hidden=false;
+    timer=setTimeout(()=>search(q),300);
+  });
+
+  async function search(q){
+    try{
+      const r=await fetch(`/search/suggest.json?q=${encodeURIComponent(q)}&resources[type]=product&resources[limit]=8`);
+      const data=await r.json();
+      const products=data?.resources?.results?.products||[];
+      if(!products.length){
+        results.innerHTML='<div class="cf-search-results__empty">No results for "'+q+'"</div>';
+        return;
+      }
+      let html='<div class="cf-search-results__grid">';
+      products.forEach(p=>{
+        const img=p.image||p.featured_image?.url||'';
+        const price=p.price?Shopify.formatMoney?.(parseInt(p.price)*100)||'$'+p.price:'';
+        html+=`<a href="${p.url}" class="cf-search-results__item">
+          ${img?`<img src="${img}" class="cf-search-results__img" width="64" height="64" loading="lazy">`:''}
+          <div class="cf-search-results__info">
+            <div class="cf-search-results__title">${p.title}</div>
+            <div class="cf-search-results__price">${price}</div>
+          </div>
+        </a>`;
+      });
+      html+='</div>';
+      results.innerHTML=html;
+    }catch(e){
+      results.innerHTML='<div class="cf-search-results__empty">Search unavailable</div>';
+    }
+  }
+})();
+</script>
+
+{% schema %}
+{ "name": "Search Overlay", "tag": "div" }
+{% endschema %}

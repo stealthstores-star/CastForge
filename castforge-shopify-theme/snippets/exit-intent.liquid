@@ -1,0 +1,38 @@
+{%- comment -%} Exit-intent email popup — first-time visitors only. {% render 'exit-intent' %} {%- endcomment -%}
+<div class="cf-exit" id="cf-exit" hidden>
+  <div class="cf-exit__backdrop" onclick="document.getElementById('cf-exit').hidden=true"></div>
+  <div class="cf-exit__modal">
+    <button class="cf-exit__close" onclick="document.getElementById('cf-exit').hidden=true">✕</button>
+    <h2 class="cf-exit__title">Wait! Get 10% Off</h2>
+    <p class="cf-exit__sub">Join 4,000+ collectors and get an exclusive discount on your first order.</p>
+    {% form 'customer' %}
+      <input type="hidden" name="contact[tags]" value="exit-intent,newsletter">
+      <input type="email" name="contact[email]" placeholder="Your email" required class="cf-exit__input">
+      <button type="submit" class="cf-btn cf-btn--primary" style="width:100%;margin-top:8px;">Get My 10% Code →</button>
+    {% endform %}
+    <p class="cf-exit__code">Use code <strong>WELCOME10</strong> at checkout</p>
+  </div>
+</div>
+<style>
+.cf-exit{position:fixed;inset:0;z-index:600;display:flex;align-items:center;justify-content:center;}
+.cf-exit[hidden]{display:none;}
+.cf-exit__backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.8);}
+.cf-exit__modal{position:relative;background:var(--cf-bg-card);border:1px solid var(--cf-accent);border-radius:12px;padding:32px;max-width:400px;width:90%;text-align:center;}
+.cf-exit__close{position:absolute;top:10px;right:14px;background:none;border:none;color:var(--cf-text-muted);font-size:20px;cursor:pointer;}
+.cf-exit__title{font-family:var(--cf-font-display);font-size:28px;color:var(--cf-accent);margin:0 0 8px;}
+.cf-exit__sub{font-size:14px;color:var(--cf-text-muted);margin:0 0 20px;}
+.cf-exit__input{width:100%;padding:14px;background:var(--cf-bg);border:1px solid var(--cf-border);border-radius:6px;color:var(--cf-text);font-size:14px;}
+.cf-exit__code{font-size:13px;color:var(--cf-text-muted);margin:12px 0 0;}
+</style>
+<script>
+(function(){
+  if(localStorage.getItem('cf_exit_shown'))return;
+  document.addEventListener('mouseout',function handler(e){
+    if(e.clientY<5&&!e.relatedTarget){
+      document.getElementById('cf-exit').hidden=false;
+      localStorage.setItem('cf_exit_shown','1');
+      document.removeEventListener('mouseout',handler);
+    }
+  });
+})();
+</script>

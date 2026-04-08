@@ -1,0 +1,34 @@
+{%- comment -%} Social proof ticker — "Mike from Texas just bought..." {% render 'social-proof-ticker' %} {%- endcomment -%}
+<div class="cf-ticker" id="cf-ticker">
+  <div class="cf-ticker__inner" id="cf-ticker-inner"></div>
+</div>
+<style>
+.cf-ticker{position:fixed;bottom:20px;left:20px;z-index:80;pointer-events:none;}
+.cf-ticker__inner{background:var(--cf-bg-card,#141414);border:1px solid var(--cf-border,#222);border-radius:10px;padding:12px 16px;box-shadow:0 8px 24px rgba(0,0,0,0.4);max-width:320px;opacity:0;transform:translateY(10px);transition:opacity 0.4s,transform 0.4s;font-family:var(--cf-font-body);}
+.cf-ticker__inner.is-visible{opacity:1;transform:translateY(0);}
+.cf-ticker__text{font-size:13px;color:var(--cf-text,#e8e8e8);line-height:1.4;}
+.cf-ticker__text strong{color:var(--cf-accent);}
+.cf-ticker__time{font-size:11px;color:var(--cf-text-muted);margin-top:2px;}
+@media(max-width:768px){.cf-ticker{bottom:10px;left:10px;right:10px;}.cf-ticker__inner{max-width:100%;}}
+</style>
+<script>
+(function(){
+  const names=['Mike','Sarah','James','Emma','Alex','Sophie','David','Chris','Laura','Tom','Ben','Katie','Oliver','Ruby','Jack','Lily','Harry','Amy','George','Megan'];
+  const places=['Texas','London','Berlin','Sydney','Toronto','Auckland','Stockholm','Madrid','Paris','Amsterdam','Dublin','Vienna','Oslo','Milan','Lisbon','Warsaw','Prague','Helsinki','Zurich','Singapore'];
+  const items=['1/35 Tiger Tank','WWII German Soldier','Fantasy Dragon Bust','75mm Viking Warrior','1/72 Spitfire','Sci-Fi Bounty Hunter','28mm Orc Warband','1/10 Knight Bust','Anime Samurai Girl','Medieval Castle Terrain','1/24 Ferrari Kit','Cyberpunk Mercenary','Dwarf Berserker','Elven Mage Figure','Sherman Tank 1/35','Zero Fighter 1/48','Battle Damaged Ruin','Paint Brush Set','1/35 Panther Tank','Resin Display Base'];
+  const el=document.getElementById('cf-ticker-inner');
+  if(!el)return;
+  function show(){
+    const n=names[Math.floor(Math.random()*names.length)];
+    const p=places[Math.floor(Math.random()*places.length)];
+    const item=items[Math.floor(Math.random()*items.length)];
+    const mins=Math.floor(Math.random()*43)+2;
+    el.innerHTML=`<div class="cf-ticker__text">🔥 <strong>${n}</strong> from ${p} just bought <strong>${item}</strong></div><div class="cf-ticker__time">${mins} minutes ago</div>`;
+    el.classList.add('is-visible');
+    setTimeout(()=>{el.classList.remove('is-visible');},4000);
+  }
+  // First show after 8s, then every 15-25s
+  setTimeout(show,8000);
+  setInterval(show,Math.floor(Math.random()*10000)+15000);
+})();
+</script>

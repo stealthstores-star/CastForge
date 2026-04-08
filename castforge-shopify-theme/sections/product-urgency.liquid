@@ -30,13 +30,17 @@
     }, 8000);
   }
 
-  // Countdown to end of current business day (rolling 8hr window)
+  // Persistent countdown — survives page refresh via localStorage
   function updateCountdown() {
-    const now = new Date();
-    // Use visitor's local time, 8-hour rolling window
-    let cutoff = new Date(now);
-    cutoff.setHours(now.getHours() + 8 - (now.getHours() % 8), 0, 0, 0);
-    if (cutoff - now < 1800000) cutoff.setHours(cutoff.getHours() + 8); // min 30min
+    let cutoff = localStorage.getItem('cf_countdown_cutoff');
+    const now = Date.now();
+    if (!cutoff || parseInt(cutoff) <= now) {
+      // Set new 6-hour countdown
+      cutoff = now + 6 * 3600000;
+      localStorage.setItem('cf_countdown_cutoff', cutoff);
+    } else {
+      cutoff = parseInt(cutoff);
+    }
     const diff = Math.max(0, cutoff - now);
     const h = Math.floor(diff / 3600000);
     const m = Math.floor((diff % 3600000) / 60000);
@@ -46,6 +50,13 @@
   }
   updateCountdown();
   setInterval(updateCountdown, 1000);
+
+  // "Last ordered X minutes ago"
+  const lastOrdered = Math.floor(Math.random() * 43) + 2;
+  const loEl = document.createElement('div');
+  loEl.className = 'cf-urgency__item';
+  loEl.innerHTML = `<span class="cf-urgency__icon">🛒</span><span class="cf-urgency__text">Last ordered <strong>${lastOrdered} min</strong> ago</span>`;
+  document.querySelector('.cf-urgency__grid')?.appendChild(loEl);
 })();
 </script>
 
