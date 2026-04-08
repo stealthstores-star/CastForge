@@ -1,36 +1,74 @@
 <section class="cf-recently-viewed" id="cf-recently-viewed" style="display:none">
   <div class="cf-container">
     <h2 class="cf-section-title">Recently Viewed</h2>
-    <div class="cf-related__grid" id="cf-rv-grid"></div>
+    <div class="cf-rv-scroll" id="cf-rv-scroll"></div>
   </div>
 </section>
 
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-  try {
-    const rv = JSON.parse(localStorage.getItem('cf_recently_viewed') || '[]');
-    const currentId = {{ product.id }};
-    const others = rv.filter(p => p.id !== currentId).slice(0, 4);
-    if (others.length === 0) return;
+<style>
+.cf-rv-scroll{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;}
+.cf-rv-scroll::-webkit-scrollbar{height:4px;}
+.cf-rv-scroll::-webkit-scrollbar-thumb{background:var(--cf-border);border-radius:2px;}
+.cf-rv-scroll .cf-pcard{min-width:220px;max-width:220px;scroll-snap-align:start;flex-shrink:0;}
+@media(max-width:768px){.cf-rv-scroll .cf-pcard{min-width:160px;max-width:160px;}}
+</style>
 
-    const grid = document.getElementById('cf-rv-grid');
-    const section = document.getElementById('cf-recently-viewed');
-    others.forEach(p => {
-      const card = document.createElement('a');
-      card.href = p.url;
-      card.className = 'cf-product-card';
-      card.innerHTML = `
-        <div class="cf-product-card__img">
-          ${p.image ? `<img src="${p.image}" alt="${p.title}" width="400" height="400" loading="lazy">` : ''}
-        </div>
-        <h3 class="cf-product-card__title">${p.title.substring(0, 60)}</h3>
-        <span class="cf-product-card__price">${Shopify.formatMoney ? Shopify.formatMoney(p.price) : ''}</span>
-      `;
-      grid.appendChild(card);
-    });
-    section.style.display = '';
+<script>
+(function(){
+  const currentHandle = {{ product.handle | json }};
+  const currentId = {{ product.id }};
+  const section = document.getElementById('cf-recently-viewed');
+  const scroll = document.getElementById('cf-rv-scroll');
+  if (!section || !scroll) return;
+
+  // Push current product to recently viewed
+  try {
+    let rv = JSON.parse(localStorage.getItem('cf_recently_viewed') || '[]');
+    rv = rv.filter(h => h !== currentHandle);
+    rv.unshift(currentHandle);
+    localStorage.setItem('cf_recently_viewed', JSON.stringify(rv.slice(0, 10)));
   } catch(e) {}
-});
+
+  // Render recently viewed (excluding current)
+  try {
+    let handles = JSON.parse(localStorage.getItem('cf_recently_viewed') || '[]');
+    handles = handles.filter(h => h !== currentHandle).slice(0, 8);
+    if (!handles.length) return;
+
+    let loaded = 0;
+    handles.forEach(handle => {
+      fetch('/products/' + handle + '.js')
+        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+        .then(p => {
+          const img = p.featured_image || '';
+          const price = p.price;
+          const comparePrice = p.compare_at_price;
+          const compareHtml = comparePrice && comparePrice > price
+            ? `<span class="cf-pcard__was">${Shopify.formatMoney(comparePrice)}</span>
+               <span class="cf-pcard__save">-${Math.round((1 - price / comparePrice) * 100)}%</span>` : '';
+
+          const card = document.createElement('a');
+          card.href = p.url;
+          card.className = 'cf-pcard';
+          card.innerHTML = `
+            <div class="cf-pcard__img">
+              ${img ? `<img src="${img}" alt="${p.title}" width="500" height="500" loading="lazy">` : ''}
+            </div>
+            <div class="cf-pcard__info">
+              <h3 class="cf-pcard__title">${p.title.substring(0, 60)}</h3>
+              <div class="cf-pcard__prices">
+                <span class="cf-pcard__price">${Shopify.formatMoney(price)}</span>
+                ${compareHtml}
+              </div>
+            </div>`;
+          scroll.appendChild(card);
+          loaded++;
+          if (loaded > 0) section.style.display = '';
+        })
+        .catch(() => {});
+    });
+  } catch(e) {}
+})();
 </script>
 
 {% schema %}

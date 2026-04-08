@@ -88,8 +88,11 @@
   closeBtn?.addEventListener('click',close);
   document.addEventListener('keydown',e=>{if(e.key==='Escape')close();});
 
+  let focusIdx=-1;
+
   input?.addEventListener('input',()=>{
     clearTimeout(timer);
+    focusIdx=-1;
     const q=input.value.trim();
     if(q.length<2){results.hidden=true;defaults.hidden=false;return;}
     defaults.hidden=true;
@@ -97,13 +100,38 @@
     timer=setTimeout(()=>search(q),300);
   });
 
+  // Keyboard navigation: arrow up/down to move, enter to select
+  input?.addEventListener('keydown',(e)=>{
+    const items=results.querySelectorAll('.cf-search-results__item');
+    if(!items.length)return;
+    if(e.key==='ArrowDown'){
+      e.preventDefault();
+      focusIdx=Math.min(focusIdx+1,items.length-1);
+      highlightItem(items);
+    }else if(e.key==='ArrowUp'){
+      e.preventDefault();
+      focusIdx=Math.max(focusIdx-1,0);
+      highlightItem(items);
+    }else if(e.key==='Enter'&&focusIdx>=0){
+      e.preventDefault();
+      items[focusIdx]?.click();
+    }
+  });
+
+  function highlightItem(items){
+    items.forEach((it,i)=>{
+      it.style.background=i===focusIdx?'rgba(255,255,255,0.05)':'';
+    });
+    if(items[focusIdx])items[focusIdx].scrollIntoView({block:'nearest'});
+  }
+
   async function search(q){
     try{
       const r=await fetch(`/search/suggest.json?q=${encodeURIComponent(q)}&resources[type]=product&resources[limit]=8`);
       const data=await r.json();
       const products=data?.resources?.results?.products||[];
       if(!products.length){
-        results.innerHTML='<div class="cf-search-results__empty">No results for "'+q+'"</div>';
+        results.innerHTML='<div class="cf-search-results__empty">No results for "'+q.replace(/</g,'&lt;')+'"</div>';
         return;
       }
       let html='<div class="cf-search-results__grid">';
@@ -120,6 +148,7 @@
       });
       html+='</div>';
       results.innerHTML=html;
+      focusIdx=-1;
     }catch(e){
       results.innerHTML='<div class="cf-search-results__empty">Search unavailable</div>';
     }

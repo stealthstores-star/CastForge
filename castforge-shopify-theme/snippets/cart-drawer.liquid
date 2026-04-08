@@ -1,0 +1,153 @@
+{%- comment -%} Slide-in cart drawer. {% render 'cart-drawer' %} in theme.liquid {%- endcomment -%}
+<div class="cf-cart-drawer" id="cf-cart-drawer" hidden>
+  <div class="cf-cart-drawer__backdrop" id="cf-cart-backdrop"></div>
+  <div class="cf-cart-drawer__panel">
+    <div class="cf-cart-drawer__header">
+      <h2 class="cf-cart-drawer__title">Your Cart (<span id="cf-cart-count">0</span>)</h2>
+      <button class="cf-cart-drawer__close" id="cf-cart-close" aria-label="Close cart">&times;</button>
+    </div>
+    <div class="cf-cart-drawer__body" id="cf-cart-body">
+      <p class="cf-cart-drawer__empty" id="cf-cart-empty">Your cart is empty</p>
+      <div class="cf-cart-drawer__items" id="cf-cart-items"></div>
+    </div>
+    <div class="cf-cart-drawer__footer" id="cf-cart-footer" hidden>
+      <div class="cf-cart-drawer__subtotal">
+        <span>Subtotal</span>
+        <span id="cf-cart-subtotal" class="cf-cart-drawer__price"></span>
+      </div>
+      <p class="cf-cart-drawer__shipping">Free worldwide shipping on all orders</p>
+      <a href="/checkout" class="cf-cart-drawer__checkout">CHECKOUT</a>
+    </div>
+  </div>
+</div>
+
+<style>
+.cf-cart-drawer{position:fixed;inset:0;z-index:600;}
+.cf-cart-drawer[hidden]{display:none;}
+.cf-cart-drawer__backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);}
+.cf-cart-drawer__panel{position:absolute;top:0;right:0;bottom:0;width:420px;max-width:100%;background:var(--cf-bg,#0a0a0a);border-left:1px solid var(--cf-border,#222);display:flex;flex-direction:column;transform:translateX(100%);animation:cfCartSlideIn 0.25s ease forwards;}
+@keyframes cfCartSlideIn{to{transform:translateX(0);}}
+.cf-cart-drawer__header{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--cf-border,#222);}
+.cf-cart-drawer__title{font-family:var(--cf-font-display);font-size:20px;color:var(--cf-text,#e8e8e8);margin:0;text-transform:uppercase;letter-spacing:1px;}
+.cf-cart-drawer__close{background:none;border:none;color:var(--cf-text-muted);font-size:28px;cursor:pointer;padding:4px;}
+.cf-cart-drawer__body{flex:1;overflow-y:auto;padding:16px 24px;}
+.cf-cart-drawer__empty{text-align:center;color:var(--cf-text-muted);font-size:14px;padding:40px 0;}
+.cf-cart-drawer__items{display:flex;flex-direction:column;gap:16px;}
+
+.cf-cart-item{display:grid;grid-template-columns:72px 1fr;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--cf-border,#222);}
+.cf-cart-item__img{width:72px;height:72px;border-radius:6px;object-fit:cover;background:#111;border:1px solid var(--cf-border,#222);}
+.cf-cart-item__info{display:flex;flex-direction:column;gap:4px;}
+.cf-cart-item__title{font-size:13px;color:var(--cf-text,#e8e8e8);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.cf-cart-item__price{font-family:var(--cf-font-display);font-size:16px;color:var(--cf-accent,#FF6B1A);}
+.cf-cart-item__controls{display:flex;align-items:center;gap:8px;margin-top:auto;}
+.cf-cart-item__qty{display:flex;align-items:center;border:1px solid var(--cf-border,#222);border-radius:4px;overflow:hidden;}
+.cf-cart-item__qty button{width:28px;height:28px;background:var(--cf-bg-card,#141414);border:none;color:var(--cf-text);font-size:14px;cursor:pointer;}
+.cf-cart-item__qty span{width:28px;text-align:center;font-size:12px;color:var(--cf-text);}
+.cf-cart-item__remove{background:none;border:none;color:var(--cf-text-muted);font-size:11px;cursor:pointer;text-decoration:underline;margin-left:auto;}
+.cf-cart-item__remove:hover{color:var(--cf-red,#ef4444);}
+
+.cf-cart-drawer__footer{padding:20px 24px;border-top:1px solid var(--cf-border,#222);}
+.cf-cart-drawer__subtotal{display:flex;justify-content:space-between;font-size:15px;color:var(--cf-text);font-weight:600;margin-bottom:4px;}
+.cf-cart-drawer__price{font-family:var(--cf-font-display);font-size:20px;color:var(--cf-accent);}
+.cf-cart-drawer__shipping{font-size:12px;color:var(--cf-text-muted);margin:0 0 16px;}
+.cf-cart-drawer__checkout{display:block;text-align:center;padding:14px;background:var(--cf-accent);color:#fff;font-family:var(--cf-font-display);font-size:16px;letter-spacing:1px;text-transform:uppercase;text-decoration:none;border-radius:6px;transition:background 0.2s;}
+.cf-cart-drawer__checkout:hover{background:var(--cf-accent-hover,#FF8844);}
+@media(max-width:480px){.cf-cart-drawer__panel{width:100%;}}
+</style>
+
+<script>
+(function(){
+  const drawer = document.getElementById('cf-cart-drawer');
+  const backdrop = document.getElementById('cf-cart-backdrop');
+  const closeBtn = document.getElementById('cf-cart-close');
+  const itemsEl = document.getElementById('cf-cart-items');
+  const emptyEl = document.getElementById('cf-cart-empty');
+  const footerEl = document.getElementById('cf-cart-footer');
+  const countEl = document.getElementById('cf-cart-count');
+  const subtotalEl = document.getElementById('cf-cart-subtotal');
+
+  function close() {
+    drawer.hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  window.openCartDrawer = function() {
+    drawer.hidden = false;
+    document.body.style.overflow = 'hidden';
+    refreshCart();
+  };
+
+  backdrop?.addEventListener('click', close);
+  closeBtn?.addEventListener('click', close);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !drawer.hidden) close(); });
+
+  function refreshCart() {
+    fetch('/cart.js')
+      .then(r => r.json())
+      .then(cart => renderCart(cart))
+      .catch(() => {});
+  }
+
+  function renderCart(cart) {
+    countEl.textContent = cart.item_count;
+    // Update header badge too
+    const badge = document.querySelector('.cf-cart-badge');
+    if (badge) badge.textContent = cart.item_count;
+
+    if (!cart.items.length) {
+      itemsEl.innerHTML = '';
+      emptyEl.style.display = '';
+      footerEl.hidden = true;
+      return;
+    }
+    emptyEl.style.display = 'none';
+    footerEl.hidden = false;
+    subtotalEl.textContent = Shopify.formatMoney ? Shopify.formatMoney(cart.total_price) : '';
+
+    itemsEl.innerHTML = cart.items.map(item => `
+      <div class="cf-cart-item" data-key="${item.key}">
+        <img src="${item.image || ''}" alt="${item.title}" class="cf-cart-item__img" width="72" height="72" loading="lazy">
+        <div class="cf-cart-item__info">
+          <div class="cf-cart-item__title">${item.product_title}</div>
+          <div class="cf-cart-item__price">${Shopify.formatMoney ? Shopify.formatMoney(item.final_line_price) : ''}</div>
+          <div class="cf-cart-item__controls">
+            <div class="cf-cart-item__qty">
+              <button data-key="${item.key}" data-qty="${item.quantity - 1}" class="cf-cart-qty-change" aria-label="Decrease">−</button>
+              <span>${item.quantity}</span>
+              <button data-key="${item.key}" data-qty="${item.quantity + 1}" class="cf-cart-qty-change" aria-label="Increase">+</button>
+            </div>
+            <button class="cf-cart-item__remove cf-cart-qty-change" data-key="${item.key}" data-qty="0">Remove</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+
+    // Bind qty change buttons
+    itemsEl.querySelectorAll('.cf-cart-qty-change').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.key;
+        const qty = parseInt(btn.dataset.qty);
+        fetch('/cart/change.js', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: key, quantity: qty })
+        })
+        .then(r => r.json())
+        .then(cart => renderCart(cart))
+        .catch(() => {});
+      });
+    });
+  }
+
+  // Make cart icon in header open drawer instead of navigating
+  document.addEventListener('DOMContentLoaded', () => {
+    const cartLink = document.querySelector('a[href="/cart"]');
+    if (cartLink) {
+      cartLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.openCartDrawer();
+      });
+    }
+  });
+})();
+</script>

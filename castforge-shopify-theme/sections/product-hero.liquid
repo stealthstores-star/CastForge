@@ -166,11 +166,29 @@
   </div>
 </section>
 
+<!-- Volume discount tier ladder -->
+<div class="cf-volume-tiers">
+  <p class="cf-volume-tiers__title">Multi-Buy Savings</p>
+  <div class="cf-volume-tiers__grid">
+    <div class="cf-volume-tier"><span class="cf-volume-tier__qty">2+</span><span class="cf-volume-tier__pct">10% off</span></div>
+    <div class="cf-volume-tier"><span class="cf-volume-tier__qty">3+</span><span class="cf-volume-tier__pct">15% off</span></div>
+    <div class="cf-volume-tier cf-volume-tier--best"><span class="cf-volume-tier__qty">5+</span><span class="cf-volume-tier__pct">20% off</span><span class="cf-volume-tier__label">Best value</span></div>
+  </div>
+</div>
+
 <!-- Mobile sticky Add to Cart -->
 <div class="cf-sticky-cart" id="cf-sticky-cart">
+  {% if product.featured_image %}
+    <img src="{{ product.featured_image | image_url: width: 80 }}" alt="" class="cf-sticky-cart__thumb" width="40" height="40">
+  {% endif %}
   <span class="cf-sticky-cart__price">{{ product.selected_or_first_available_variant.price | money }}</span>
-  <button class="cf-sticky-cart__btn" onclick="document.getElementById('cf-product-form').requestSubmit()">
-    ADD TO CART
+  <div class="cf-sticky-cart__qty">
+    <button type="button" class="cf-sticky-qty-btn" data-action="minus" aria-label="Decrease">−</button>
+    <span class="cf-sticky-qty-val" id="cf-sticky-qty">1</span>
+    <button type="button" class="cf-sticky-qty-btn" data-action="plus" aria-label="Increase">+</button>
+  </div>
+  <button class="cf-sticky-cart__btn" id="cf-sticky-atc" {% unless product.available %}disabled{% endunless %}>
+    {% if product.available %}ADD TO CART{% else %}SOLD OUT{% endif %}
   </button>
 </div>
 
@@ -250,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Sticky cart on mobile
+  // Sticky cart on mobile — show/hide based on main ATC visibility
   const stickyCart = document.getElementById('cf-sticky-cart');
   const form = document.getElementById('cf-product-form');
   if (stickyCart && form) {
@@ -260,20 +278,62 @@ document.addEventListener('DOMContentLoaded', () => {
     observer.observe(form);
   }
 
-  // Recently viewed
-  try {
-    const rv = JSON.parse(localStorage.getItem('cf_recently_viewed') || '[]');
-    const pid = {{ product.id }};
-    const filtered = rv.filter(p => p.id !== pid).slice(0, 7);
-    filtered.unshift({
-      id: pid,
-      title: {{ product.title | json }},
-      url: {{ product.url | json }},
-      price: {{ product.selected_or_first_available_variant.price | json }},
-      image: {{ product.featured_image | image_url: width: 400 | json }}
+  // Sticky cart quantity buttons
+  let stickyQty = 1;
+  const stickyQtyEl = document.getElementById('cf-sticky-qty');
+  document.querySelectorAll('.cf-sticky-qty-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      stickyQty = btn.dataset.action === 'plus' ? Math.min(stickyQty + 1, 10) : Math.max(stickyQty - 1, 1);
+      if (stickyQtyEl) stickyQtyEl.textContent = stickyQty;
     });
-    localStorage.setItem('cf_recently_viewed', JSON.stringify(filtered.slice(0, 8)));
-  } catch(e) {}
+  });
+
+  // Sticky cart add to cart via /cart/add.js
+  const stickyAtcBtn = document.getElementById('cf-sticky-atc');
+  if (stickyAtcBtn) {
+    stickyAtcBtn.addEventListener('click', () => {
+      const variantId = document.getElementById('cf-variant-id').value;
+      stickyAtcBtn.textContent = 'ADDING...';
+      stickyAtcBtn.disabled = true;
+      fetch('/cart/add.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: parseInt(variantId), quantity: stickyQty })
+      })
+      .then(r => r.json())
+      .then(() => {
+        stickyAtcBtn.textContent = 'ADDED!';
+        setTimeout(() => { stickyAtcBtn.textContent = 'ADD TO CART'; stickyAtcBtn.disabled = false; }, 1500);
+        if (window.openCartDrawer) window.openCartDrawer();
+      })
+      .catch(() => { stickyAtcBtn.textContent = 'ADD TO CART'; stickyAtcBtn.disabled = false; });
+    });
+  }
+
+  // Main form: intercept submit to use /cart/add.js + open cart drawer
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const variantId = document.getElementById('cf-variant-id').value;
+      const qty = parseInt(document.getElementById('cf-qty-input').value) || 1;
+      const btn = form.querySelector('.cf-add-btn');
+      const origText = btn.textContent;
+      btn.textContent = 'ADDING...';
+      btn.disabled = true;
+      fetch('/cart/add.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: parseInt(variantId), quantity: qty })
+      })
+      .then(r => r.json())
+      .then(() => {
+        btn.textContent = 'ADDED!';
+        setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 1500);
+        if (window.openCartDrawer) window.openCartDrawer();
+      })
+      .catch(() => { btn.textContent = origText; btn.disabled = false; });
+    });
+  }
 });
 </script>
 

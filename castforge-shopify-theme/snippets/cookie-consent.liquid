@@ -25,6 +25,7 @@
 function cfAcceptCookies(){
   localStorage.setItem('cf_cookies','accepted');
   document.getElementById('cf-cookie').hidden=true;
+  window.dispatchEvent(new Event('cf:cookies:accepted'));
 }
 function cfDeclineCookies(){
   localStorage.setItem('cf_cookies','declined');

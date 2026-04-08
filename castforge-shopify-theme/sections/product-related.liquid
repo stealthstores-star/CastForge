@@ -1,27 +1,61 @@
-<section class="cf-related">
+<section class="cf-related" id="cf-recommendations">
   <div class="cf-container">
-    <h2 class="cf-section-title">You May Also Like</h2>
-    <div class="cf-related__grid">
-      {% assign collection = product.collections.first %}
-      {% if collection %}
-        {% for item in collection.products limit: 8 %}
-          {% unless item.id == product.id %}
-            <a href="{{ item.url }}" class="cf-product-card">
-              <div class="cf-product-card__img">
-                {% if item.featured_image %}
-                  <img src="{{ item.featured_image | image_url: width: 400 }}"
-                       alt="{{ item.title }}" width="400" height="400" loading="lazy">
-                {% endif %}
-              </div>
-              <h3 class="cf-product-card__title">{{ item.title | truncate: 60 }}</h3>
-              <span class="cf-product-card__price">{{ item.price | money }}</span>
-            </a>
-          {% endunless %}
-        {% endfor %}
-      {% endif %}
+    <h2 class="cf-section-title">Pairs Well With</h2>
+    <div class="cf-related__grid" id="cf-recs-grid">
+      {%- comment -%} Fallback: server-side collection-based (replaced by JS API call below) {%- endcomment -%}
+      {%- assign collection = product.collections.first -%}
+      {%- if collection -%}
+        {%- assign shown = 0 -%}
+        {%- for item in collection.products limit: 8 -%}
+          {%- unless item.id == product.id -%}
+            {%- if shown < 4 -%}
+              {% render 'product-card', product: item %}
+              {%- assign shown = shown | plus: 1 -%}
+            {%- endif -%}
+          {%- endunless -%}
+        {%- endfor -%}
+      {%- endif -%}
     </div>
   </div>
 </section>
+
+<script>
+(function(){
+  const pid = {{ product.id }};
+  const grid = document.getElementById('cf-recs-grid');
+  if (!grid) return;
+
+  fetch('/recommendations/products.json?product_id=' + pid + '&limit=4&intent=related')
+    .then(r => r.json())
+    .then(data => {
+      const products = data.products;
+      if (!products || !products.length) return;
+      grid.innerHTML = '';
+      products.forEach(p => {
+        const img = p.featured_image ? p.featured_image : (p.images && p.images[0] ? p.images[0] : '');
+        const compareHtml = p.compare_at_price && p.compare_at_price > p.price
+          ? `<span class="cf-pcard__was">${Shopify.formatMoney(p.compare_at_price)}</span>
+             <span class="cf-pcard__save">-${Math.round((1 - p.price / p.compare_at_price) * 100)}%</span>` : '';
+        const card = document.createElement('a');
+        card.href = p.url;
+        card.className = 'cf-pcard';
+        card.innerHTML = `
+          <div class="cf-pcard__img">
+            ${img ? `<img src="${img}" alt="${p.title}" width="500" height="500" loading="lazy">` : ''}
+          </div>
+          <div class="cf-pcard__info">
+            <h3 class="cf-pcard__title">${p.title.substring(0, 60)}</h3>
+            <div class="cf-pcard__prices">
+              <span class="cf-pcard__price">${Shopify.formatMoney(p.price)}</span>
+              ${compareHtml}
+            </div>
+          </div>`;
+        grid.appendChild(card);
+      });
+    })
+    .catch(() => {});
+})();
+</script>
 
 {% schema %}
 {

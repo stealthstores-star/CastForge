@@ -1,0 +1,215 @@
+{%- comment -%} Quick View modal. Rendered globally, populated via JS. {%- endcomment -%}
+<div class="cf-qv" id="cf-qv" hidden>
+  <div class="cf-qv__backdrop" id="cf-qv-backdrop"></div>
+  <div class="cf-qv__panel">
+    <button class="cf-qv__close" id="cf-qv-close" aria-label="Close">&times;</button>
+    <div class="cf-qv__grid">
+      <div class="cf-qv__gallery" id="cf-qv-gallery"></div>
+      <div class="cf-qv__info">
+        <h2 class="cf-qv__title" id="cf-qv-title"></h2>
+        <div class="cf-qv__prices" id="cf-qv-prices"></div>
+        <div class="cf-qv__desc" id="cf-qv-desc"></div>
+        <div class="cf-qv__variants" id="cf-qv-variants"></div>
+        <div class="cf-qv__actions">
+          <div class="cf-qty cf-qv__qty">
+            <button type="button" class="cf-qty__btn" id="cf-qv-minus" aria-label="Decrease">−</button>
+            <input type="number" value="1" min="1" max="10" class="cf-qty__input" id="cf-qv-qty-input">
+            <button type="button" class="cf-qty__btn" id="cf-qv-plus" aria-label="Increase">+</button>
+          </div>
+          <button class="cf-add-btn cf-qv__atc" id="cf-qv-atc">ADD TO CART</button>
+        </div>
+        <a href="#" class="cf-qv__full-link" id="cf-qv-link">View Full Details →</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.cf-qv{position:fixed;inset:0;z-index:550;display:flex;align-items:center;justify-content:center;padding:20px;}
+.cf-qv[hidden]{display:none;}
+.cf-qv__backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(4px);}
+.cf-qv__panel{position:relative;background:var(--cf-bg,#0a0a0a);border:1px solid var(--cf-border,#222);border-radius:12px;max-width:900px;width:100%;max-height:85vh;overflow-y:auto;}
+.cf-qv__close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--cf-text-muted);font-size:28px;cursor:pointer;z-index:2;padding:4px;}
+.cf-qv__close:hover{color:var(--cf-text);}
+.cf-qv__grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:32px;}
+.cf-qv__gallery{display:flex;flex-direction:column;gap:8px;}
+.cf-qv__gallery img{width:100%;border-radius:8px;background:#111;}
+.cf-qv__gallery-main{aspect-ratio:1;object-fit:contain;border:1px solid var(--cf-border,#222);}
+.cf-qv__gallery-thumbs{display:flex;gap:6px;overflow-x:auto;}
+.cf-qv__gallery-thumb{width:56px;height:56px;object-fit:cover;border-radius:4px;cursor:pointer;border:2px solid transparent;flex-shrink:0;}
+.cf-qv__gallery-thumb:hover,.cf-qv__gallery-thumb.is-active{border-color:var(--cf-accent);}
+.cf-qv__title{font-family:var(--cf-font-display);font-size:24px;color:var(--cf-text);margin:0 0 12px;padding-right:32px;}
+.cf-qv__prices{display:flex;align-items:baseline;gap:8px;margin-bottom:12px;}
+.cf-qv__desc{font-size:14px;color:var(--cf-text-muted);line-height:1.6;margin-bottom:16px;max-height:120px;overflow-y:auto;}
+.cf-qv__variants{margin-bottom:16px;}
+.cf-qv__variant-select{width:100%;padding:8px 12px;background:var(--cf-bg-card,#141414);border:1px solid var(--cf-border);border-radius:6px;color:var(--cf-text);font-size:14px;margin-top:4px;}
+.cf-qv__actions{display:flex;gap:10px;margin-bottom:16px;}
+.cf-qv__qty{flex-shrink:0;}
+.cf-qv__atc{flex:1;}
+.cf-qv__full-link{font-size:13px;color:var(--cf-accent);text-decoration:none;}
+.cf-qv__full-link:hover{text-decoration:underline;}
+@media(max-width:768px){
+  .cf-qv__grid{grid-template-columns:1fr;padding:20px;}
+  .cf-qv__panel{max-height:90vh;}
+}
+</style>
+
+<script>
+(function(){
+  const modal = document.getElementById('cf-qv');
+  const backdrop = document.getElementById('cf-qv-backdrop');
+  const closeBtn = document.getElementById('cf-qv-close');
+  const galleryEl = document.getElementById('cf-qv-gallery');
+  const titleEl = document.getElementById('cf-qv-title');
+  const pricesEl = document.getElementById('cf-qv-prices');
+  const descEl = document.getElementById('cf-qv-desc');
+  const variantsEl = document.getElementById('cf-qv-variants');
+  const atcBtn = document.getElementById('cf-qv-atc');
+  const linkEl = document.getElementById('cf-qv-link');
+  const qtyInput = document.getElementById('cf-qv-qty-input');
+  const minusBtn = document.getElementById('cf-qv-minus');
+  const plusBtn = document.getElementById('cf-qv-plus');
+
+  let currentVariantId = null;
+  let productData = null;
+
+  function close() {
+    modal.hidden = true;
+    document.body.style.overflow = '';
+  }
+  backdrop?.addEventListener('click', close);
+  closeBtn?.addEventListener('click', close);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modal.hidden) close(); });
+
+  // Qty buttons
+  minusBtn?.addEventListener('click', () => { qtyInput.value = Math.max(1, parseInt(qtyInput.value) - 1); });
+  plusBtn?.addEventListener('click', () => { qtyInput.value = Math.min(10, parseInt(qtyInput.value) + 1); });
+
+  // ATC
+  atcBtn?.addEventListener('click', () => {
+    if (!currentVariantId) return;
+    atcBtn.textContent = 'ADDING...';
+    atcBtn.disabled = true;
+    fetch('/cart/add.js', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: currentVariantId, quantity: parseInt(qtyInput.value) || 1 })
+    })
+    .then(r => r.json())
+    .then(() => {
+      atcBtn.textContent = 'ADDED!';
+      setTimeout(() => { close(); atcBtn.textContent = 'ADD TO CART'; atcBtn.disabled = false; qtyInput.value = 1; }, 1000);
+      if (window.openCartDrawer) setTimeout(() => window.openCartDrawer(), 1100);
+    })
+    .catch(() => { atcBtn.textContent = 'ADD TO CART'; atcBtn.disabled = false; });
+  });
+
+  window.openQuickView = function(handle) {
+    modal.hidden = false;
+    document.body.style.overflow = 'hidden';
+    galleryEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--cf-text-muted)">Loading...</div>';
+    titleEl.textContent = '';
+    pricesEl.innerHTML = '';
+    descEl.innerHTML = '';
+    variantsEl.innerHTML = '';
+
+    fetch('/products/' + handle + '.js')
+      .then(r => r.json())
+      .then(p => {
+        productData = p;
+        currentVariantId = p.variants[0].id;
+
+        // Gallery
+        let mainImg = p.featured_image || (p.images[0] || '');
+        let galleryHtml = `<img src="${mainImg}" class="cf-qv__gallery-main" id="cf-qv-main-img" alt="${p.title}">`;
+        if (p.images.length > 1) {
+          galleryHtml += '<div class="cf-qv__gallery-thumbs">';
+          p.images.forEach((img, i) => {
+            galleryHtml += `<img src="${img}" class="cf-qv__gallery-thumb ${i === 0 ? 'is-active' : ''}" data-src="${img}" alt="" loading="lazy">`;
+          });
+          galleryHtml += '</div>';
+        }
+        galleryEl.innerHTML = galleryHtml;
+
+        // Thumb click
+        galleryEl.querySelectorAll('.cf-qv__gallery-thumb').forEach(th => {
+          th.addEventListener('click', () => {
+            document.getElementById('cf-qv-main-img').src = th.dataset.src;
+            galleryEl.querySelectorAll('.cf-qv__gallery-thumb').forEach(t => t.classList.remove('is-active'));
+            th.classList.add('is-active');
+          });
+        });
+
+        // Title
+        titleEl.textContent = p.title;
+
+        // Price
+        const v = p.variants[0];
+        let priceHtml = `<span class="cf-pcard__price" style="font-size:22px">${Shopify.formatMoney(v.price)}</span>`;
+        if (v.compare_at_price && v.compare_at_price > v.price) {
+          priceHtml += `<span class="cf-pcard__was">${Shopify.formatMoney(v.compare_at_price)}</span>`;
+          priceHtml += `<span class="cf-pcard__save">-${Math.round((1 - v.price / v.compare_at_price) * 100)}%</span>`;
+        }
+        pricesEl.innerHTML = priceHtml;
+
+        // Description (strip to first 300 chars of text)
+        const tmp = document.createElement('div');
+        tmp.innerHTML = p.description;
+        descEl.textContent = (tmp.textContent || '').substring(0, 300) + (tmp.textContent.length > 300 ? '...' : '');
+
+        // Variants
+        if (!p.has_only_default_variant && p.variants.length > 1) {
+          let vHtml = '';
+          p.options.forEach((opt, oi) => {
+            const values = [...new Set(p.variants.map(v => v.options[oi]))];
+            vHtml += `<label style="font-size:12px;color:var(--cf-text-muted);text-transform:uppercase;letter-spacing:0.5px;">${opt}</label>`;
+            vHtml += `<select class="cf-qv__variant-select" data-option-index="${oi}">`;
+            values.forEach(val => { vHtml += `<option value="${val}">${val}</option>`; });
+            vHtml += '</select>';
+          });
+          variantsEl.innerHTML = vHtml;
+
+          variantsEl.querySelectorAll('.cf-qv__variant-select').forEach(sel => {
+            sel.addEventListener('change', () => {
+              const selected = [];
+              variantsEl.querySelectorAll('.cf-qv__variant-select').forEach(s => selected.push(s.value));
+              const match = p.variants.find(v => selected.every((val, i) => v.options[i] === val));
+              if (match) {
+                currentVariantId = match.id;
+                let ph = `<span class="cf-pcard__price" style="font-size:22px">${Shopify.formatMoney(match.price)}</span>`;
+                if (match.compare_at_price && match.compare_at_price > match.price) {
+                  ph += `<span class="cf-pcard__was">${Shopify.formatMoney(match.compare_at_price)}</span>`;
+                }
+                pricesEl.innerHTML = ph;
+                atcBtn.textContent = match.available ? 'ADD TO CART' : 'SOLD OUT';
+                atcBtn.disabled = !match.available;
+              }
+            });
+          });
+        }
+
+        // Link
+        linkEl.href = p.url;
+        atcBtn.textContent = p.available ? 'ADD TO CART' : 'SOLD OUT';
+        atcBtn.disabled = !p.available;
+      })
+      .catch(() => {
+        galleryEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--cf-text-muted)">Could not load product</div>';
+      });
+  };
+
+  // Delegate click on product card "Quick View" buttons
+  document.addEventListener('click', (e) => {
+    const quickBtn = e.target.closest('.cf-pcard__quick');
+    if (!quickBtn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const card = quickBtn.closest('.cf-pcard');
+    if (!card) return;
+    // Extract handle from URL: /products/handle or /collections/x/products/handle
+    const href = card.getAttribute('href') || '';
+    const match = href.match(/\/products\/([^?#]+)/);
+    if (match) window.openQuickView(match[1]);
+  });
+})();
+</script>

@@ -1,36 +1,51 @@
 {%- comment -%}
-  Analytics placeholders — replace IDs before launch.
-  {% render 'analytics' %}
-  Included in theme.liquid <head>.
+  Analytics — only fires after cookie consent is accepted.
+  {% render 'analytics' %} in theme.liquid <head>.
 {%- endcomment -%}
 
-{%- comment -%} ── Google Analytics 4 ── {%- endcomment -%}
-{%- if settings.ga4_id != blank -%}
-<script async src="https://www.googletagmanager.com/gtag/js?id={{ settings.ga4_id }}"></script>
 <script>
-window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}
-gtag('js',new Date());gtag('config','{{ settings.ga4_id }}');
-</script>
-{%- endif -%}
+(function(){
+  function loadAnalytics() {
+    if (window.__cfAnalyticsLoaded) return;
+    window.__cfAnalyticsLoaded = true;
 
-{%- comment -%} ── Meta Pixel (Facebook) ── {%- endcomment -%}
-{%- if settings.meta_pixel_id != blank -%}
-<script>
-!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
-n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
-t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
-document,'script','https://connect.facebook.net/en_US/fbevents.js');
-fbq('init','{{ settings.meta_pixel_id }}');fbq('track','PageView');
-</script>
-<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id={{ settings.meta_pixel_id }}&ev=PageView&noscript=1"></noscript>
-{%- endif -%}
+    {%- comment -%} ── Google Analytics 4 ── {%- endcomment -%}
+    {%- if settings.ga4_id != blank -%}
+    var gs = document.createElement('script');
+    gs.async = true;
+    gs.src = 'https://www.googletagmanager.com/gtag/js?id={{ settings.ga4_id }}';
+    document.head.appendChild(gs);
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', '{{ settings.ga4_id }}');
+    {%- endif -%}
 
-{%- comment -%} ── Microsoft Clarity ── {%- endcomment -%}
-{%- if settings.clarity_id != blank -%}
-<script>
-(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
-t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
-y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","{{ settings.clarity_id }}");
+    {%- comment -%} ── Meta Pixel (Facebook) ── {%- endcomment -%}
+    {%- if settings.meta_pixel_id != blank -%}
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
+    document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init','{{ settings.meta_pixel_id }}');fbq('track','PageView');
+    {%- endif -%}
+
+    {%- comment -%} ── Microsoft Clarity ── {%- endcomment -%}
+    {%- if settings.clarity_id != blank -%}
+    (function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+    t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+    y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","{{ settings.clarity_id }}");
+    {%- endif -%}
+  }
+
+  // Only load analytics if user has accepted cookies
+  var consent = localStorage.getItem('cf_cookies');
+  if (consent === 'accepted') {
+    loadAnalytics();
+  }
+
+  // Listen for future consent (cookie-consent.liquid sets this)
+  window.addEventListener('cf:cookies:accepted', loadAnalytics);
+})();
 </script>
-{%- endif -%}
