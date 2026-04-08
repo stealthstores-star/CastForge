@@ -1,63 +1,59 @@
-<!-- DEBUG: verify metafield access — remove after confirming reviews work -->
-<!-- First product reviews metafield: {{ collections['all'].products.first.metafields.reviews.count }} -->
 <section class="cf-section">
   <div class="cf-container">
     <p class="cf-eyebrow">Trusted by Collectors</p>
     <h2 class="cf-h2">Customer Reviews</h2>
     <div class="cf-reviews-carousel">
       {%- assign shown = 0 -%}
-      {%- assign source_col = collections['best-sellers'] | default: collections['all'] -%}
-      {%- for product in source_col.products limit: 40 -%}
+      {%- assign src = collections['best-sellers'] | default: collections['all'] -%}
+      {%- for product in src.products limit: 50 -%}
         {%- if shown >= 6 -%}{%- break -%}{%- endif -%}
-        {%- assign rev_json = product.metafields.reviews.aliexpress -%}
-        {%- if rev_json != blank -%}
-          {%- assign reviews = rev_json.value -%}
-          {%- comment -%} Find first 5-star review with text >50 chars {%- endcomment -%}
-          {%- for rev in reviews -%}
-            {%- if rev.rating >= 5 and rev.text.size > 50 -%}
-              {%- assign shown = shown | plus: 1 -%}
-              <div class="cf-review-slide">
-                <div class="cf-review-slide__stars">★★★★★</div>
-                <p class="cf-review-slide__text">"{{ rev.text | truncate: 160 }}"</p>
-                <div class="cf-review-slide__footer">
-                  {%- if product.featured_image -%}
-                    <img src="{{ product.featured_image | image_url: width: 80 }}" alt="" width="40" height="40" class="cf-review-slide__thumb" loading="lazy">
-                  {%- endif -%}
-                  <div>
-                    <span class="cf-review-slide__name">{{ rev.name }}</span>
-                    <span class="cf-review-slide__product">{{ product.title | truncate: 30 }}</span>
+        {%- assign rev_count = product.metafields.reviews.count | plus: 0 -%}
+        {%- if rev_count > 0 -%}
+          {%- assign rev_raw = product.metafields.reviews.aliexpress.value -%}
+          {%- if rev_raw == blank -%}{%- assign rev_raw = product.metafields.reviews.aliexpress -%}{%- endif -%}
+          {%- if rev_raw != blank -%}
+            {%- assign revs = rev_raw -%}
+            {%- for rev in revs -%}
+              {%- if rev.rating >= 5 and rev.text.size > 30 and shown < 6 -%}
+                {%- assign shown = shown | plus: 1 -%}
+                <div class="cf-review-slide">
+                  <div class="cf-review-slide__stars">★★★★★</div>
+                  <p class="cf-review-slide__text">"{{ rev.text | truncate: 150 }}"</p>
+                  <div class="cf-review-slide__footer">
+                    {%- if product.featured_image -%}
+                      <img src="{{ product.featured_image | image_url: width: 80 }}" alt="" width="40" height="40" class="cf-review-slide__thumb" loading="lazy">
+                    {%- endif -%}
+                    <div>
+                      <span class="cf-review-slide__name">{{ rev.name }}</span>
+                      <span class="cf-review-slide__product">{{ product.title | truncate: 30 }}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              {%- break -%}
-            {%- endif -%}
-          {%- endfor -%}
+                {%- break -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
         {%- endif -%}
       {%- endfor -%}
-      {%- comment -%} If no real reviews yet, show nothing — don't fake it {%- endcomment -%}
       {%- if shown == 0 -%}
-        <div class="cf-reviews-empty">
-          <p>Reviews coming soon — we're collecting feedback from our customers.</p>
-        </div>
+        <div class="cf-reviews-empty"><p>Reviews coming soon — we're collecting feedback from customers.</p></div>
       {%- endif -%}
     </div>
   </div>
 </section>
-
 <style>
-.cf-reviews-carousel { display: flex; gap: 14px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
-.cf-reviews-carousel::-webkit-scrollbar { display: none; }
-.cf-review-slide { min-width: 280px; max-width: 320px; flex-shrink: 0; scroll-snap-align: start; background: var(--cf-bg-card); border: 1px solid var(--cf-border); border-radius: 10px; padding: 20px 18px; }
-.cf-review-slide__stars { color: var(--cf-star, #FFB800); font-size: 14px; margin-bottom: 10px; letter-spacing: 2px; }
-.cf-review-slide__text { font-size: 13px; line-height: 1.6; color: var(--cf-text-muted); margin: 0 0 14px; font-style: italic; }
-.cf-review-slide__footer { display: flex; align-items: center; gap: 10px; }
-.cf-review-slide__thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
-.cf-review-slide__name { display: block; font-size: 13px; font-weight: 600; color: var(--cf-text); }
-.cf-review-slide__product { display: block; font-size: 11px; color: var(--cf-text-muted); }
-.cf-reviews-empty { text-align: center; padding: 24px; color: var(--cf-text-muted); font-size: 14px; width: 100%; }
-@media (max-width: 768px) { .cf-review-slide { min-width: 260px; } }
+.cf-reviews-carousel{display:flex;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
+.cf-reviews-carousel::-webkit-scrollbar{display:none;}
+.cf-review-slide{min-width:280px;max-width:320px;flex-shrink:0;scroll-snap-align:start;background:var(--cf-bg-card);border:1px solid var(--cf-border);border-radius:10px;padding:20px 18px;}
+.cf-review-slide__stars{color:var(--cf-star,#FFB800);font-size:14px;margin-bottom:10px;letter-spacing:2px;}
+.cf-review-slide__text{font-size:13px;line-height:1.6;color:var(--cf-text-muted);margin:0 0 14px;font-style:italic;}
+.cf-review-slide__footer{display:flex;align-items:center;gap:10px;}
+.cf-review-slide__thumb{width:40px;height:40px;border-radius:6px;object-fit:cover;flex-shrink:0;}
+.cf-review-slide__name{display:block;font-size:13px;font-weight:600;color:var(--cf-text);}
+.cf-review-slide__product{display:block;font-size:11px;color:var(--cf-text-muted);}
+.cf-reviews-empty{text-align:center;padding:24px;color:var(--cf-text-muted);font-size:14px;width:100%;}
+@media(max-width:768px){.cf-review-slide{min-width:260px;}}
 </style>
-
 {% schema %}
 { "name": "Customer Reviews", "tag": "section" }
 {% endschema %}

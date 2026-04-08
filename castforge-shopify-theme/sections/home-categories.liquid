@@ -4,44 +4,29 @@
     <h2 class="cf-h2">Shop by Category</h2>
     <div class="cf-cat-grid">
       {%- assign cat_handles = "wargaming-heroes-characters,wargaming-infantry,scale-military-vehicles,scale-aircraft,scale-ships-naval,busts-portraits,fantasy-warriors,scifi-figures,anime-characters,terrain-buildings-ruins,scale-cars-motorcycles,accessories" | split: "," -%}
-      {%- assign cat_names = "Wargaming Heroes,Wargaming Infantry,Military Vehicles,Aircraft,Ships & Naval,Busts & Portraits,Fantasy Warriors,Sci-Fi Figures,Anime Characters,Terrain & Buildings,Cars & Motorcycles,Accessories" | split: "," -%}
       {%- for handle in cat_handles -%}
         {%- assign col = collections[handle] -%}
-        {%- assign name = cat_names[forloop.index0] -%}
         <a href="/collections/{{ handle }}" class="cf-cat-card">
-          <div class="cf-cat-card__img">
-            {%- if col.image -%}
-              <img src="{{ col.image | image_url: width: 600 }}" alt="{{ name }}" width="600" height="600" loading="lazy">
-            {%- elsif col.products.first.featured_image -%}
-              <img src="{{ col.products.first.featured_image | image_url: width: 600 }}" alt="{{ name }}" width="600" height="600" loading="lazy">
-            {%- else -%}
-              <div class="cf-cat-card__placeholder">{{ name | slice: 0, 2 }}</div>
-            {%- endif -%}
-          </div>
-          <div class="cf-cat-card__overlay">
-            <h3>{{ name }}</h3>
-            {%- if col -%}<span class="cf-cat-card__count">{{ col.products_count }} models</span>{%- endif -%}
-          </div>
+          {%- if col.image -%}
+            <img src="{{ col.image | image_url: width: 600 }}" alt="{{ col.title }}" width="600" height="600" loading="lazy">
+          {%- elsif col.products.first.featured_image -%}
+            <img src="{{ col.products.first.featured_image | image_url: width: 600 }}" alt="{{ col.title }}" width="600" height="600" loading="lazy">
+          {%- else -%}
+            <div class="cf-cat-card__ph"></div>
+          {%- endif -%}
         </a>
       {%- endfor -%}
     </div>
   </div>
 </section>
-
 <style>
-.cf-cat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.cf-cat-card { display: block; position: relative; border-radius: 10px; overflow: hidden; text-decoration: none; border: 2px solid transparent; transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s; }
-.cf-cat-card:hover { border-color: var(--cf-accent); transform: translateY(-4px); box-shadow: 0 8px 32px rgba(255,107,26,0.2); }
-.cf-cat-card__img { aspect-ratio: 1/1; background: #111; overflow: hidden; }
-.cf-cat-card__img img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.4s; }
-.cf-cat-card:hover .cf-cat-card__img img { transform: scale(1.08); }
-.cf-cat-card__placeholder { width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-family:var(--cf-font-display); font-size:36px; color:#333; background:linear-gradient(135deg,#111,#1a1a1a); }
-.cf-cat-card__overlay { position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 14px 12px; background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 50%, transparent 100%); }
-.cf-cat-card__overlay h3 { font-family: var(--cf-font-display); font-size: 14px; color: #fff; margin: 0; text-transform: uppercase; letter-spacing: 0.5px; }
-.cf-cat-card__count { font-size: 11px; color: rgba(255,255,255,0.6); }
-@media (max-width: 768px) { .cf-cat-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; } .cf-cat-card__overlay h3 { font-size: 12px; } .cf-cat-card__overlay { padding: 14px 10px 8px; } }
+.cf-cat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+.cf-cat-card { display:block; border-radius:8px; overflow:hidden; border:2px solid transparent; transition:border-color 0.3s, transform 0.3s, box-shadow 0.3s; }
+.cf-cat-card:hover { border-color:var(--cf-accent); transform:translateY(-3px); box-shadow:0 8px 28px rgba(255,107,26,0.2); }
+.cf-cat-card img { display:block; width:100%; aspect-ratio:1/1; object-fit:cover; }
+.cf-cat-card__ph { aspect-ratio:1/1; background:linear-gradient(135deg,#111,#1a1a1a); }
+@media(max-width:768px){ .cf-cat-grid{grid-template-columns:repeat(2,1fr);gap:8px;} }
 </style>
-
 {% schema %}
 { "name": "Shop by Category", "tag": "section" }
 {% endschema %}

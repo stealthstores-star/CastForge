@@ -245,6 +245,7 @@ def batch_translate(reviews, api_key):
 
 # ── Shopify push ──
 def push_reviews_to_shopify(shopify_pid, reviews, token):
+    """Push reviews via GraphQL metafieldsSet — more reliable than REST."""
     if not reviews:
         return False
     total = sum(r["rating"] for r in reviews)
@@ -253,47 +254,47 @@ def push_reviews_to_shopify(shopify_pid, reviews, token):
     dist = {str(i): 0 for i in range(1, 6)}
     for r in reviews:
         dist[str(min(max(r["rating"], 1), 5))] += 1
+
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
     base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
-    success = True
-    for mf in [
-        {"namespace": "reviews", "key": "aliexpress", "value": json.dumps(reviews), "type": "json_string"},
-        {"namespace": "reviews", "key": "average", "value": str(avg), "type": "single_line_text_field"},
-        {"namespace": "reviews", "key": "count", "value": str(count), "type": "single_line_text_field"},
-        {"namespace": "reviews", "key": "distribution", "value": json.dumps(dist), "type": "json_string"},
-    ]:
-        pushed = False
-        for attempt in range(3):
-            try:
-                r = http.post(f"{base}/products/{shopify_pid}/metafields.json",
-                    headers=headers, json={"metafield": mf}, timeout=15)
-                if r.status_code in (200, 201):
-                    pushed = True
-                    break
-                elif r.status_code == 429:
-                    time.sleep(float(r.headers.get("Retry-After", 2)))
-                elif r.status_code == 422:
-                    # Metafield might already exist — try PUT instead
-                    # First get existing metafield ID
-                    gr = http.get(f"{base}/products/{shopify_pid}/metafields.json?namespace={mf['namespace']}&key={mf['key']}",
-                        headers=headers, timeout=15)
-                    if gr.status_code == 200:
-                        existing = gr.json().get("metafields", [])
-                        if existing:
-                            mf_id = existing[0]["id"]
-                            ur = http.put(f"{base}/metafields/{mf_id}.json",
-                                headers=headers, json={"metafield": {"id": mf_id, "value": mf["value"]}}, timeout=15)
-                            if ur.status_code in (200, 201):
-                                pushed = True
-                                break
-                    break
-                else:
-                    break
-            except Exception:
-                time.sleep(1)
-        if not pushed:
-            success = False
-        time.sleep(0.3)
+    owner_id = f"gid://shopify/Product/{shopify_pid}"
+
+    mutation = """
+    mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields { id key namespace value }
+        userErrors { field message }
+      }
+    }
+    """
+    variables = {
+        "metafields": [
+            {"ownerId": owner_id, "namespace": "reviews", "key": "aliexpress", "type": "json", "value": json.dumps(reviews)},
+            {"ownerId": owner_id, "namespace": "reviews", "key": "average", "type": "single_line_text_field", "value": str(avg)},
+            {"ownerId": owner_id, "namespace": "reviews", "key": "count", "type": "single_line_text_field", "value": str(count)},
+            {"ownerId": owner_id, "namespace": "reviews", "key": "distribution", "type": "json", "value": json.dumps(dist)},
+        ]
+    }
+
+    for attempt in range(3):
+        try:
+            r = http.post(f"{base}/graphql.json", headers=headers,
+                json={"query": mutation, "variables": variables}, timeout=30)
+            if r.status_code == 200:
+                data = r.json().get("data", {}).get("metafieldsSet", {})
+                errors = data.get("userErrors", [])
+                if not errors:
+                    return True
+                print(f"    GraphQL errors: {errors}")
+                return False
+            elif r.status_code == 429:
+                time.sleep(float(r.headers.get("Retry-After", 2)))
+            else:
+                print(f"    GraphQL {r.status_code}: {r.text[:100]}")
+                return False
+        except Exception as e:
+            time.sleep(1)
+    return False
     return success
 
 def check_existing_reviews(shopify_pid, token):

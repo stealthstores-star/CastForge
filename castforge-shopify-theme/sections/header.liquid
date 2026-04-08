@@ -1,58 +1,15 @@
 {{ 'header.css' | asset_url | stylesheet_tag }}
 
-{%- comment -%} NO announcement bar here — it lives in sections/announcement-bar.liquid {%- endcomment -%}
-
-<header class="cf-header" id="cf-header">
+<header class="cf-header">
   <div class="cf-container">
     <div class="cf-header__inner">
-      <button class="cf-hamburger" id="cf-hamburger" aria-label="Menu">
-        <span></span><span></span><span></span>
-      </button>
+      <button class="cf-hamburger" id="cf-hamburger" aria-label="Menu"><span></span><span></span><span></span></button>
       <a href="/" class="cf-header__logo">
-        {% if settings.logo %}
-          <img src="{{ settings.logo | image_url: width: 200 }}" alt="{{ shop.name }}" height="36">
-        {% else %}
-          <span class="cf-logo-text">CASTFORGE</span>
-        {% endif %}
+        {% if settings.logo %}<img src="{{ settings.logo | image_url: width: 200 }}" alt="{{ shop.name }}" height="36">
+        {% else %}<span class="cf-logo-text">CASTFORGE</span>{% endif %}
       </a>
       <nav class="cf-nav">
-        <div class="cf-nav__mega-trigger" id="cf-mega-trigger">
-          <a href="/collections/all" class="cf-nav__link">Shop All</a>
-          <div class="cf-mega" id="cf-mega">
-            <div class="cf-mega__inner">
-              <div class="cf-mega__col">
-                <h4 class="cf-mega__heading">Wargaming</h4>
-                <a href="/collections/wargaming-infantry">Infantry & Troops</a>
-                <a href="/collections/wargaming-heroes-characters">Heroes & Characters</a>
-                <a href="/collections/wargaming-vehicles-mechs">Vehicles & Mechs</a>
-                <a href="/collections/wargaming-monsters-creatures">Monsters & Creatures</a>
-                <a href="/collections/wargaming-army-bundles">Army Bundles</a>
-              </div>
-              <div class="cf-mega__col">
-                <h4 class="cf-mega__heading">Scale Models</h4>
-                <a href="/collections/scale-military-vehicles">Military Vehicles</a>
-                <a href="/collections/scale-aircraft">Aircraft</a>
-                <a href="/collections/scale-ships-naval">Ships & Naval</a>
-                <a href="/collections/scale-cars-motorcycles">Cars & Motorcycles</a>
-              </div>
-              <div class="cf-mega__col">
-                <h4 class="cf-mega__heading">Figures</h4>
-                <a href="/collections/busts-portraits">Busts & Portraits</a>
-                <a href="/collections/fantasy-warriors">Fantasy Warriors</a>
-                <a href="/collections/anime-characters">Anime Characters</a>
-                <a href="/collections/scifi-figures">Sci-Fi Figures</a>
-              </div>
-              <div class="cf-mega__col">
-                <h4 class="cf-mega__heading">Terrain & More</h4>
-                <a href="/collections/terrain-buildings-ruins">Buildings & Ruins</a>
-                <a href="/collections/terrain-scenery">Scenery & Scatter</a>
-                <a href="/collections/terrain-natural">Natural Elements</a>
-                <a href="/collections/terrain-props">Props</a>
-                <a href="/collections/accessories">Accessories</a>
-              </div>
-            </div>
-          </div>
-        </div>
+        <a href="/collections/all" class="cf-nav__link">Shop All</a>
         <a href="/collections/new-arrivals" class="cf-nav__link">New Arrivals</a>
         <a href="/collections/best-sellers" class="cf-nav__link">Best Sellers</a>
         <a href="/collections/accessories" class="cf-nav__link">Accessories</a>
@@ -61,7 +18,7 @@
         {% render 'localization-selector' %}
         <a href="/search" class="cf-header__icon" aria-label="Search"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg></a>
         <a href="/account" class="cf-header__icon" aria-label="Account"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></a>
-        <a href="/cart" class="cf-header__icon cf-header__cart" aria-label="Cart"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 18c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0020 4H5.21l-.94-2H1zm16 16c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>{% if cart.item_count > 0 %}<span class="cf-cart-badge">{{ cart.item_count }}</span>{% endif %}</a>
+        <a href="/cart" class="cf-header__icon" aria-label="Cart"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 18c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0020 4H5.21l-.94-2H1zm16 16c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>{% if cart.item_count > 0 %}<span class="cf-cart-badge">{{ cart.item_count }}</span>{% endif %}</a>
       </div>
     </div>
   </div>
@@ -71,23 +28,19 @@
   <div class="cf-mobile-nav__header"><span class="cf-logo-text">CASTFORGE</span><button class="cf-mobile-nav__close" id="cf-mobile-close">✕</button></div>
   <nav class="cf-mobile-nav__links">
     <a href="/collections/all">Shop All</a><a href="/collections/new-arrivals">New Arrivals</a><a href="/collections/best-sellers">Best Sellers</a>
-    <details><summary>Wargaming</summary><a href="/collections/wargaming-infantry">Infantry</a><a href="/collections/wargaming-heroes-characters">Heroes</a><a href="/collections/wargaming-vehicles-mechs">Vehicles</a><a href="/collections/wargaming-monsters-creatures">Monsters</a></details>
-    <details><summary>Scale Models</summary><a href="/collections/scale-military-vehicles">Military Vehicles</a><a href="/collections/scale-aircraft">Aircraft</a><a href="/collections/scale-ships-naval">Ships</a><a href="/collections/scale-cars-motorcycles">Cars</a></details>
-    <details><summary>Figures</summary><a href="/collections/busts-portraits">Busts</a><a href="/collections/fantasy-warriors">Fantasy</a><a href="/collections/anime-characters">Anime</a><a href="/collections/scifi-figures">Sci-Fi</a></details>
-    <details><summary>Terrain</summary><a href="/collections/terrain-buildings-ruins">Buildings</a><a href="/collections/terrain-scenery">Scenery</a><a href="/collections/terrain-natural">Natural</a><a href="/collections/terrain-props">Props</a></details>
-    <a href="/collections/accessories">Accessories</a>
+    <a href="/collections/wargaming-infantry">Wargaming</a><a href="/collections/scale-military-vehicles">Scale Models</a>
+    <a href="/collections/busts-portraits">Busts</a><a href="/collections/fantasy-warriors">Fantasy</a>
+    <a href="/collections/scifi-figures">Sci-Fi</a><a href="/collections/anime-characters">Anime</a>
+    <a href="/collections/terrain-buildings-ruins">Terrain</a><a href="/collections/accessories">Accessories</a>
   </nav>
 </div>
 <div class="cf-overlay" id="cf-overlay"></div>
 
 <script>
 (function(){
-  const ham=document.getElementById('cf-hamburger'),nav=document.getElementById('cf-mobile-nav'),ov=document.getElementById('cf-overlay'),cls=document.getElementById('cf-mobile-close');
-  function t(o){nav.classList.toggle('is-open',o);ov.classList.toggle('is-visible',o);document.body.style.overflow=o?'hidden':'';}
-  ham?.addEventListener('click',()=>t(true));cls?.addEventListener('click',()=>t(false));ov?.addEventListener('click',()=>t(false));
-  // Mega menu with delay
-  const trigger=document.getElementById('cf-mega-trigger'),mega=document.getElementById('cf-mega');let ht;
-  if(trigger&&mega){trigger.addEventListener('mouseenter',()=>{clearTimeout(ht);mega.style.display='block';});trigger.addEventListener('mouseleave',()=>{ht=setTimeout(()=>mega.style.display='none',200);});}
+  const h=document.getElementById('cf-hamburger'),n=document.getElementById('cf-mobile-nav'),o=document.getElementById('cf-overlay'),c=document.getElementById('cf-mobile-close');
+  function t(v){n.classList.toggle('is-open',v);o.classList.toggle('is-visible',v);document.body.style.overflow=v?'hidden':'';}
+  h?.addEventListener('click',()=>t(true));c?.addEventListener('click',()=>t(false));o?.addEventListener('click',()=>t(false));
 })();
 </script>
 {% schema %}

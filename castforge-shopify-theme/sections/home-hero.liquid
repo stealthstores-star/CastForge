@@ -1,11 +1,12 @@
 {{ 'homepage.css' | asset_url | stylesheet_tag }}
 
 <section class="cf-home-hero">
+  <div class="cf-hero-bg"></div>
   <div class="cf-container">
     <div class="cf-home-hero__content">
-      <p class="cf-eyebrow">The World's Specialist Resin Model Store</p>
+      <p class="cf-hero-eyebrow">The World's Specialist Resin Model Store</p>
       <h1 class="cf-home-hero__title">Thousands of Resin Kits<br>for Wargamers & Collectors</h1>
-      <p class="cf-home-hero__sub">Premium resin figures, busts, vehicles, and terrain pieces. Unassembled kits for hobbyists who demand detail.</p>
+      <p class="cf-home-hero__sub">Premium resin figures, busts, vehicles, and terrain. Unassembled kits for hobbyists who demand detail.</p>
       <div class="cf-home-hero__buttons">
         <a href="/collections/all" class="cf-btn cf-btn--primary">Shop All Models</a>
         <a href="/collections/new-arrivals" class="cf-btn cf-btn--outline">New Arrivals</a>
@@ -27,16 +28,17 @@ document.addEventListener('DOMContentLoaded',()=>{
 </script>
 
 <style>
-.cf-home-hero { padding: 80px 0 60px; background: linear-gradient(135deg, #0a0a0a 0%, #121212 40%, #1a1008 100%); position: relative; overflow: hidden; }
-.cf-home-hero::after { content:''; position:absolute; top:0; right:0; width:50%; height:100%; background:radial-gradient(ellipse at 80% 50%, rgba(255,107,26,0.08) 0%, transparent 70%); pointer-events:none; }
-.cf-home-hero__content { position:relative; z-index:1; max-width:640px; }
-.cf-home-hero__title { font-family:var(--cf-font-display); font-size:48px; line-height:1.1; color:var(--cf-text); margin:0 0 16px; }
-.cf-home-hero__sub { font-size:16px; line-height:1.6; color:var(--cf-text-muted); margin-bottom:28px; max-width:480px; }
-.cf-home-hero__buttons { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:36px; }
-.cf-home-hero__stats { display:flex; gap:28px; }
-.cf-stat strong { display:block; font-family:var(--cf-font-display); font-size:18px; color:var(--cf-text); }
-.cf-stat span { font-size:13px; color:var(--cf-text-muted); }
-@media(max-width:768px){ .cf-home-hero{padding:48px 0 40px;} .cf-home-hero__title{font-size:30px;} .cf-home-hero__stats{gap:16px;} .cf-stat strong{font-size:15px;} }
+.cf-home-hero{position:relative;padding:56px 0 44px;background:linear-gradient(135deg,#0a0a0a 0%,#121212 40%,#1a1008 100%);overflow:hidden;}
+.cf-hero-bg{position:absolute;top:0;right:0;width:50%;height:100%;background:url('{{ "hero-bg.jpg" | asset_url }}') center/cover no-repeat;opacity:0.3;mask-image:linear-gradient(to right,transparent 0%,black 40%);-webkit-mask-image:linear-gradient(to right,transparent 0%,black 40%);}
+.cf-home-hero__content{position:relative;z-index:1;max-width:580px;}
+.cf-hero-eyebrow{font-family:var(--cf-font-body);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--cf-accent);margin:0 0 12px;}
+.cf-home-hero__title{font-family:var(--cf-font-display);font-size:42px;line-height:1.1;color:var(--cf-text);margin:0 0 14px;}
+.cf-home-hero__sub{font-size:15px;line-height:1.6;color:var(--cf-text-muted);margin-bottom:24px;max-width:440px;}
+.cf-home-hero__buttons{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:28px;}
+.cf-home-hero__stats{display:flex;gap:24px;}
+.cf-stat strong{display:block;font-family:var(--cf-font-display);font-size:16px;color:var(--cf-text);}
+.cf-stat span{font-size:12px;color:var(--cf-text-muted);}
+@media(max-width:768px){.cf-home-hero{padding:36px 0 32px;}.cf-home-hero__title{font-size:28px;}.cf-hero-bg{display:none;}.cf-home-hero__stats{gap:16px;}}
 </style>
 
 {% schema %}

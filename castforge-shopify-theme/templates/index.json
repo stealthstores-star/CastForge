@@ -1,9 +1,9 @@
 {
   "sections": {
     "hero": { "type": "home-hero", "settings": {} },
-    "find-niche": { "type": "home-find-niche", "settings": {} },
     "categories": { "type": "home-categories", "settings": {} },
     "trending": { "type": "home-trending", "settings": {} },
+    "find-niche": { "type": "home-find-niche", "settings": {} },
     "why": { "type": "home-why", "settings": {} },
     "featured": { "type": "home-featured", "settings": {} },
     "reviews": { "type": "home-reviews", "settings": {} },
@@ -11,9 +11,9 @@
   },
   "order": [
     "hero",
-    "find-niche",
     "categories",
     "trending",
+    "find-niche",
     "why",
     "featured",
     "reviews",
