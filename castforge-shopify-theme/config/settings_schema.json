@@ -19,7 +19,7 @@
         "id": "ga4_id",
         "label": "GA4 Measurement ID",
         "info": "e.g. G-XXXXXXXXXX",
-        "placeholder": "G-"
+        "placeholder": "G-XXXXXXXXXX"
       },
       {
         "type": "header",
@@ -30,7 +30,7 @@
         "id": "meta_pixel_id",
         "label": "Meta Pixel ID",
         "info": "e.g. 1234567890",
-        "placeholder": ""
+        "placeholder": "1234567890"
       },
       {
         "type": "header",
@@ -41,7 +41,7 @@
         "id": "clarity_id",
         "label": "Clarity Project ID",
         "info": "e.g. abc123xyz",
-        "placeholder": ""
+        "placeholder": "XXXXXXXXXX"
       }
     ]
   },
