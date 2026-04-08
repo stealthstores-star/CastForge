@@ -47,8 +47,8 @@
 
         <!-- Rating -->
         <div class="cf-product-info__rating" itemprop="aggregateRating" itemscope itemtype="https://schema.org/AggregateRating">
-          {% assign avg_rating = product.metafields.reviews.average | default: 0 %}
-          {% assign review_count = product.metafields.reviews.count | default: 0 %}
+          {% assign avg_rating = product.metafields.reviews.average | default: "0" | plus: 0 %}
+          {% assign review_count = product.metafields.reviews.count | default: "0" | plus: 0 %}
           {% if review_count > 0 %}
             <div class="cf-stars">
               {% for i in (1..5) %}
