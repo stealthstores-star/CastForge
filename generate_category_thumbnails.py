@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate branded category thumbnails using Gemini 2.5 Flash image generation.
-Creates premium dark-themed hero images for each collection.
+Generate branded category thumbnails using Gemini 2.5 Flash Image (Nano Banana).
 
 Setup:
-    pip install google-generativeai Pillow
+    pip3 install google-genai Pillow
     export GEMINI_API_KEY=your_key_here
 
 Usage:
@@ -22,7 +21,6 @@ import config
 from uploader import get_shopify_token
 
 OUTPUT_DIR = Path("category_thumbnails")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 CATEGORIES = {
     "wargaming-heroes-characters": {
@@ -78,63 +76,30 @@ CATEGORIES = {
 BASE_PROMPT = """Premium dark atmospheric product photography hero image for '{name}' category of a high-end resin model store. Moody studio lighting, dark background with subtle orange rim light, professional product showcase style. {detail}. Cinematic, 8k quality, dramatic shadows, no text, no watermarks, no logos. Square 1:1 format."""
 
 
-def generate_with_gemini(prompt, api_key):
-    """Generate image using Gemini 2.5 Flash via REST API."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={api_key}"
+def generate_image(prompt, api_key):
+    """Generate image using google-genai SDK with gemini-2.5-flash-image-preview."""
+    from google import genai
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseModalities": ["TEXT", "IMAGE"],
-        }
-    }
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash-image-preview",
+        contents=[prompt],
+    )
 
-    r = requests.post(url, json=payload, timeout=120)
-    if r.status_code != 200:
-        print(f"    API error {r.status_code}: {r.text[:200]}")
-        return None
+    for part in response.candidates[0].content.parts:
+        if part.inline_data is not None:
+            return part.inline_data.data  # raw image bytes
 
-    data = r.json()
-    candidates = data.get("candidates", [])
-    if not candidates:
-        print(f"    No candidates in response")
-        return None
-
-    for part in candidates[0].get("content", {}).get("parts", []):
-        if "inlineData" in part:
-            img_data = part["inlineData"]
-            img_bytes = base64.b64decode(img_data["data"])
-            return Image.open(io.BytesIO(img_bytes))
-
-    print(f"    No image in response parts")
+    print(f"    No image in response")
     return None
 
 
-def generate_with_gemini_sdk(prompt, api_key):
-    """Generate image using google-generativeai SDK."""
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.ImageGenerationModel("imagen-3.0-generate-002")
-        result = model.generate_images(
-            prompt=prompt,
-            number_of_images=1,
-            aspect_ratio="1:1",
-        )
-        if result.images:
-            return result.images[0]._pil_image
-    except ImportError:
-        print("    google-generativeai not installed, using REST API")
-    except Exception as e:
-        print(f"    SDK error: {e}")
-    return None
-
-
-def process_image(img):
-    """Resize to 1200x1200 and ensure JPEG."""
-    img = img.convert("RGB")
+def process_and_save(image_bytes, output_path):
+    """Resize to 1200x1200, save as JPEG."""
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img = img.resize((1200, 1200), Image.LANCZOS)
-    return img
+    img.save(str(output_path), "JPEG", quality=92)
+    return output_path
 
 
 def upload_as_collection_image(col_id, image_path, token):
@@ -145,22 +110,19 @@ def upload_as_collection_image(col_id, image_path, token):
     with open(image_path, "rb") as f:
         encoded = base64.b64encode(f.read()).decode("utf-8")
 
-    # Try custom collection first
-    r = requests.put(f"{base}/custom_collections/{col_id}.json", headers=headers,
-        json={"custom_collection": {"id": col_id, "image": {"attachment": encoded}}}, timeout=60)
-    if r.status_code in (200, 201):
-        return True
-    # Try smart collection
-    r = requests.put(f"{base}/smart_collections/{col_id}.json", headers=headers,
-        json={"smart_collection": {"id": col_id, "image": {"attachment": encoded}}}, timeout=60)
-    return r.status_code in (200, 201)
+    for endpoint in ["custom_collections", "smart_collections"]:
+        r = requests.put(f"{base}/{endpoint}/{col_id}.json", headers=headers,
+            json={endpoint.rstrip("s"): {"id": col_id, "image": {"attachment": encoded}}}, timeout=60)
+        if r.status_code in (200, 201):
+            return True
+    return False
 
 
 def main():
     test_mode = "--test" in sys.argv
     no_upload = "--no-upload" in sys.argv
 
-    api_key = GEMINI_API_KEY
+    api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         print("\n  ERROR: Set GEMINI_API_KEY environment variable")
         print("  Get one at: https://aistudio.google.com/apikey\n")
@@ -174,49 +136,42 @@ def main():
     if test_mode:
         categories = categories[:1]
 
-    print(f"\n  Generating {len(categories)} category thumbnails via Gemini\n")
+    print(f"\n  Generating {len(categories)} thumbnails via Gemini 2.5 Flash Image\n")
 
     for handle, info in categories:
         name = info["name"]
-        detail = info["detail"]
-        prompt = BASE_PROMPT.format(name=name, detail=detail)
+        prompt = BASE_PROMPT.format(name=name, detail=info["detail"])
         col_id = col_map.get(handle)
 
         print(f"  [{name}]")
         print(f"    Generating...", end=" ", flush=True)
 
-        # Try SDK first, fall back to REST
-        img = generate_with_gemini_sdk(prompt, api_key)
-        if not img:
-            img = generate_with_gemini(prompt, api_key)
-
-        if not img:
-            print("FAILED — no image generated")
+        try:
+            image_bytes = generate_image(prompt, api_key)
+        except Exception as e:
+            print(f"FAILED: {e}")
             continue
 
-        # Process and save
-        img = process_image(img)
+        if not image_bytes:
+            print("FAILED — no image returned")
+            continue
+
         output_path = OUTPUT_DIR / f"category-{handle}.jpg"
-        img.save(str(output_path), "JPEG", quality=92)
+        process_and_save(image_bytes, output_path)
         print(f"saved → {output_path}")
 
-        # Upload
         if not no_upload and col_id and token:
-            print(f"    Uploading to Shopify...", end=" ", flush=True)
+            print(f"    Uploading...", end=" ", flush=True)
             if upload_as_collection_image(col_id, output_path, token):
                 print("✓ set as collection image")
             else:
-                print("✗ upload failed (check collection type)")
+                print("✗ upload failed")
         elif not col_id:
-            print(f"    No collection ID for {handle} — saved locally only")
+            print(f"    No collection ID — saved locally only")
 
-        time.sleep(2)  # Rate limit between generations
+        time.sleep(2)
 
-    print(f"\n  Done! Thumbnails in {OUTPUT_DIR}/")
-    if test_mode:
-        print(f"  Test mode — only generated 1. Run without --test for all 12.\n")
-    else:
-        print()
+    print(f"\n  Done! Thumbnails in {OUTPUT_DIR}/\n")
 
 
 if __name__ == "__main__":
