@@ -10,20 +10,36 @@ Usage: python3 update_alt_text.py
 """
 import json, re, time
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import config
 from uploader import get_shopify_token
 
 PROGRESS_FILE = "alt_text_progress.json"
 
 
+def make_session():
+    """Create a requests.Session with automatic retry on connection errors."""
+    s = requests.Session()
+    retries = Retry(
+        total=5,
+        backoff_factor=2,            # 2, 4, 8, 16, 32s
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "PUT", "POST"],
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    return s
+
+
 def extract_scale(product):
     """Extract scale from product tags or title."""
-    # Check tags first
     for tag in product.get("tags", "").split(", "):
         tag = tag.strip()
         if tag.startswith("scale:"):
             return tag.replace("scale:", "").replace("-", "/")
-    # Check title
     m = re.search(r'(1/\d+|1:\d+|\d+mm)', product.get("title", ""), re.I)
     if m:
         return m.group(1)
@@ -45,7 +61,11 @@ def save_progress(progress):
 
 def main():
     token = get_shopify_token()
-    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
+    session = make_session()
+    session.headers.update({
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": token,
+    })
     base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
 
     progress = load_progress()
@@ -58,7 +78,7 @@ def main():
     total_skipped = 0
 
     while url:
-        r = requests.get(url, headers=headers, timeout=15)
+        r = session.get(url, timeout=30)
         if r.status_code != 200:
             print(f"  API error: {r.status_code}")
             break
@@ -76,7 +96,7 @@ def main():
             images_to_update = []
             for img in p.get("images", []):
                 if img.get("alt") and img["alt"].strip():
-                    continue  # Already has alt text
+                    continue
                 images_to_update.append(img)
 
             if not images_to_update:
@@ -86,11 +106,10 @@ def main():
 
             for img in images_to_update:
                 alt = alt_base if len(images_to_update) == 1 else f"{alt_base} view {img.get('position', 1)}"
-                r2 = requests.put(
+                r2 = session.put(
                     f"{base}/products/{pid}/images/{img['id']}.json",
-                    headers=headers,
                     json={"image": {"id": img["id"], "alt": alt}},
-                    timeout=15
+                    timeout=30,
                 )
                 if r2.status_code == 200:
                     total_updated += 1
