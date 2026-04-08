@@ -130,7 +130,7 @@ def generate_hero_banner():
 
 
 def try_gemini_hero():
-    """Attempt to generate hero via Gemini. Falls back to PIL if unavailable."""
+    """Attempt to generate hero via Gemini with retry. Falls back to PIL if unavailable."""
     try:
         from google import genai
         api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -144,19 +144,31 @@ def try_gemini_hero():
                   "dramatic side lighting, shallow depth of field, cinematic, "
                   "dark background, warm amber highlights, no text, 2400x1200")
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-image",
-            contents=prompt
-        )
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, 'inline_data') and part.inline_data:
-                img_data = base64.b64decode(part.inline_data.data)
-                img = Image.open(io.BytesIO(img_data))
-                img = img.resize((2400, 1200), Image.LANCZOS)
-                path = os.path.join(OUTPUT_DIR, "hero-bg.jpg")
-                img.save(path, "JPEG", quality=90)
-                print(f"    hero-bg.jpg via Gemini (2400x1200)")
-                return path
+        for attempt in range(5):
+            try:
+                print(f"    Gemini attempt {attempt + 1}/5...", end=" ", flush=True)
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash-image",
+                    contents=prompt
+                )
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        img_data = base64.b64decode(part.inline_data.data)
+                        img = Image.open(io.BytesIO(img_data))
+                        img = img.resize((2400, 1200), Image.LANCZOS)
+                        path = os.path.join(OUTPUT_DIR, "hero-bg.jpg")
+                        img.save(path, "JPEG", quality=90)
+                        print(f"success!")
+                        return path
+                print("no image in response")
+            except Exception as e:
+                print(f"failed ({e})")
+                if attempt < 4:
+                    wait = 30 * (attempt + 1)
+                    print(f"    Retrying in {wait}s...")
+                    time.sleep(wait)
+    except ImportError:
+        print("  google.genai not installed, using PIL fallback")
     except Exception as e:
         print(f"  Gemini hero generation failed: {e}")
     return None

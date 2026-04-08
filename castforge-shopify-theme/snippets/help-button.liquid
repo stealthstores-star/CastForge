@@ -1,17 +1,17 @@
 {%- comment -%}
-  Sticky Help Button — bottom-right floating button.
+  Sticky Help Button - bottom-right floating action button with modal.
   {% render 'help-button' %}
 
-  - Orange circle, 56px, SVG question-mark icon
-  - Fixed position: bottom 24px, right 24px, z-index 90
-  - Click opens a help modal with 4 navigation links
-  - Click outside the modal panel closes it
-  - Fully self-contained: CSS + JS inline
+  - Orange circle, 56px, question mark SVG icon
+  - Fixed position bottom:24px right:24px, z-index:90
+  - Click opens modal with 4 navigation links
+  - Click outside modal or X button closes it
+  - Full CSS + JS inline
 {%- endcomment -%}
 
 <style>
-  /* ── Help Button ── */
-  .cf-help-btn {
+  /* ── Help FAB ── */
+  .cf-help-fab {
     position: fixed;
     bottom: 24px;
     right: 24px;
@@ -19,7 +19,7 @@
     width: 56px;
     height: 56px;
     border-radius: 50%;
-    background: #E86C2C;
+    background: #e67e22;
     border: none;
     cursor: pointer;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
@@ -29,14 +29,14 @@
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     padding: 0;
   }
-  .cf-help-btn:hover {
+  .cf-help-fab:hover {
     transform: scale(1.08);
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
   }
-  .cf-help-btn:active {
+  .cf-help-fab:active {
     transform: scale(0.96);
   }
-  .cf-help-btn svg {
+  .cf-help-fab svg {
     width: 28px;
     height: 28px;
     fill: #fff;
@@ -49,132 +49,144 @@
     z-index: 91;
     background: rgba(0, 0, 0, 0.4);
     display: none;
-    align-items: flex-end;
-    justify-content: flex-end;
-    padding: 24px;
+    align-items: center;
+    justify-content: center;
     opacity: 0;
     transition: opacity 0.25s ease;
   }
-  .cf-help-overlay.cf-help-visible {
+  .cf-help-overlay--open {
     display: flex;
     opacity: 1;
   }
 
   /* ── Modal Panel ── */
-  .cf-help-panel {
+  .cf-help-modal {
     background: #fff;
-    border-radius: 16px;
-    width: 300px;
-    max-width: calc(100vw - 48px);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
-    padding: 0;
-    margin-bottom: 68px;
-    transform: translateY(16px);
-    transition: transform 0.25s ease;
-    overflow: hidden;
+    border-radius: 12px;
+    padding: 32px 28px 24px;
+    max-width: 360px;
+    width: 90vw;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+    position: relative;
+    animation: cfHelpSlideUp 0.25s ease-out;
   }
-  .cf-help-overlay.cf-help-visible .cf-help-panel {
-    transform: translateY(0);
+  @keyframes cfHelpSlideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 
-  .cf-help-panel__header {
-    padding: 20px 24px 12px;
-    border-bottom: 1px solid #f0f0f0;
+  .cf-help-modal__close {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    background: none;
+    border: none;
+    font-size: 22px;
+    color: #999;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
   }
-  .cf-help-panel__header h3 {
-    margin: 0;
-    font-size: 16px;
+  .cf-help-modal__close:hover {
+    color: #333;
+  }
+
+  .cf-help-modal h3 {
+    margin: 0 0 4px;
+    font-size: 17px;
     font-weight: 700;
     color: #1a1a1a;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
-  .cf-help-panel__header p {
-    margin: 4px 0 0;
+  .cf-help-modal p {
+    margin: 0 0 18px;
     font-size: 13px;
     color: #888;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
 
-  .cf-help-panel__links {
+  .cf-help-modal__links {
     list-style: none;
-    margin: 0;
-    padding: 8px 0;
-  }
-  .cf-help-panel__links li {
+    padding: 0;
     margin: 0;
   }
-  .cf-help-panel__links a {
+  .cf-help-modal__links li {
+    border-top: 1px solid #f0f0f0;
+  }
+  .cf-help-modal__links li:last-child {
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .cf-help-modal__links a {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 14px 24px;
+    padding: 14px 8px;
     text-decoration: none;
-    color: #1a1a1a;
+    color: #333;
     font-size: 14px;
     font-weight: 500;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     transition: background 0.15s ease;
+    border-radius: 4px;
   }
-  .cf-help-panel__links a:hover {
-    background: #fdf4ee;
+  .cf-help-modal__links a:hover {
+    background: #fef5eb;
+    color: #d35400;
   }
-  .cf-help-panel__links a svg {
+  .cf-help-modal__links a svg {
     width: 20px;
     height: 20px;
     flex-shrink: 0;
-    fill: #E86C2C;
+    fill: #e67e22;
   }
-  .cf-help-panel__links a span {
-    flex: 1;
-  }
-  .cf-help-panel__links a .cf-help-arrow {
+  .cf-help-modal__links a .cf-help-chevron {
+    margin-left: auto;
     fill: #ccc;
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
   }
 </style>
 
-<!-- Help Button -->
-<button class="cf-help-btn" id="cfHelpBtn" aria-label="Help" type="button">
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- Help FAB -->
+<button class="cf-help-fab" id="cfHelpFab" aria-label="Need help? Open help menu" type="button">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/>
   </svg>
 </button>
 
-<!-- Help Modal -->
+<!-- Help Modal Overlay -->
 <div class="cf-help-overlay" id="cfHelpOverlay">
-  <div class="cf-help-panel" id="cfHelpPanel">
-    <div class="cf-help-panel__header">
-      <h3>Need a hand?</h3>
-      <p>Quick links to help you find what you need</p>
-    </div>
-    <ul class="cf-help-panel__links">
+  <div class="cf-help-modal" id="cfHelpModal" role="dialog" aria-labelledby="cfHelpTitle">
+    <button class="cf-help-modal__close" id="cfHelpClose" aria-label="Close help menu" type="button">&times;</button>
+    <h3 id="cfHelpTitle">How can we help?</h3>
+    <p>Choose an option below to find what you need.</p>
+    <ul class="cf-help-modal__links">
       <li>
         <a href="/pages/scale-guide">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 2c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13zm-4 4h8v2H9v-2zm0 4h5v2H9v-2z"/></svg>
-          <span>Browse by Scale</span>
-          <svg class="cf-help-arrow" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13zm-4 4h8v2H9v-2zm0 4h5v2H9v-2z"/></svg>
+          Browse by Scale
+          <svg class="cf-help-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
         </a>
       </li>
       <li>
         <a href="/collections/all">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 10h12v2H4v-2zm0-4h16v2H4V6zm0 8h8v2H4v-2zm10 0l4 4 4-4h-8z"/></svg>
-          <span>Browse by Theme</span>
-          <svg class="cf-help-arrow" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10h12v2H4v-2zm0-4h16v2H4V6zm0 8h8v2H4v-2zm10 0l4 4 4-4h-8z"/></svg>
+          Browse by Theme
+          <svg class="cf-help-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
         </a>
       </li>
       <li>
         <a href="/collections/best-sellers">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-          <span>Show me popular</span>
-          <svg class="cf-help-arrow" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+          Show me popular
+          <svg class="cf-help-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
         </a>
       </li>
       <li>
         <a href="/collections/all?q=beginner">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/></svg>
-          <span>Show me beginner-friendly</span>
-          <svg class="cf-help-arrow" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/></svg>
+          Show me beginner-friendly
+          <svg class="cf-help-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
         </a>
       </li>
     </ul>
@@ -185,47 +197,46 @@
 (function() {
   'use strict';
 
-  var btn = document.getElementById('cfHelpBtn');
+  var fab = document.getElementById('cfHelpFab');
   var overlay = document.getElementById('cfHelpOverlay');
-  var panel = document.getElementById('cfHelpPanel');
+  var modal = document.getElementById('cfHelpModal');
+  var closeBtn = document.getElementById('cfHelpClose');
 
-  if (!btn || !overlay || !panel) return;
+  if (!fab || !overlay || !modal || !closeBtn) return;
 
   function openHelp() {
     overlay.style.display = 'flex';
-    /* Force reflow before adding visible class for transition */
+    /* Force reflow then add open class for transition */
     overlay.offsetHeight;
-    overlay.classList.add('cf-help-visible');
-    btn.style.display = 'none';
+    overlay.classList.add('cf-help-overlay--open');
+    document.body.style.overflow = 'hidden';
+    closeBtn.focus();
   }
 
   function closeHelp() {
-    overlay.classList.remove('cf-help-visible');
-    btn.style.display = 'flex';
-    /* Wait for transition to finish, then hide overlay */
+    overlay.classList.remove('cf-help-overlay--open');
+    document.body.style.overflow = '';
     setTimeout(function() {
-      if (!overlay.classList.contains('cf-help-visible')) {
+      if (!overlay.classList.contains('cf-help-overlay--open')) {
         overlay.style.display = 'none';
       }
     }, 260);
+    fab.focus();
   }
 
-  btn.addEventListener('click', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    openHelp();
-  });
+  fab.addEventListener('click', openHelp);
+  closeBtn.addEventListener('click', closeHelp);
 
-  /* Click outside the panel closes modal */
+  /* Click outside modal closes it */
   overlay.addEventListener('click', function(e) {
-    if (!panel.contains(e.target)) {
+    if (!modal.contains(e.target)) {
       closeHelp();
     }
   });
 
   /* Escape key closes */
   document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape' && overlay.classList.contains('cf-help-visible')) {
+    if (e.key === 'Escape' && overlay.classList.contains('cf-help-overlay--open')) {
       closeHelp();
     }
   });

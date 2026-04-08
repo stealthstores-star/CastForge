@@ -134,6 +134,13 @@ def check_theme():
         "snippets/checkout-badges.liquid",
         "snippets/scale-filter-bar.liquid",
         "snippets/localization-selector.liquid",
+        "snippets/size-comparison.liquid",
+        "snippets/ab-test.liquid",
+        "snippets/help-button.liquid",
+        "snippets/featured-in-strip.liquid",
+        "sections/bundle-builder.liquid",
+        "sections/product-urgency.liquid",
+        "sections/product-tabs.liquid",
         "templates/index.json",
         "templates/product.json",
         "templates/collection.json",
@@ -169,6 +176,11 @@ def check_scripts():
         "create_email_templates.py",
         "create_footer_pages.py",
         "round_prices.py",
+        "set_painting_difficulty.py",
+        "set_paint_codes.py",
+        "generate_community_gallery.py",
+        "create_category_landing_templates.py",
+        "wire_email_templates.py",
     ]
     for s in required_scripts:
         total += 1; passed += check(s, os.path.exists(s))
