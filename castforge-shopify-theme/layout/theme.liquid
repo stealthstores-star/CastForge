@@ -47,6 +47,9 @@
   {%- if settings.favicon != blank -%}
     <link rel="icon" type="image/png" href="{{ settings.favicon | image_url: width: 32 }}">
   {%- endif -%}
+
+  {%- comment -%} Analytics (GA4, Meta Pixel, Clarity) {%- endcomment -%}
+  {% render 'analytics' %}
 </head>
 <body>
 

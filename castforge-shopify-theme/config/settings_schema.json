@@ -1,0 +1,59 @@
+[
+  {
+    "name": "theme_info",
+    "theme_name": "CastForge",
+    "theme_version": "1.0.0",
+    "theme_author": "CastForge",
+    "theme_documentation_url": "",
+    "theme_support_url": ""
+  },
+  {
+    "name": "Analytics",
+    "settings": [
+      {
+        "type": "header",
+        "content": "Google Analytics 4"
+      },
+      {
+        "type": "text",
+        "id": "ga4_id",
+        "label": "GA4 Measurement ID",
+        "info": "e.g. G-XXXXXXXXXX",
+        "placeholder": "G-"
+      },
+      {
+        "type": "header",
+        "content": "Meta Pixel (Facebook)"
+      },
+      {
+        "type": "text",
+        "id": "meta_pixel_id",
+        "label": "Meta Pixel ID",
+        "info": "e.g. 1234567890",
+        "placeholder": ""
+      },
+      {
+        "type": "header",
+        "content": "Microsoft Clarity"
+      },
+      {
+        "type": "text",
+        "id": "clarity_id",
+        "label": "Clarity Project ID",
+        "info": "e.g. abc123xyz",
+        "placeholder": ""
+      }
+    ]
+  },
+  {
+    "name": "Favicon",
+    "settings": [
+      {
+        "type": "image_picker",
+        "id": "favicon",
+        "label": "Favicon",
+        "info": "32x32 PNG recommended"
+      }
+    ]
+  }
+]
