@@ -6,7 +6,6 @@
     "find-niche": { "type": "home-find-niche", "settings": {} },
     "why": { "type": "home-why", "settings": {} },
     "featured": { "type": "home-featured", "settings": {} },
-    "reviews": { "type": "home-reviews", "settings": {} },
     "newsletter": { "type": "home-newsletter", "settings": {} }
   },
   "order": [
@@ -16,7 +15,6 @@
     "find-niche",
     "why",
     "featured",
-    "reviews",
     "newsletter"
   ]
 }
