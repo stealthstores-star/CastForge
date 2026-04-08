@@ -1,0 +1,97 @@
+<section class="cf-niche cf-section">
+  <div class="cf-container">
+    <p class="cf-eyebrow">Narrow It Down</p>
+    <h2 class="cf-h2">Find Your Niche</h2>
+
+    <div class="cf-niche__group">
+      <span class="cf-niche__label">Scale</span>
+      <div class="cf-niche__track">
+        <div class="cf-niche__pills" id="cf-niche-scales">
+          {%- assign scales = "1/6,1/9,1/10,1/12,1/16,1/18,1/20,1/24,1/32,1/35,1/43,1/48,1/56,1/64,1/72,1/76,1/87,1/100,1/144,1/160,1/200,1/220,1/285,1/300,1/350,1/700,120mm,90mm,75mm,54mm,28mm,25mm,20mm,15mm,10mm" | split: "," -%}
+          {%- for scale in scales -%}
+            <button type="button" class="cf-niche-pill" data-type="scale" data-value="{{ scale | replace: '/', '-' | downcase }}">{{ scale }}</button>
+          {%- endfor -%}
+        </div>
+        <div class="cf-niche__fade"></div>
+      </div>
+    </div>
+
+    <div class="cf-niche__group">
+      <span class="cf-niche__label">Theme</span>
+      <div class="cf-niche__pills cf-niche__pills--wrap">
+        {%- assign themes = "WWII Military,Modern Warfare,Fantasy,Sci-Fi,Anime & Manga,Historical,Cars & Vehicles" | split: "," -%}
+        {%- assign theme_handles = "scale-military-vehicles,wargaming-infantry,fantasy-warriors,scifi-figures,anime-characters,wargaming-heroes-characters,scale-cars-motorcycles" | split: "," -%}
+        {%- for theme in themes -%}
+          <button type="button" class="cf-niche-pill" data-type="theme" data-value="{{ theme_handles[forloop.index0] }}">{{ theme }}</button>
+        {%- endfor -%}
+      </div>
+    </div>
+
+    <div class="cf-niche__cta">
+      <a href="/collections/all" class="cf-btn cf-btn--primary cf-niche__go" id="cf-niche-go">GO →</a>
+    </div>
+  </div>
+</section>
+
+<style>
+.cf-niche__group { margin-bottom: 20px; }
+.cf-niche__label { display: block; font-family: var(--cf-font-body); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--cf-accent); margin-bottom: 10px; }
+.cf-niche__track { position: relative; overflow: hidden; }
+.cf-niche__pills { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding-right: 48px; padding-bottom: 4px; }
+.cf-niche__pills::-webkit-scrollbar { display: none; }
+.cf-niche__pills--wrap { flex-wrap: wrap; overflow-x: visible; padding-right: 0; }
+.cf-niche__fade { position: absolute; top: 0; right: 0; width: 48px; height: 100%; background: linear-gradient(to right, transparent, var(--cf-bg, #0a0a0a)); pointer-events: none; }
+.cf-niche-pill {
+  display: inline-flex; align-items: center; padding: 7px 16px;
+  border: 1px solid var(--cf-border, #222); border-radius: 18px;
+  font-family: var(--cf-font-body); font-size: 13px; font-weight: 500;
+  color: var(--cf-text, #e8e8e8); background: transparent;
+  white-space: nowrap; flex-shrink: 0; cursor: pointer; transition: all 0.15s;
+}
+.cf-niche-pill:hover { border-color: var(--cf-accent); color: var(--cf-accent); }
+.cf-niche-pill.is-active { background: var(--cf-accent, #FF6B1A); border-color: var(--cf-accent); color: #fff; }
+.cf-niche__cta { text-align: center; margin-top: 24px; }
+.cf-niche__go { min-width: 160px; font-size: 16px; padding: 16px 40px; }
+@media (max-width: 768px) { .cf-niche-pill { padding: 6px 12px; font-size: 12px; } }
+</style>
+
+<script>
+(function(){
+  let selectedScale = '', selectedTheme = '';
+  const goBtn = document.getElementById('cf-niche-go');
+
+  document.querySelectorAll('.cf-niche-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const type = pill.dataset.type;
+      const value = pill.dataset.value;
+
+      // Toggle same-type pills
+      document.querySelectorAll(`.cf-niche-pill[data-type="${type}"]`).forEach(p => p.classList.remove('is-active'));
+
+      if ((type === 'scale' && selectedScale === value) || (type === 'theme' && selectedTheme === value)) {
+        // Deselect
+        if (type === 'scale') selectedScale = '';
+        else selectedTheme = '';
+      } else {
+        pill.classList.add('is-active');
+        if (type === 'scale') selectedScale = value;
+        else selectedTheme = value;
+      }
+
+      // Build URL
+      let url = '/collections/all';
+      const tags = [];
+      if (selectedScale) tags.push(selectedScale);
+      if (selectedTheme) url = `/collections/${selectedTheme}`;
+      if (selectedScale && selectedTheme) url = `/collections/${selectedTheme}/${selectedScale}`;
+      else if (selectedScale) url = `/collections/all/${selectedScale}`;
+
+      goBtn.href = url;
+    });
+  });
+})();
+</script>
+
+{% schema %}
+{ "name": "Find Your Niche", "tag": "section" }
+{% endschema %}

@@ -246,7 +246,7 @@ def batch_translate(reviews, api_key):
 # ── Shopify push ──
 def push_reviews_to_shopify(shopify_pid, reviews, token):
     if not reviews:
-        return
+        return False
     total = sum(r["rating"] for r in reviews)
     avg = round(total / len(reviews), 1)
     count = len(reviews)
@@ -255,22 +255,46 @@ def push_reviews_to_shopify(shopify_pid, reviews, token):
         dist[str(min(max(r["rating"], 1), 5))] += 1
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
     base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+    success = True
     for mf in [
-        {"namespace": "reviews", "key": "aliexpress", "value": json.dumps(reviews), "type": "json"},
+        {"namespace": "reviews", "key": "aliexpress", "value": json.dumps(reviews), "type": "json_string"},
         {"namespace": "reviews", "key": "average", "value": str(avg), "type": "single_line_text_field"},
         {"namespace": "reviews", "key": "count", "value": str(count), "type": "single_line_text_field"},
-        {"namespace": "reviews", "key": "distribution", "value": json.dumps(dist), "type": "json"},
+        {"namespace": "reviews", "key": "distribution", "value": json.dumps(dist), "type": "json_string"},
     ]:
-        for _ in range(3):
+        pushed = False
+        for attempt in range(3):
             try:
                 r = http.post(f"{base}/products/{shopify_pid}/metafields.json",
                     headers=headers, json={"metafield": mf}, timeout=15)
-                if r.status_code != 429:
+                if r.status_code in (200, 201):
+                    pushed = True
                     break
-                time.sleep(float(r.headers.get("Retry-After", 2)))
+                elif r.status_code == 429:
+                    time.sleep(float(r.headers.get("Retry-After", 2)))
+                elif r.status_code == 422:
+                    # Metafield might already exist — try PUT instead
+                    # First get existing metafield ID
+                    gr = http.get(f"{base}/products/{shopify_pid}/metafields.json?namespace={mf['namespace']}&key={mf['key']}",
+                        headers=headers, timeout=15)
+                    if gr.status_code == 200:
+                        existing = gr.json().get("metafields", [])
+                        if existing:
+                            mf_id = existing[0]["id"]
+                            ur = http.put(f"{base}/metafields/{mf_id}.json",
+                                headers=headers, json={"metafield": {"id": mf_id, "value": mf["value"]}}, timeout=15)
+                            if ur.status_code in (200, 201):
+                                pushed = True
+                                break
+                    break
+                else:
+                    break
             except Exception:
                 time.sleep(1)
+        if not pushed:
+            success = False
         time.sleep(0.3)
+    return success
 
 def check_existing_reviews(shopify_pid, token):
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}

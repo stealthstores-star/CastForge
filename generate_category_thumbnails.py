@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Generate category thumbnail composites — 2x2 grid of top products per collection.
-Uploads to Shopify Files API and sets as collection image.
+Generate category thumbnails — pick the SINGLE best product image per collection
+using Haiku vision scoring. Upload as collection image.
 
 Usage: python3 generate_category_thumbnails.py
+       python3 generate_category_thumbnails.py --dry-run   # Score but don't upload
 """
-import json, os, sys, time, io, requests
+import json, os, sys, time, io, base64, requests
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 import config
 from uploader import get_shopify_token
@@ -29,171 +30,151 @@ CATEGORIES = [
 
 OUTPUT_DIR = Path("category_thumbnails")
 
-def get_font(size=42):
-    """Try Anton, DejaVuSans-Bold, or fallback."""
-    for path in [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/Library/Fonts/Arial Bold.ttf",
-    ]:
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                pass
-    return ImageFont.load_default()
+SCORE_PROMPT = "Rate this image 1-10 on how visually striking and clean it is for a premium hobby store category thumbnail. Criteria: professional lighting, no watermarks, no Chinese text overlays, clear subject, dark or neutral background. Respond with only a number 1-10."
 
-def download_image(url, size=600):
-    """Download and resize image to square."""
+def download_and_resize(url, size=512):
     try:
         r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code != 200 or len(r.content) < 1000:
-            return None
+        if r.status_code != 200 or len(r.content) < 2000:
+            return None, None
         img = Image.open(io.BytesIO(r.content)).convert("RGB")
-        img = img.resize((size, size), Image.LANCZOS)
-        return img
+        img.thumbnail((size, size))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
+        return img, b64
     except Exception:
-        return None
+        return None, None
 
-def create_composite(images, title, output_path):
-    """Create 2x2 grid with gradient overlay and title."""
-    canvas = Image.new("RGB", (1200, 1200), (17, 17, 17))
+def score_image(b64, api_key):
+    try:
+        r = requests.post("https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 10,
+                  "messages": [{"role": "user", "content": [
+                      {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+                      {"type": "text", "text": SCORE_PROMPT}
+                  ]}]}, timeout=30)
+        if r.status_code == 200:
+            text = r.json()["content"][0]["text"].strip()
+            import re
+            m = re.search(r"(\d+)", text)
+            return int(m.group(1)) if m else 0
+    except Exception:
+        pass
+    return 0
 
-    # Place images in 2x2 grid
-    positions = [(0, 0), (600, 0), (0, 600), (600, 600)]
-    for i, pos in enumerate(positions):
-        if i < len(images) and images[i]:
-            canvas.paste(images[i], pos)
+def crop_square_with_gradient(img):
+    """Crop to 1:1 center, add dark gradient on bottom."""
+    w, h = img.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    img = img.crop((left, top, left + side, top + side))
+    img = img.resize((1200, 1200), Image.LANCZOS)
 
-    # Dark gradient overlay on bottom 40%
-    draw = ImageDraw.Draw(canvas)
+    # Add gradient overlay on bottom 40%
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(img, "RGBA")
     for y in range(720, 1200):
-        alpha = int((y - 720) / 480 * 200)
-        draw.rectangle([(0, y), (1200, y + 1)], fill=(0, 0, 0, alpha) if alpha < 200 else (0, 0, 0))
+        alpha = int((y - 720) / 480 * 180)
+        draw.rectangle([(0, y), (1200, y + 1)], fill=(0, 0, 0, min(alpha, 180)))
 
-    # Redraw with full overlay
-    overlay = Image.new("RGBA", (1200, 1200), (0, 0, 0, 0))
-    draw_ov = ImageDraw.Draw(overlay)
-    for y in range(720, 1200):
-        a = min(int((y - 720) / 480 * 220), 220)
-        draw_ov.rectangle([(0, y), (1200, y + 1)], fill=(0, 0, 0, a))
-    canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+    return img
 
-    # Title text
-    draw = ImageDraw.Draw(canvas)
-    font = get_font(48)
-    draw.text((40, 1100), title.upper(), fill=(255, 255, 255), font=font)
-
-    # Save
-    canvas.save(str(output_path), "JPEG", quality=92)
-    return output_path
-
-def upload_to_shopify_files(filepath, token):
-    """Upload image to Shopify Files via staged upload."""
+def set_collection_image(col_id, image_path, token):
+    """Upload image as collection image via base64."""
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
     base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
 
-    # Create staged upload
-    r = requests.post(f"{base}/graphql.json", headers=headers, json={
-        "query": """mutation { stagedUploadsCreate(input: [{
-            resource: FILE, filename: "%s", mimeType: "image/jpeg",
-            httpMethod: POST
-        }]) { stagedTargets { url parameters { name value } resourceUrl } userErrors { message } } }""" % filepath.name
-    }, timeout=30)
+    with open(image_path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("utf-8")
 
-    if r.status_code != 200:
-        print(f"    Staged upload failed: {r.status_code}")
-        return None
-
-    data = r.json().get("data", {}).get("stagedUploadsCreate", {})
-    targets = data.get("stagedTargets", [])
-    if not targets:
-        print(f"    No staged targets returned")
-        return None
-
-    target = targets[0]
-    upload_url = target["url"]
-    params = {p["name"]: p["value"] for p in target["parameters"]}
-    resource_url = target["resourceUrl"]
-
-    # Upload file
-    with open(filepath, "rb") as f:
-        files = {"file": (filepath.name, f, "image/jpeg")}
-        ur = requests.post(upload_url, data=params, files=files, timeout=60)
-        if ur.status_code not in (200, 201, 204):
-            print(f"    File upload failed: {ur.status_code}")
-            return None
-
-    return resource_url
-
-def set_collection_image(collection_id, image_url, token):
-    """Set collection image via REST API."""
-    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
-    base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
-    r = requests.put(f"{base}/custom_collections/{collection_id}.json", headers=headers,
-        json={"custom_collection": {"id": collection_id, "image": {"src": image_url}}}, timeout=15)
-    # Also try smart collection
-    if r.status_code not in (200, 201):
-        r = requests.put(f"{base}/smart_collections/{collection_id}.json", headers=headers,
-            json={"smart_collection": {"id": collection_id, "image": {"src": image_url}}}, timeout=15)
+    # Try custom collection
+    r = requests.put(f"{base}/custom_collections/{col_id}.json", headers=headers,
+        json={"custom_collection": {"id": col_id, "image": {"attachment": encoded}}}, timeout=60)
+    if r.status_code in (200, 201):
+        return True
+    # Try smart collection
+    r = requests.put(f"{base}/smart_collections/{col_id}.json", headers=headers,
+        json={"smart_collection": {"id": col_id, "image": {"attachment": encoded}}}, timeout=60)
     return r.status_code in (200, 201)
 
 def main():
+    dry_run = "--dry-run" in sys.argv
+    api_key = config.ANTHROPIC_API_KEY
     token = get_shopify_token()
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
     base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+    col_map = json.loads(Path("collection_map.json").read_text()) if Path("collection_map.json").exists() else {}
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    # Load collection map for IDs
-    col_map = json.loads(Path("collection_map.json").read_text()) if Path("collection_map.json").exists() else {}
-
-    print(f"\n  Generating category thumbnails for {len(CATEGORIES)} collections\n")
+    print(f"\n  Generating category thumbnails ({len(CATEGORIES)} collections)")
+    print(f"  Method: Haiku vision scoring, pick best single image\n")
 
     for handle, title in CATEGORIES:
-        print(f"  {title}...", end=" ", flush=True)
         col_id = col_map.get(handle)
-
-        # Fetch top 4 products from collection
-        r = requests.get(f"{base}/collections/{col_id}/products.json?limit=4&fields=id,images",
-            headers=headers, timeout=15) if col_id else None
-        products = r.json().get("products", []) if r and r.status_code == 200 else []
-
-        # Download product images
-        images = []
-        for p in products[:4]:
-            imgs = p.get("images", [])
-            if imgs:
-                img = download_image(imgs[0].get("src", ""))
-                if img:
-                    images.append(img)
-
-        if not images:
-            print("no images found, skipping")
+        if not col_id:
+            print(f"  {title}: no collection ID, skipping")
             continue
 
-        # Pad to 4 if needed
-        while len(images) < 4:
-            images.append(images[0])
+        print(f"  {title}...", flush=True)
 
-        # Create composite
+        # Fetch top 20 products
+        r = requests.get(f"{base}/collections/{col_id}/products.json?limit=20&fields=id,title,images",
+            headers=headers, timeout=15)
+        products = r.json().get("products", []) if r.status_code == 200 else []
+
+        if not products:
+            print(f"    0 products, skipping")
+            continue
+
+        # Score each product's first image
+        best_score, best_img, best_title = 0, None, ""
+        candidates = 0
+        for p in products:
+            imgs = p.get("images", [])
+            if not imgs:
+                continue
+            src = imgs[0].get("src", "")
+            if not src:
+                continue
+
+            img, b64 = download_and_resize(src)
+            if not b64:
+                continue
+
+            candidates += 1
+            score = score_image(b64, api_key)
+            ptitle = p.get("title", "")[:40]
+            print(f"    {score}/10 — {ptitle}")
+
+            if score > best_score:
+                best_score = score
+                best_img = img
+                best_title = ptitle
+
+            time.sleep(0.3)
+            if candidates >= 10:  # Cap at 10 evaluations per collection
+                break
+
+        if not best_img:
+            print(f"    No usable images found")
+            continue
+
+        # Crop to square with gradient
+        final = crop_square_with_gradient(best_img)
         output_path = OUTPUT_DIR / f"category-{handle}.jpg"
-        create_composite(images, title, output_path)
-        print(f"saved → ", end="", flush=True)
+        final.save(str(output_path), "JPEG", quality=92)
+        print(f"    Winner: {best_score}/10 — {best_title}")
 
-        # Upload and set as collection image
-        if col_id:
-            uploaded_url = upload_to_shopify_files(output_path, token)
-            if uploaded_url:
-                if set_collection_image(col_id, uploaded_url, token):
-                    print(f"✓ set as collection image")
-                else:
-                    print(f"uploaded but failed to set")
+        if not dry_run and col_id:
+            if set_collection_image(col_id, output_path, token):
+                print(f"    ✓ Uploaded as collection image")
             else:
-                print(f"upload failed (use local file)")
-        else:
-            print(f"no collection ID, saved locally only")
+                print(f"    ✗ Upload failed")
 
-        time.sleep(1)
+        time.sleep(0.5)
 
     print(f"\n  Done! Thumbnails in {OUTPUT_DIR}/\n")
 
