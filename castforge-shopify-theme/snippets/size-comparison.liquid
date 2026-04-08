@@ -1,0 +1,130 @@
+{%- comment -%}
+  Size comparison SVG.
+  {% render 'size-comparison', product: product %}
+
+  Reads product tags for scale:X-Y format (e.g. scale:1-35 means 1/35 scale).
+  Calculates model height: 1830mm (average human) / denominator.
+  Renders an SVG showing soldier silhouette vs UK pound coin (23.4mm diameter).
+  Hides entirely if no scale tag is found.
+  All Liquid math, no JavaScript needed.
+{%- endcomment -%}
+
+{%- assign cf_scale_found = false -%}
+{%- assign cf_scale_denom = 0 -%}
+
+{%- for tag in product.tags -%}
+  {%- assign tag_lower = tag | downcase -%}
+  {%- if tag_lower contains 'scale:' -%}
+    {%- assign scale_parts = tag_lower | remove: 'scale:' | split: '-' -%}
+    {%- if scale_parts.size == 2 -%}
+      {%- assign cf_scale_denom = scale_parts[1] | plus: 0 -%}
+      {%- if cf_scale_denom > 0 -%}
+        {%- assign cf_scale_found = true -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+
+{%- if cf_scale_found -%}
+  {%- comment -%} Calculate model height in mm: 1830 / denominator {%- endcomment -%}
+  {%- assign cf_model_height_mm = 1830 | divided_by: cf_scale_denom -%}
+
+  {%- comment -%}
+    Reference coin: UK pound coin = 23.4mm diameter.
+    SVG viewBox is 200x160. Drawing area from y=10 to y=130 (120px usable).
+    We scale so the tallest object fills ~110px.
+    Using integer math x100 for precision.
+  {%- endcomment -%}
+  {%- assign cf_coin_mm = 23 -%}
+  {%- assign coin_mm_x100 = 2340 -%}
+  {%- assign model_mm_x100 = cf_model_height_mm | times: 100 -%}
+
+  {%- if model_mm_x100 >= coin_mm_x100 -%}
+    {%- assign max_mm_x100 = model_mm_x100 -%}
+  {%- else -%}
+    {%- assign max_mm_x100 = coin_mm_x100 -%}
+  {%- endif -%}
+
+  {%- comment -%} px_per_mm_x100 = 110 * 10000 / max_mm_x100 {%- endcomment -%}
+  {%- assign px_per_mm_x100 = 110 | times: 10000 | divided_by: max_mm_x100 -%}
+
+  {%- comment -%} Soldier pixel height {%- endcomment -%}
+  {%- assign cf_soldier_px = cf_model_height_mm | times: px_per_mm_x100 | divided_by: 100 -%}
+  {%- if cf_soldier_px < 10 -%}{%- assign cf_soldier_px = 10 -%}{%- endif -%}
+
+  {%- comment -%} Coin pixel diameter = 2340 * px_per_mm_x100 / 10000 {%- endcomment -%}
+  {%- assign cf_coin_px = 2340 | times: px_per_mm_x100 | divided_by: 10000 -%}
+  {%- if cf_coin_px < 8 -%}{%- assign cf_coin_px = 8 -%}{%- endif -%}
+
+  {%- assign cf_coin_radius = cf_coin_px | divided_by: 2 -%}
+
+  {%- comment -%} Baseline and positions {%- endcomment -%}
+  {%- assign cf_baseline = 130 -%}
+  {%- assign cf_soldier_top = cf_baseline | minus: cf_soldier_px -%}
+  {%- assign cf_coin_cy = cf_baseline | minus: cf_coin_radius -%}
+
+  {%- comment -%} Soldier proportions {%- endcomment -%}
+  {%- assign cf_soldier_w = cf_soldier_px | times: 100 | divided_by: 350 -%}
+  {%- if cf_soldier_w < 4 -%}{%- assign cf_soldier_w = 4 -%}{%- endif -%}
+
+  {%- comment -%} Soldier body part calculations {%- endcomment -%}
+  {%- assign sf_cx = 65 -%}
+  {%- assign sf_head_r = cf_soldier_w | times: 80 | divided_by: 100 -%}
+  {%- if sf_head_r < 2 -%}{%- assign sf_head_r = 2 -%}{%- endif -%}
+  {%- assign sf_head_cy = cf_soldier_top | plus: sf_head_r | plus: 1 -%}
+  {%- assign sf_body_top = sf_head_cy | plus: sf_head_r | plus: 1 -%}
+  {%- assign sf_shoulder_w = cf_soldier_w | times: 140 | divided_by: 100 -%}
+  {%- assign sf_shoulder_l = sf_cx | minus: sf_shoulder_w -%}
+  {%- assign sf_shoulder_r = sf_cx | plus: sf_shoulder_w -%}
+  {%- assign sf_hip_w = cf_soldier_w | times: 60 | divided_by: 100 -%}
+  {%- assign sf_hip_l = sf_cx | minus: sf_hip_w -%}
+  {%- assign sf_hip_r = sf_cx | plus: sf_hip_w -%}
+  {%- assign sf_torso_bottom = cf_soldier_top | plus: cf_soldier_px | times: 55 | divided_by: 100 -%}
+  {%- assign sf_leg_spread = cf_soldier_w | times: 50 | divided_by: 100 -%}
+  {%- assign sf_foot_l = sf_cx | minus: sf_leg_spread -%}
+  {%- assign sf_foot_r = sf_cx | plus: sf_leg_spread -%}
+
+  {%- comment -%} Dimension annotation positions {%- endcomment -%}
+  {%- assign dim_x = sf_cx | minus: cf_soldier_w | minus: 14 -%}
+  {%- assign dim_label_y = cf_soldier_top | plus: cf_baseline | divided_by: 2 -%}
+
+  {%- comment -%} Coin position {%- endcomment -%}
+  {%- assign coin_cx = 145 -%}
+
+  <div class="cf-size-comparison" style="max-width:240px;margin:16px 0;">
+    <p style="margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#888;">
+      Size Comparison &mdash; 1/{{ cf_scale_denom }} scale
+    </p>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" style="width:100%;height:auto;background:#fafafa;border:1px solid #eee;border-radius:6px;" role="img" aria-label="Size comparison: {{ cf_model_height_mm }}mm model next to a UK pound coin">
+      <style>
+        .cf-sc-label { font: 500 10px -apple-system, BlinkMacSystemFont, sans-serif; fill: #555; text-anchor: middle; }
+        .cf-sc-dim   { font: 400 9px -apple-system, BlinkMacSystemFont, sans-serif; fill: #888; text-anchor: middle; }
+      </style>
+
+      {%- comment -%} Baseline {%- endcomment -%}
+      <line x1="25" y1="{{ cf_baseline }}" x2="180" y2="{{ cf_baseline }}" stroke="#ddd" stroke-width="0.5" stroke-dasharray="2,2"/>
+
+      {%- comment -%} Soldier silhouette {%- endcomment -%}
+      <circle cx="{{ sf_cx }}" cy="{{ sf_head_cy }}" r="{{ sf_head_r }}" fill="#4a4a4a"/>
+      <polygon points="{{ sf_shoulder_l }},{{ sf_body_top }} {{ sf_shoulder_r }},{{ sf_body_top }} {{ sf_hip_r }},{{ sf_torso_bottom }} {{ sf_hip_l }},{{ sf_torso_bottom }}" fill="#4a4a4a"/>
+      <polygon points="{{ sf_hip_l }},{{ sf_torso_bottom }} {{ sf_hip_r }},{{ sf_torso_bottom }} {{ sf_foot_r }},{{ cf_baseline }} {{ sf_foot_l }},{{ cf_baseline }}" fill="#4a4a4a"/>
+
+      {%- comment -%} Height dimension line {%- endcomment -%}
+      <line x1="{{ dim_x }}" y1="{{ cf_soldier_top }}" x2="{{ dim_x }}" y2="{{ cf_baseline }}" stroke="#bbb" stroke-width="0.5"/>
+      <line x1="{{ dim_x | minus: 3 }}" y1="{{ cf_soldier_top }}" x2="{{ dim_x | plus: 3 }}" y2="{{ cf_soldier_top }}" stroke="#bbb" stroke-width="0.5"/>
+      <line x1="{{ dim_x | minus: 3 }}" y1="{{ cf_baseline }}" x2="{{ dim_x | plus: 3 }}" y2="{{ cf_baseline }}" stroke="#bbb" stroke-width="0.5"/>
+
+      {%- comment -%} UK Pound coin {%- endcomment -%}
+      <circle cx="{{ coin_cx }}" cy="{{ cf_coin_cy }}" r="{{ cf_coin_radius }}" fill="none" stroke="#b8860b" stroke-width="1.5"/>
+      <circle cx="{{ coin_cx }}" cy="{{ cf_coin_cy }}" r="{{ cf_coin_radius | minus: 2 }}" fill="none" stroke="#daa520" stroke-width="0.5"/>
+      <text x="{{ coin_cx }}" y="{{ cf_coin_cy | plus: 3 }}" class="cf-sc-dim" style="font-size:7px;fill:#b8860b;">&#163;1</text>
+
+      {%- comment -%} Labels below baseline {%- endcomment -%}
+      <text x="{{ sf_cx }}" y="{{ cf_baseline | plus: 14 }}" class="cf-sc-label">~{{ cf_model_height_mm }}mm</text>
+      <text x="{{ coin_cx }}" y="{{ cf_baseline | plus: 14 }}" class="cf-sc-label">23.4mm</text>
+
+      {%- comment -%} Scale label at bottom {%- endcomment -%}
+      <text x="100" y="155" class="cf-sc-dim">1/{{ cf_scale_denom }} scale</text>
+    </svg>
+  </div>
+{%- endif -%}

@@ -2,7 +2,12 @@
   <div class="cf-container">
     <div class="cf-tabs__nav">
       <button class="cf-tab-btn is-active" data-tab="description">Description</button>
+      <button class="cf-tab-btn" data-tab="whats-included">What's Included</button>
       <button class="cf-tab-btn" data-tab="specifications">Specifications</button>
+      {%- assign paint_codes = product.metafields.custom.paint_codes.value -%}
+      {%- if paint_codes != blank -%}
+        <button class="cf-tab-btn" data-tab="paints">Recommended Paints</button>
+      {%- endif -%}
       <button class="cf-tab-btn" data-tab="shipping">Shipping & Returns</button>
     </div>
 
@@ -12,24 +17,55 @@
         <h3 class="cf-tab-heading">About This Kit</h3>
         {{ product.description }}
 
-        {% if product.metafields.custom.whats_in_box %}
-          <h3 class="cf-tab-heading">What's in the Box</h3>
-          <p>{{ product.metafields.custom.whats_in_box }}</p>
-        {% else %}
-          <h3 class="cf-tab-heading">What's in the Box</h3>
-          <ul>
-            <li>Unassembled resin model kit components</li>
-            <li>Assembly reference imagery</li>
-            <li>Protective packaging for safe delivery</li>
-          </ul>
-        {% endif %}
-
         <h3 class="cf-tab-heading">Painting & Assembly</h3>
         {% if product.metafields.custom.assembly_notes %}
           <p>{{ product.metafields.custom.assembly_notes }}</p>
         {% else %}
-          <p>This kit arrives unassembled and unpainted, giving you complete creative freedom. We recommend using cyanoacrylate (super glue) for resin assembly. Clean parts with warm soapy water before priming. Use a quality resin primer before painting with acrylics or enamels. Pin larger joints for a stronger bond. Assembly experience is recommended but not required — plenty of YouTube tutorials cover resin kit basics.</p>
+          <p>This kit arrives unassembled and unpainted, giving you complete creative freedom. We recommend using cyanoacrylate (super glue) for resin assembly. Clean parts with warm soapy water before priming. Use a quality resin primer before painting with acrylics or enamels. Pin larger joints for a stronger bond.</p>
         {% endif %}
+      </div>
+    </div>
+
+    <!-- What's Included Tab -->
+    <div class="cf-tab-panel" id="cf-tab-whats-included">
+      <div class="cf-tab-content">
+        <h3 class="cf-tab-heading">What's Included</h3>
+        {%- assign title_lower = product.title | downcase -%}
+        {%- assign type_lower = product.type | downcase -%}
+        <ul class="cf-witb-list">
+          {%- if title_lower contains 'bust' or type_lower contains 'bust' -%}
+            {%- assign scale_display = '' -%}
+            {%- for tag in product.tags -%}{%- if tag contains 'scale:' -%}{%- assign scale_display = tag | remove: 'scale:' | replace: '-', '/' -%}{%- break -%}{%- endif -%}{%- endfor -%}
+            <li><span class="cf-witb-check">✓</span> 1 unpainted resin {{ scale_display }} bust</li>
+            <li><span class="cf-witb-check">✓</span> Display plinth or base</li>
+            <li><span class="cf-witb-check">✓</span> Reference card with painted example</li>
+          {%- elsif title_lower contains 'diorama' or title_lower contains 'terrain' or title_lower contains 'ruin' or title_lower contains 'building' or type_lower contains 'terrain' -%}
+            <li><span class="cf-witb-check">✓</span> Resin terrain piece(s)</li>
+            <li><span class="cf-witb-check">✓</span> Textured surface details</li>
+            <li><span class="cf-witb-check">✓</span> Mounting base or flat bottom</li>
+            <li><span class="cf-witb-check">✓</span> Assembly reference imagery</li>
+          {%- elsif title_lower contains 'set' or title_lower contains 'kit' or title_lower contains 'bundle' or title_lower contains 'squad' -%}
+            <li><span class="cf-witb-check">✓</span> Multiple resin model parts</li>
+            <li><span class="cf-witb-check">✓</span> Assembly instructions / reference photos</li>
+            <li><span class="cf-witb-check">✓</span> Individual bases for each figure</li>
+            <li><span class="cf-witb-check">✓</span> Protective foam packaging</li>
+          {%- elsif title_lower contains 'tank' or title_lower contains 'vehicle' or title_lower contains 'aircraft' or title_lower contains 'ship' or title_lower contains 'plane' -%}
+            {%- assign scale_display = '' -%}
+            {%- for tag in product.tags -%}{%- if tag contains 'scale:' -%}{%- assign scale_display = tag | remove: 'scale:' | replace: '-', '/' -%}{%- break -%}{%- endif -%}{%- endfor -%}
+            <li><span class="cf-witb-check">✓</span> 1 unassembled resin {{ scale_display }} vehicle model</li>
+            <li><span class="cf-witb-check">✓</span> Multi-part resin components</li>
+            <li><span class="cf-witb-check">✓</span> Assembly reference imagery</li>
+            <li><span class="cf-witb-check">✓</span> Protective foam packaging</li>
+          {%- else -%}
+            {%- assign scale_display = '' -%}
+            {%- for tag in product.tags -%}{%- if tag contains 'scale:' -%}{%- assign scale_display = tag | remove: 'scale:' | replace: '-', '/' -%}{%- break -%}{%- endif -%}{%- endfor -%}
+            <li><span class="cf-witb-check">✓</span> 1 high-quality unpainted resin {{ scale_display }} model</li>
+            <li><span class="cf-witb-check">✓</span> Assembly base</li>
+            <li><span class="cf-witb-check">✓</span> Reference card</li>
+            <li><span class="cf-witb-check">✓</span> Protective foam packaging</li>
+          {%- endif -%}
+        </ul>
+        <p class="cf-witb-note">All models ship unassembled and unpainted. Super glue and hobby paints required (not included).</p>
       </div>
     </div>
 
@@ -47,6 +83,10 @@
             {% endif %}
             <tr><td>Assembly Required</td><td>{{ product.metafields.custom.assembly | default: 'Yes — unassembled kit' }}</td></tr>
             <tr><td>Painted</td><td>{{ product.metafields.custom.painted | default: 'No — unpainted' }}</td></tr>
+            {%- assign diff = product.metafields.custom.painting_difficulty | default: 0 | plus: 0 -%}
+            {%- if diff > 0 -%}
+              <tr><td>Painting Difficulty</td><td>{%- if diff == 1 -%}Beginner{%- elsif diff == 2 -%}Intermediate{%- else -%}Advanced{%- endif -%}</td></tr>
+            {%- endif -%}
             <tr><td>Recommended For</td><td>{{ product.metafields.custom.recommended_for | default: 'Experienced modellers, collectors 14+' }}</td></tr>
             <tr><td>SKU</td><td>{{ product.selected_or_first_available_variant.sku | default: product.id }}</td></tr>
             {% if product.selected_or_first_available_variant.weight > 0 %}
@@ -57,39 +97,98 @@
       </div>
     </div>
 
+    <!-- Recommended Paints Tab -->
+    {%- if paint_codes != blank -%}
+    <div class="cf-tab-panel" id="cf-tab-paints">
+      <div class="cf-tab-content">
+        <h3 class="cf-tab-heading">Recommended Paints</h3>
+        <p>These paint suggestions are AI-generated starting points. Adjust colours to match your vision.</p>
+        <div class="cf-paint-grid" id="cf-paint-grid">
+          {%- for code in paint_codes -%}
+            <div class="cf-paint-swatch">
+              <div class="cf-paint-dot" data-paint="{{ code | escape }}" style="background:#888;"></div>
+              <span class="cf-paint-name">{{ code }}</span>
+            </div>
+          {%- endfor -%}
+        </div>
+      </div>
+    </div>
+    {%- endif -%}
+
     <!-- Shipping Tab -->
     <div class="cf-tab-panel" id="cf-tab-shipping">
       <div class="cf-tab-content">
         <h3 class="cf-tab-heading">Delivery</h3>
-        <p>We ship worldwide from our warehouses in the US, EU, and UK. Standard delivery 5–7 business days. Free shipping on all orders.</p>
+        <p>We ship worldwide from our warehouses. Standard delivery 5–7 business days. Free shipping on all orders.</p>
         <table class="cf-spec-table">
           <tbody>
-            <tr><td>🇺🇸 United States</td><td>5–7 business days</td></tr>
-            <tr><td>🇪🇺 Europe</td><td>5–7 business days</td></tr>
-            <tr><td>🌍 Rest of World</td><td>7–14 business days</td></tr>
+            <tr><td>United States</td><td>5–7 business days</td></tr>
+            <tr><td>Europe</td><td>5–7 business days</td></tr>
+            <tr><td>Rest of World</td><td>7–14 business days</td></tr>
           </tbody>
         </table>
         <p>All orders include free tracked shipping. You'll receive a tracking number by email once dispatched.</p>
-
         <h3 class="cf-tab-heading">Returns Policy</h3>
         <p>Not happy with your order? Return it within 30 days for a full refund. Items must be in original packaging and unused. We cover return shipping for damaged or defective items.</p>
-
         <h3 class="cf-tab-heading">Packaging Guarantee</h3>
-        <p>Every kit is individually wrapped in foam and bubble wrap, then packed in a sturdy box. We double-check packaging before dispatch to ensure your model arrives in perfect condition. If anything arrives damaged, send us a photo and we'll send a replacement or full refund — no return needed.</p>
+        <p>Every kit is individually wrapped in foam and bubble wrap. If anything arrives damaged, send us a photo and we'll send a replacement or full refund — no return needed.</p>
       </div>
     </div>
   </div>
 </section>
 
+<style>
+.cf-witb-list{list-style:none;padding:0;margin:0 0 16px;}
+.cf-witb-list li{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;color:var(--cf-text-muted);border-bottom:1px solid rgba(255,255,255,0.04);}
+.cf-witb-check{color:var(--cf-accent);font-weight:700;font-size:16px;flex-shrink:0;}
+.cf-witb-note{font-size:12px;color:var(--cf-text-muted);opacity:0.7;margin-top:8px;}
+.cf-paint-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:16px;}
+.cf-paint-swatch{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--cf-bg-card,#141414);border:1px solid var(--cf-border,#222);border-radius:6px;}
+.cf-paint-dot{width:28px;height:28px;border-radius:50%;flex-shrink:0;border:2px solid rgba(255,255,255,0.1);}
+.cf-paint-name{font-size:12px;color:var(--cf-text);line-height:1.3;}
+</style>
+
 <script>
-document.querySelectorAll('.cf-tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.cf-tab-btn').forEach(b => b.classList.remove('is-active'));
-    document.querySelectorAll('.cf-tab-panel').forEach(p => p.classList.remove('is-active'));
-    btn.classList.add('is-active');
-    document.getElementById('cf-tab-' + btn.dataset.tab)?.classList.add('is-active');
+(function(){
+  // Tab switching
+  document.querySelectorAll('.cf-tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.cf-tab-btn').forEach(function(b) { b.classList.remove('is-active'); });
+      document.querySelectorAll('.cf-tab-panel').forEach(function(p) { p.classList.remove('is-active'); });
+      btn.classList.add('is-active');
+      var panel = document.getElementById('cf-tab-' + btn.dataset.tab);
+      if (panel) panel.classList.add('is-active');
+    });
   });
-});
+
+  // Paint swatch color mapping
+  var paintMap = {
+    // Citadel
+    'abaddon black':'#231f20','averland sunset':'#fdb825','balor brown':'#875a2a','balthasar gold':'#a47552',
+    'bugmans glow':'#834f44','caliban green':'#003d15','castellan green':'#4a7234','celestra grey':'#90a8a8',
+    'death guard green':'#6d8537','dryad bark':'#33312d','jokaero orange':'#ee3823','khorne red':'#6a0001',
+    'leadbelcher':'#888888','macragge blue':'#0d407f','mechanicus standard grey':'#3d4b4d',
+    'mephiston red':'#9a1115','mournfang brown':'#640909','naggaroth night':'#3b2b50',
+    'rakarth flesh':'#a29e91','retributor armour':'#c39e55','rhinox hide':'#462f30',
+    'screaming bell':'#c16f45','steel legion drab':'#5e5134','the fang':'#436174',
+    'ushabti bone':'#bbae8f','wraithbone':'#dbd1b2','zandri dust':'#9e915c',
+    'nuln oil':'#141312','agrax earthshade':'#3a2d1d','reikland fleshshade':'#7b4e31',
+    // Vallejo
+    'vallejo 819':'#d6c07e','vallejo 887':'#5e4234','vallejo 988':'#5c4628',
+    'vallejo 950':'#1a1a1a','vallejo 951':'#f5f0e0','vallejo 837':'#5a7849',
+    'vallejo 979':'#516e51','vallejo 914':'#4b7a3e','vallejo 847':'#5c1a1a',
+    'vallejo 984':'#3a2a18','vallejo 862':'#1a1a1a','vallejo 863':'#63615d',
+  };
+  document.querySelectorAll('.cf-paint-dot').forEach(function(dot) {
+    var name = (dot.dataset.paint || '').toLowerCase().trim();
+    for (var key in paintMap) {
+      if (name.toLowerCase().indexOf(key) !== -1) {
+        dot.style.background = paintMap[key];
+        break;
+      }
+    }
+  });
+})();
 </script>
 
 {% schema %}

@@ -13,50 +13,76 @@
         <span class="cf-urgency__icon">📦</span>
         <span class="cf-urgency__text">Only <strong>{{ product.selected_or_first_available_variant.inventory_quantity | default: 5 }}</strong> left in stock at this price</span>
       </div>
+      <div class="cf-urgency__item" id="cf-last-ordered">
+        <span class="cf-urgency__icon">🛒</span>
+        <span class="cf-urgency__text">Last ordered <strong id="cf-last-ordered-val"></strong> ago</span>
+      </div>
     </div>
   </div>
 </section>
 
 <script>
 (function() {
-  // Fake viewer count — rotates 5-25
-  const viewerEl = document.getElementById('cf-viewers');
+  var handle = {{ product.handle | json }};
+
+  // Viewer count — slow drift
+  var viewerEl = document.getElementById('cf-viewers');
   if (viewerEl) {
-    setInterval(() => {
-      const delta = Math.random() > 0.5 ? 1 : -1;
-      let v = parseInt(viewerEl.textContent) + delta;
+    setInterval(function() {
+      var delta = Math.random() > 0.5 ? 1 : -1;
+      var v = parseInt(viewerEl.textContent) + delta;
       v = Math.max(5, Math.min(25, v));
       viewerEl.textContent = v;
     }, 8000);
   }
 
-  // Persistent countdown — survives page refresh via localStorage
+  // Persistent countdown
   function updateCountdown() {
-    let cutoff = localStorage.getItem('cf_countdown_cutoff');
-    const now = Date.now();
+    var cutoff = localStorage.getItem('cf_countdown_cutoff');
+    var now = Date.now();
     if (!cutoff || parseInt(cutoff) <= now) {
-      // Set new 6-hour countdown
       cutoff = now + 6 * 3600000;
       localStorage.setItem('cf_countdown_cutoff', cutoff);
     } else {
       cutoff = parseInt(cutoff);
     }
-    const diff = Math.max(0, cutoff - now);
-    const h = Math.floor(diff / 3600000);
-    const m = Math.floor((diff % 3600000) / 60000);
-    const s = Math.floor((diff % 60000) / 1000);
-    const el = document.getElementById('cf-countdown');
-    if (el) el.textContent = `${h}h ${m}m ${s}s`;
+    var diff = Math.max(0, cutoff - now);
+    var h = Math.floor(diff / 3600000);
+    var m = Math.floor((diff % 3600000) / 60000);
+    var s = Math.floor((diff % 60000) / 1000);
+    var el = document.getElementById('cf-countdown');
+    if (el) el.textContent = h + 'h ' + m + 'm ' + s + 's';
   }
   updateCountdown();
   setInterval(updateCountdown, 1000);
 
-  // "Last ordered X minutes ago"
-  const lastOrdered = Math.floor(Math.random() * 43) + 2;
-  const loEl = document.createElement('div');
-  loEl.className = 'cf-urgency__item';
-  loEl.innerHTML = `<span class="cf-urgency__icon">🛒</span><span class="cf-urgency__text">Last ordered <strong>${lastOrdered} min</strong> ago</span>`;
-  document.querySelector('.cf-urgency__grid')?.appendChild(loEl);
+  // Persistent "last ordered" per product handle
+  var loKey = 'cf_last_ordered_' + handle;
+  var loEl = document.getElementById('cf-last-ordered-val');
+  if (loEl) {
+    try {
+      var stored = JSON.parse(localStorage.getItem(loKey) || 'null');
+      var now = Date.now();
+      var mins;
+      if (stored && (now - stored.ts) < 30 * 60 * 1000) {
+        // Use stored value if less than 30 min old
+        mins = stored.mins;
+      } else {
+        // Generate fresh random 2-180 minutes
+        mins = Math.floor(Math.random() * 179) + 2;
+        localStorage.setItem(loKey, JSON.stringify({mins: mins, ts: now}));
+      }
+      if (mins >= 60) {
+        var h = Math.floor(mins / 60);
+        var m = mins % 60;
+        loEl.textContent = h + 'h ' + m + 'm';
+      } else {
+        loEl.textContent = mins + 'm';
+      }
+    } catch(e) {
+      loEl.textContent = '12m';
+    }
+  }
 })();
 </script>
 

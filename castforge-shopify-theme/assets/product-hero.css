@@ -190,6 +190,13 @@
   margin-top: 4px;
 }
 
+/* Painting Difficulty */
+.cf-difficulty{display:flex;align-items:center;gap:8px;margin-bottom:12px;}
+.cf-difficulty__dots{display:flex;gap:4px;}
+.cf-difficulty__dot{width:10px;height:10px;border-radius:50%;background:var(--cf-border);border:1px solid rgba(255,255,255,0.1);}
+.cf-difficulty__dot--filled{background:var(--cf-accent);border-color:var(--cf-accent);}
+.cf-difficulty__label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--cf-text-muted);}
+
 /* Tagline */
 .cf-product-info__tagline {
   font-size: 15px;

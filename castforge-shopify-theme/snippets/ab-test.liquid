@@ -1,0 +1,170 @@
+{%- comment -%}
+  A/B Testing Framework (client-side).
+  {% render 'ab-test' %}
+
+  On first visit, randomly assigns cohort A or B, persists in localStorage.
+  Sets data-ab-variant on <body>.
+  Tracks via Microsoft Clarity custom events if available.
+  Pure JS, no server dependency.
+{%- endcomment -%}
+
+<script>
+(function() {
+  'use strict';
+
+  /* ───────────────────────────────────────────────
+   * TEST DEFINITIONS
+   * ───────────────────────────────────────────────
+   * Each test is keyed by a slug. Variants describe
+   * what each cohort sees. "metric" is what we measure.
+   *
+   * To activate a test, gate your template/snippet
+   * code on the data-ab-variant attribute:
+   *   if (document.body.dataset.abVariant === 'A') { ... }
+   *   CSS: body[data-ab-variant="B"] .my-element { ... }
+   * ─────────────────────────────────────────────── */
+  var CF_AB_TESTS = {
+    'pdp-layout': {
+      name: 'PDP Layout Test',
+      description: 'Test whether a wider image gallery increases add-to-cart rate.',
+      variants: {
+        A: 'Control - standard 50/50 split layout',
+        B: 'Variant - 60/40 image-heavy layout'
+      },
+      metric: 'add_to_cart_click',
+      active: true
+    },
+    'cta-color': {
+      name: 'CTA Button Color',
+      description: 'Test orange vs green add-to-cart button.',
+      variants: {
+        A: 'Control - orange #e67e22 button',
+        B: 'Variant - green #27ae60 button'
+      },
+      metric: 'add_to_cart_click',
+      active: false
+    },
+    'social-proof': {
+      name: 'Social Proof Banner',
+      description: 'Test whether showing "X people viewing" increases urgency.',
+      variants: {
+        A: 'Control - no social proof banner',
+        B: 'Variant - live viewer count banner below ATC'
+      },
+      metric: 'conversion_rate',
+      active: false
+    }
+  };
+
+  var STORAGE_KEY = 'cf_ab_cohort';
+  var cohort;
+
+  /* ── Read or assign cohort ── */
+  try {
+    cohort = localStorage.getItem(STORAGE_KEY);
+  } catch (e) {
+    /* localStorage blocked (private browsing, etc.) */
+    cohort = null;
+  }
+
+  if (!cohort || (cohort !== 'A' && cohort !== 'B')) {
+    cohort = Math.random() < 0.5 ? 'A' : 'B';
+    try {
+      localStorage.setItem(STORAGE_KEY, cohort);
+    } catch (e) {
+      /* Silent - cookie-blocked browsers still get a cohort for this session */
+    }
+  }
+
+  /* ── Apply to body ── */
+  function applyVariant() {
+    document.body.setAttribute('data-ab-variant', cohort);
+    document.body.classList.add('cf-ab-' + cohort.toLowerCase());
+  }
+
+  if (document.body) {
+    applyVariant();
+  } else {
+    document.addEventListener('DOMContentLoaded', applyVariant);
+  }
+
+  /* ── Track via Clarity ── */
+  function trackCohort() {
+    if (typeof window.clarity === 'function') {
+      window.clarity('set', 'cf_ab_cohort', cohort);
+      /* Fire an event for each active test */
+      for (var testId in CF_AB_TESTS) {
+        if (CF_AB_TESTS.hasOwnProperty(testId) && CF_AB_TESTS[testId].active) {
+          window.clarity('event', 'ab_' + testId + '_' + cohort.toLowerCase());
+        }
+      }
+    }
+  }
+
+  /* Clarity may load async - try now and also after load */
+  trackCohort();
+  window.addEventListener('load', function() {
+    setTimeout(trackCohort, 1500);
+  });
+
+  /* ── Expose public API for other snippets / theme JS ── */
+  window.CastForgeAB = {
+    cohort: cohort,
+    tests: CF_AB_TESTS,
+    STORAGE_KEY: STORAGE_KEY,
+
+    /**
+     * Get current variant.
+     * @returns {string} 'A' or 'B'
+     */
+    getVariant: function() {
+      return cohort;
+    },
+
+    /**
+     * Returns true if visitor is in variant A.
+     */
+    isA: function() {
+      return cohort === 'A';
+    },
+
+    /**
+     * Returns true if visitor is in variant B.
+     */
+    isB: function() {
+      return cohort === 'B';
+    },
+
+    /**
+     * Track a custom A/B conversion event.
+     * Usage: window.CastForgeAB.track('add_to_cart_click')
+     * @param {string} eventName
+     */
+    track: function(eventName) {
+      if (typeof window.clarity === 'function') {
+        window.clarity('event', 'cf_ab_' + eventName + '_' + cohort.toLowerCase());
+      }
+      /* Also push to dataLayer for GTM if present */
+      if (window.dataLayer) {
+        window.dataLayer.push({
+          event: 'cf_ab_event',
+          cf_ab_cohort: cohort,
+          cf_ab_action: eventName
+        });
+      }
+    },
+
+    /**
+     * Force a specific variant (for QA / preview).
+     * Reloads the page to apply.
+     * @param {string} v - 'A' or 'B'
+     */
+    forceVariant: function(v) {
+      if (v === 'A' || v === 'B') {
+        try { localStorage.setItem(STORAGE_KEY, v); } catch (e) {}
+        window.location.reload();
+      }
+    }
+  };
+})();
+</script>

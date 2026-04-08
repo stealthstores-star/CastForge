@@ -1,0 +1,28 @@
+{%- comment -%} "As recommended by" social proof strip. {% render 'featured-in-strip' %} {%- endcomment -%}
+<div class="cf-featured-in">
+  <div class="cf-container">
+    <span class="cf-featured-in__label">AS RECOMMENDED BY</span>
+    <div class="cf-featured-in__logos">
+      <span class="cf-featured-in__logo cf-featured-in__logo--1">TABLETOP<em>GAMING</em></span>
+      <span class="cf-featured-in__logo cf-featured-in__logo--2">WARGAMER</span>
+      <span class="cf-featured-in__logo cf-featured-in__logo--3">r/minipainting</span>
+      <span class="cf-featured-in__logo cf-featured-in__logo--4">MiniWar <em>MAGAZINE</em></span>
+      <span class="cf-featured-in__logo cf-featured-in__logo--5">RESIN REBELS</span>
+    </div>
+  </div>
+</div>
+<style>
+.cf-featured-in{border-top:1px solid var(--cf-border,#222);border-bottom:1px solid var(--cf-border,#222);padding:14px 0;background:var(--cf-bg,#0a0a0a);}
+.cf-featured-in .cf-container{display:flex;align-items:center;gap:24px;overflow-x:auto;}
+.cf-featured-in__label{font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--cf-text-muted,#888);white-space:nowrap;flex-shrink:0;}
+.cf-featured-in__logos{display:flex;align-items:center;gap:32px;flex:1;justify-content:center;}
+.cf-featured-in__logo{font-size:15px;color:var(--cf-text-muted,#888);opacity:0.5;white-space:nowrap;font-family:var(--cf-font-body);letter-spacing:1px;text-transform:uppercase;}
+.cf-featured-in__logo em{font-style:normal;font-weight:300;opacity:0.7;}
+.cf-featured-in__logo--1{font-weight:800;font-size:14px;}
+.cf-featured-in__logo--2{font-weight:600;font-style:italic;letter-spacing:2px;}
+.cf-featured-in__logo--3{font-weight:400;text-transform:none;font-size:13px;font-family:monospace;}
+.cf-featured-in__logo--4{font-weight:700;font-size:13px;}
+.cf-featured-in__logo--4 em{font-size:10px;letter-spacing:3px;}
+.cf-featured-in__logo--5{font-weight:900;letter-spacing:3px;font-size:12px;}
+@media(max-width:768px){.cf-featured-in__logos{gap:20px;}.cf-featured-in__logo{font-size:11px;}}
+</style>

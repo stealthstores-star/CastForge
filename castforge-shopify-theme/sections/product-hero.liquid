@@ -86,10 +86,26 @@
           <meta itemprop="url" content="{{ shop.url }}{{ product.url }}">
         </div>
 
+        <!-- Painting difficulty -->
+        {%- assign difficulty = product.metafields.custom.painting_difficulty | default: 0 | plus: 0 -%}
+        {%- if difficulty > 0 -%}
+          <div class="cf-difficulty">
+            <span class="cf-difficulty__dots">
+              <span class="cf-difficulty__dot {% if difficulty >= 1 %}cf-difficulty__dot--filled{% endif %}"></span>
+              <span class="cf-difficulty__dot {% if difficulty >= 2 %}cf-difficulty__dot--filled{% endif %}"></span>
+              <span class="cf-difficulty__dot {% if difficulty >= 3 %}cf-difficulty__dot--filled{% endif %}"></span>
+            </span>
+            <span class="cf-difficulty__label">{%- if difficulty == 1 -%}Beginner{%- elsif difficulty == 2 -%}Intermediate{%- else -%}Advanced{%- endif -%}</span>
+          </div>
+        {%- endif -%}
+
         <!-- Tagline -->
         {% if product.metafields.custom.tagline %}
           <p class="cf-product-info__tagline">{{ product.metafields.custom.tagline }}</p>
         {% endif %}
+
+        <!-- Size comparison -->
+        {% render 'size-comparison', product: product %}
 
         <!-- Description bullets -->
         <div class="cf-product-info__desc" itemprop="description">
@@ -179,7 +195,7 @@
 <!-- Mobile sticky Add to Cart -->
 <div class="cf-sticky-cart" id="cf-sticky-cart">
   {% if product.featured_image %}
-    <img src="{{ product.featured_image | image_url: width: 80 }}" alt="" class="cf-sticky-cart__thumb" width="40" height="40">
+    <img src="{{ product.featured_image | image_url: width: 80 }}" alt="" class="cf-sticky-cart__thumb" width="40" height="40" loading="lazy">
   {% endif %}
   <span class="cf-sticky-cart__price">{{ product.selected_or_first_available_variant.price | money }}</span>
   <div class="cf-sticky-cart__qty">

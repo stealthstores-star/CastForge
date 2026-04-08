@@ -6,6 +6,70 @@
   <title>{{ page_title }}{% unless page_title contains shop.name %} — {{ shop.name }}{% endunless %}</title>
   {% if page_description %}<meta name="description" content="{{ page_description | escape }}">{% endif %}
 
+  {%- comment -%} Open Graph + Twitter Card {%- endcomment -%}
+  <meta property="og:site_name" content="{{ shop.name }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  <meta property="og:type" content="{% if template contains 'product' %}product{% else %}website{% endif %}">
+  {%- if template contains 'product' -%}
+    <meta property="og:title" content="{{ product.title | escape }}">
+    <meta property="og:description" content="{{ product.description | strip_html | truncate: 200 | escape }}">
+    <meta property="og:image" content="https:{{ product.featured_image | image_url: width: 1200 }}">
+    <meta property="product:price:amount" content="{{ product.selected_or_first_available_variant.price | money_without_currency }}">
+    <meta property="product:price:currency" content="{{ localization.country.currency.iso_code }}">
+  {%- elsif template contains 'collection' -%}
+    <meta property="og:title" content="{{ collection.title | escape }}">
+    <meta property="og:description" content="{{ collection.description | strip_html | truncate: 200 | escape }}">
+    {%- if collection.image -%}
+      <meta property="og:image" content="https:{{ collection.image | image_url: width: 1200 }}">
+    {%- elsif settings.og_image -%}
+      <meta property="og:image" content="{{ settings.og_image | image_url: width: 1200 }}">
+    {%- endif -%}
+  {%- else -%}
+    <meta property="og:title" content="{{ page_title | escape }}">
+    <meta property="og:description" content="{{ page_description | default: shop.description | escape }}">
+    {%- if settings.og_image -%}
+      <meta property="og:image" content="{{ settings.og_image | image_url: width: 1200 }}">
+    {%- endif -%}
+  {%- endif -%}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ page_title | escape }}">
+  <meta name="twitter:description" content="{{ page_description | default: shop.description | truncate: 200 | escape }}">
+  {%- if template contains 'product' -%}
+    <meta name="twitter:image" content="https:{{ product.featured_image | image_url: width: 1200 }}">
+  {%- elsif settings.og_image -%}
+    <meta name="twitter:image" content="{{ settings.og_image | image_url: width: 1200 }}">
+  {%- endif -%}
+
+  {%- comment -%} Schema.org BreadcrumbList {%- endcomment -%}
+  {%- if template contains 'product' -%}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "Home", "item": "{{ shop.url }}"},
+        {%- if product.collections.size > 0 -%}
+        {"@type": "ListItem", "position": 2, "name": {{ product.collections.first.title | json }}, "item": "{{ shop.url }}{{ product.collections.first.url }}"},
+        {"@type": "ListItem", "position": 3, "name": {{ product.title | json }}}
+        {%- else -%}
+        {"@type": "ListItem", "position": 2, "name": {{ product.title | json }}}
+        {%- endif -%}
+      ]
+    }
+    </script>
+  {%- elsif template contains 'collection' -%}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "Home", "item": "{{ shop.url }}"},
+        {"@type": "ListItem", "position": 2, "name": {{ collection.title | json }}}
+      ]
+    }
+    </script>
+  {%- endif -%}
+
   {{ content_for_header }}
 
   {{ 'homepage.css' | asset_url | stylesheet_tag }}
@@ -48,12 +112,17 @@
     <link rel="icon" type="image/png" href="{{ settings.favicon | image_url: width: 32 }}">
   {%- endif -%}
 
-  {%- comment -%} Analytics (GA4, Meta Pixel, Clarity) {%- endcomment -%}
+  {%- comment -%} Analytics (GA4, Meta Pixel, Clarity) — gated on cookie consent {%- endcomment -%}
   {% render 'analytics' %}
 </head>
 <body>
 
   {%- sections 'header-group' -%}
+
+  {%- comment -%} Featured-in strip (homepage only) {%- endcomment -%}
+  {%- if template == 'index' -%}
+    {% render 'featured-in-strip' %}
+  {%- endif -%}
 
   <main id="MainContent" role="main">
     {{ content_for_layout }}
@@ -67,6 +136,8 @@
   {% render 'social-proof-ticker' %}
   {% render 'exit-intent' %}
   {% render 'cookie-consent' %}
+  {% render 'help-button' %}
+  {% render 'ab-test' %}
 
 </body>
 </html>

@@ -11,6 +11,13 @@
       <div class="cf-cart-drawer__items" id="cf-cart-items"></div>
     </div>
     <div class="cf-cart-drawer__footer" id="cf-cart-footer" hidden>
+      <!-- Free gift progress bar -->
+      <div class="cf-gift-bar" id="cf-gift-bar">
+        <div class="cf-gift-bar__text" id="cf-gift-text"></div>
+        <div class="cf-gift-bar__track">
+          <div class="cf-gift-bar__fill" id="cf-gift-fill"></div>
+        </div>
+      </div>
       <div class="cf-cart-drawer__subtotal">
         <span>Subtotal</span>
         <span id="cf-cart-subtotal" class="cf-cart-drawer__price"></span>
@@ -52,6 +59,13 @@
 .cf-cart-drawer__shipping{font-size:12px;color:var(--cf-text-muted);margin:0 0 16px;}
 .cf-cart-drawer__checkout{display:block;text-align:center;padding:14px;background:var(--cf-accent);color:#fff;font-family:var(--cf-font-display);font-size:16px;letter-spacing:1px;text-transform:uppercase;text-decoration:none;border-radius:6px;transition:background 0.2s;}
 .cf-cart-drawer__checkout:hover{background:var(--cf-accent-hover,#FF8844);}
+.cf-gift-bar{margin-bottom:16px;}
+.cf-gift-bar__text{font-size:12px;color:var(--cf-text-muted);margin-bottom:6px;}
+.cf-gift-bar__text strong{color:var(--cf-accent);}
+.cf-gift-bar__track{height:6px;background:var(--cf-border,#222);border-radius:3px;overflow:hidden;}
+.cf-gift-bar__fill{height:100%;background:var(--cf-accent);border-radius:3px;transition:width 0.4s ease;width:0%;}
+.cf-gift-bar--unlocked .cf-gift-bar__text{color:var(--cf-green,#22c55e);}
+.cf-gift-bar--unlocked .cf-gift-bar__fill{background:var(--cf-green,#22c55e);}
 @media(max-width:480px){.cf-cart-drawer__panel{width:100%;}}
 </style>
 
@@ -88,10 +102,62 @@
       .catch(() => {});
   }
 
+  const GIFT_THRESHOLD = 5000; // $50.00 in cents
+  const GIFT_HANDLE = 'free-sticker-pack';
+
+  function updateGiftBar(cart) {
+    var bar = document.getElementById('cf-gift-bar');
+    var text = document.getElementById('cf-gift-text');
+    var fill = document.getElementById('cf-gift-fill');
+    if (!bar || !text || !fill) return;
+
+    // Exclude the free gift from the total for threshold calc
+    var total = cart.total_price;
+    var hasGift = cart.items.some(function(i) { return i.handle === GIFT_HANDLE; });
+
+    if (total >= GIFT_THRESHOLD) {
+      bar.classList.add('cf-gift-bar--unlocked');
+      text.innerHTML = '🎁 <strong>Free sticker pack unlocked!</strong>';
+      fill.style.width = '100%';
+      // Auto-add free gift if not in cart
+      if (!hasGift) {
+        fetch('/products/' + GIFT_HANDLE + '.js')
+          .then(function(r) { return r.json(); })
+          .then(function(p) {
+            if (p.variants && p.variants[0]) {
+              return fetch('/cart/add.js', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: p.variants[0].id, quantity: 1 })
+              });
+            }
+          })
+          .then(function() { refreshCart(); })
+          .catch(function() {});
+      }
+    } else {
+      bar.classList.remove('cf-gift-bar--unlocked');
+      var remaining = GIFT_THRESHOLD - total;
+      var fmt = Shopify.formatMoney ? Shopify.formatMoney(remaining) : '$' + (remaining / 100).toFixed(2);
+      text.innerHTML = '🎁 Spend <strong>' + fmt + '</strong> more to unlock a free sticker pack!';
+      fill.style.width = Math.min(100, (total / GIFT_THRESHOLD) * 100) + '%';
+      // Remove free gift if cart dropped below threshold
+      if (hasGift) {
+        var giftItem = cart.items.find(function(i) { return i.handle === GIFT_HANDLE; });
+        if (giftItem) {
+          fetch('/cart/change.js', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: giftItem.key, quantity: 0 })
+          }).then(function(r) { return r.json(); }).then(function(c) { renderCart(c); }).catch(function() {});
+        }
+      }
+    }
+  }
+
   function renderCart(cart) {
     countEl.textContent = cart.item_count;
-    // Update header badge too
-    const badge = document.querySelector('.cf-cart-badge');
+    var badge = document.querySelector('.cf-cart-badge');
     if (badge) badge.textContent = cart.item_count;
 
     if (!cart.items.length) {
@@ -103,6 +169,7 @@
     emptyEl.style.display = 'none';
     footerEl.hidden = false;
     subtotalEl.textContent = Shopify.formatMoney ? Shopify.formatMoney(cart.total_price) : '';
+    updateGiftBar(cart);
 
     itemsEl.innerHTML = cart.items.map(item => `
       <div class="cf-cart-item" data-key="${item.key}">
