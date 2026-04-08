@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="{{ request.locale.iso_code }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }}{% unless page_title contains shop.name %} — {{ shop.name }}{% endunless %}</title>
+  {% if page_description %}<meta name="description" content="{{ page_description | escape }}">{% endif %}
+
+  {{ content_for_header }}
+
+  {{ 'homepage.css' | asset_url | stylesheet_tag }}
+  {{ 'header.css' | asset_url | stylesheet_tag }}
+
+  {%- comment -%} CSS custom properties — CastForge dark theme {%- endcomment -%}
+  <style>
+    :root {
+      --cf-bg: #0a0a0a;
+      --cf-bg-card: #141414;
+      --cf-border: #222;
+      --cf-text: #e8e8e8;
+      --cf-text-muted: #888;
+      --cf-accent: #c9a84c;
+      --cf-accent-hover: #d4b95d;
+      --cf-font-display: 'Bebas Neue', Impact, sans-serif;
+      --cf-font-body: 'Inter', -apple-system, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; }
+    body {
+      background: var(--cf-bg);
+      color: var(--cf-text);
+      font-family: var(--cf-font-body);
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; }
+    .cf-container { max-width: 1280px; margin: 0 auto; padding: 0 20px; }
+    .cf-btn { display: inline-block; padding: 12px 28px; border-radius: 6px; font-weight: 600; font-size: 14px; text-decoration: none; cursor: pointer; border: none; transition: all 0.2s; }
+    .cf-btn--primary { background: var(--cf-accent); color: #000; }
+    .cf-btn--primary:hover { background: var(--cf-accent-hover); }
+  </style>
+
+  {%- comment -%} Google Fonts {%- endcomment -%}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  {%- comment -%} Favicon {%- endcomment -%}
+  {%- if settings.favicon != blank -%}
+    <link rel="icon" type="image/png" href="{{ settings.favicon | image_url: width: 32 }}">
+  {%- endif -%}
+</head>
+<body>
+
+  {%- sections 'header-group' -%}
+
+  <main id="MainContent" role="main">
+    {{ content_for_layout }}
+  </main>
+
+  {%- sections 'footer-group' -%}
+
+  {%- comment -%} Global overlays & widgets {%- endcomment -%}
+  {% render 'social-proof-ticker' %}
+  {% render 'exit-intent' %}
+  {% render 'cookie-consent' %}
+
+</body>
+</html>

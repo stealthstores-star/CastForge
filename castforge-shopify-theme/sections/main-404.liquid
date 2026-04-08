@@ -1,0 +1,48 @@
+<section class="cf-404">
+  <div class="cf-container">
+    <div class="cf-404__content">
+      <span class="cf-404__code">404</span>
+      <h1 class="cf-404__title">Lost in the Warp</h1>
+      <p class="cf-404__text">The page you're looking for has been recalled from the battlefield. It may have been moved, renamed, or never existed.</p>
+      <div class="cf-404__actions">
+        <a href="/" class="cf-btn cf-btn--primary">Back to Base</a>
+        <a href="/collections/all" class="cf-btn cf-btn--outline">Browse All Models</a>
+      </div>
+    </div>
+
+    {% assign popular = collections['all'].products %}
+    {% if popular.size > 0 %}
+      <div class="cf-404__popular">
+        <h2 class="cf-404__subtitle">Popular models you might like</h2>
+        <div class="cf-404__grid">
+          {% for product in popular limit: 4 %}
+            {% render 'product-card', product: product %}
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+<style>
+.cf-404{padding:80px 0 60px;text-align:center;min-height:60vh;}
+.cf-404__code{font-family:var(--cf-font-display);font-size:120px;font-weight:900;color:var(--cf-accent);opacity:0.15;display:block;line-height:1;}
+.cf-404__title{font-family:var(--cf-font-display);font-size:36px;color:#fff;margin:-20px 0 12px;text-transform:uppercase;letter-spacing:1px;}
+.cf-404__text{font-size:15px;color:var(--cf-text-muted);max-width:480px;margin:0 auto 28px;line-height:1.6;}
+.cf-404__actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;}
+.cf-btn--outline{background:transparent;border:1px solid var(--cf-accent);color:var(--cf-accent);padding:12px 28px;border-radius:6px;font-weight:600;font-size:14px;text-decoration:none;transition:all 0.2s;}
+.cf-btn--outline:hover{background:var(--cf-accent);color:#000;}
+.cf-404__popular{margin-top:60px;text-align:left;}
+.cf-404__subtitle{font-family:var(--cf-font-display);font-size:20px;color:#fff;margin:0 0 20px;text-transform:uppercase;letter-spacing:0.5px;text-align:center;}
+.cf-404__grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+@media(max-width:768px){
+  .cf-404{padding:40px 0;}
+  .cf-404__code{font-size:80px;}
+  .cf-404__title{font-size:24px;}
+  .cf-404__grid{grid-template-columns:repeat(2,1fr);}
+}
+</style>
+
+{% schema %}
+{ "name": "404 Page", "tag": "section", "class": "cf-section-404" }
+{% endschema %}

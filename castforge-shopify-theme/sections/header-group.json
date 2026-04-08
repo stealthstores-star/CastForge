@@ -1,0 +1,19 @@
+{
+  "type": "header",
+  "name": "Header Group",
+  "sections": {
+    "announcement": {
+      "type": "announcement-bar",
+      "settings": {}
+    },
+    "header": {
+      "type": "header",
+      "settings": {}
+    },
+    "search": {
+      "type": "search-overlay",
+      "settings": {}
+    }
+  },
+  "order": ["announcement", "header", "search"]
+}

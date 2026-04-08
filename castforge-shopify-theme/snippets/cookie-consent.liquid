@@ -1,0 +1,38 @@
+{%- comment -%} GDPR cookie consent banner. {% render 'cookie-consent' %} {%- endcomment -%}
+<div class="cf-cookie" id="cf-cookie" hidden>
+  <div class="cf-cookie__inner">
+    <p class="cf-cookie__text">We use cookies to improve your experience and analyse traffic. By continuing, you agree to our <a href="/pages/privacy-policy">privacy policy</a>.</p>
+    <div class="cf-cookie__actions">
+      <button class="cf-cookie__btn cf-cookie__btn--accept" onclick="cfAcceptCookies()">Accept</button>
+      <button class="cf-cookie__btn cf-cookie__btn--decline" onclick="cfDeclineCookies()">Decline</button>
+    </div>
+  </div>
+</div>
+<style>
+.cf-cookie{position:fixed;bottom:0;left:0;right:0;z-index:500;padding:16px;}
+.cf-cookie[hidden]{display:none;}
+.cf-cookie__inner{background:var(--cf-bg-card,#141414);border:1px solid var(--cf-border,#222);border-radius:10px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;max-width:800px;margin:0 auto;box-shadow:0 -4px 20px rgba(0,0,0,0.4);}
+.cf-cookie__text{font-size:13px;color:var(--cf-text-muted);margin:0;line-height:1.5;}
+.cf-cookie__text a{color:var(--cf-accent);text-decoration:underline;}
+.cf-cookie__actions{display:flex;gap:8px;flex-shrink:0;}
+.cf-cookie__btn{padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:opacity 0.2s;}
+.cf-cookie__btn--accept{background:var(--cf-accent);color:#000;}
+.cf-cookie__btn--decline{background:transparent;border:1px solid var(--cf-border,#333);color:var(--cf-text-muted);}
+.cf-cookie__btn:hover{opacity:0.85;}
+@media(max-width:600px){.cf-cookie__inner{flex-direction:column;text-align:center;}}
+</style>
+<script>
+function cfAcceptCookies(){
+  localStorage.setItem('cf_cookies','accepted');
+  document.getElementById('cf-cookie').hidden=true;
+}
+function cfDeclineCookies(){
+  localStorage.setItem('cf_cookies','declined');
+  document.getElementById('cf-cookie').hidden=true;
+}
+(function(){
+  if(!localStorage.getItem('cf_cookies')){
+    document.getElementById('cf-cookie').hidden=false;
+  }
+})();
+</script>
