@@ -1,19 +1,22 @@
-{%- comment -%} THE ONLY announcement bar. Do not duplicate in header or layout. {%- endcomment -%}
-<div class="cf-announce">
+<div class="cf-announce" id="cf-announce">
   <div class="cf-container">
-    <span>🚚 <strong>Free worldwide shipping</strong> on all orders · 5-7 day delivery</span>
+    <span id="cf-announce-text">🚚 <strong>Free worldwide shipping</strong> on all orders · 5-7 day delivery</span>
   </div>
 </div>
+<script>
+(function(){
+  const msgs=[
+    '🚚 <strong>Free worldwide shipping</strong> on all orders · 5-7 day delivery',
+    '⭐ Join 4,000+ collectors · Premium resin models',
+    '🎁 10% off your first order — code <strong>WELCOME10</strong>'
+  ];
+  let i=0;const el=document.getElementById('cf-announce-text');
+  if(el)setInterval(()=>{i=(i+1)%msgs.length;el.style.opacity=0;setTimeout(()=>{el.innerHTML=msgs[i];el.style.opacity=1;},300);},5000);
+})();
+</script>
 <style>
-.cf-announce {
-  background: var(--cf-accent, #FF6B1A);
-  color: #fff;
-  text-align: center;
-  font-size: 13px;
-  font-family: var(--cf-font-body, 'Inter', sans-serif);
-  padding: 8px 0;
-  letter-spacing: 0.3px;
-}
+.cf-announce{background:var(--cf-accent,#FF6B1A);color:#fff;text-align:center;font-size:13px;font-family:var(--cf-font-body,'Inter',sans-serif);padding:8px 0;letter-spacing:0.3px;}
+#cf-announce-text{transition:opacity 0.3s;}
 </style>
 {% schema %}
 { "name": "Announcement Bar", "tag": "div" }

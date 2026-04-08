@@ -1,10 +1,11 @@
+{% assign review_count = product.metafields.reviews.count | default: "0" | plus: 0 %}
+{% if review_count > 0 %}
 <section class="cf-reviews" id="cf-reviews">
   <div class="cf-container">
     <h2 class="cf-section-title">Customer Reviews</h2>
 
     {% assign reviews_json = product.metafields.reviews.aliexpress %}
-    {% assign avg_rating = product.metafields.reviews.average | default: 0 %}
-    {% assign review_count = product.metafields.reviews.count | default: 0 %}
+    {% assign avg_rating = product.metafields.reviews.average | default: "0" | plus: 0 %}
 
     {% if review_count > 0 %}
       <!-- Rating summary -->
@@ -100,6 +101,7 @@ document.getElementById('cf-load-reviews')?.addEventListener('click', function()
   this.hidden = true;
 });
 </script>
+{% endif %}
 
 {% schema %}
 {

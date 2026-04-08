@@ -8,13 +8,7 @@
         {%- assign tc = collections['best-sellers'] -%}
         {%- if tc == blank or tc.products_count == 0 -%}{%- assign tc = collections['all'] -%}{%- endif -%}
         {%- for product in tc.products limit: 8 -%}
-          <a href="{{ product.url }}" class="cf-product-card">
-            <div class="cf-product-card__img">
-              {%- if product.featured_image -%}<img src="{{ product.featured_image | image_url: width: 400 }}" alt="{{ product.title }}" width="400" height="400" loading="lazy">{%- endif -%}
-            </div>
-            <h3 class="cf-product-card__title">{{ product.title | truncate: 50 }}</h3>
-            <span class="cf-product-card__price">{{ product.price | money }}</span>
-          </a>
+          <div class="cf-trending__card">{% render 'product-card', product: product %}</div>
         {%- endfor -%}
       </div>
       <button class="cf-trending__arrow cf-trending__arrow--r" id="cf-tr" aria-label="Right">›</button>
@@ -28,11 +22,11 @@
 .cf-trending__wrap{position:relative;}
 .cf-trending__scroll{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:4px 0 8px;}
 .cf-trending__scroll::-webkit-scrollbar{display:none;}
-.cf-trending__scroll .cf-product-card{min-width:220px;max-width:260px;flex-shrink:0;scroll-snap-align:start;}
+.cf-trending__card{min-width:220px;max-width:260px;flex-shrink:0;scroll-snap-align:start;}
 .cf-trending__arrow{position:absolute;top:50%;transform:translateY(-80%);width:40px;height:40px;border-radius:50%;background:var(--cf-bg-card);border:1px solid var(--cf-border);color:var(--cf-text);font-size:24px;cursor:pointer;z-index:2;display:flex;align-items:center;justify-content:center;transition:all 0.2s;}
 .cf-trending__arrow:hover{border-color:var(--cf-accent);color:var(--cf-accent);}
 .cf-trending__arrow--l{left:-8px;}.cf-trending__arrow--r{right:-8px;}
-@media(max-width:768px){.cf-trending__arrow{display:none;}.cf-trending__scroll .cf-product-card{min-width:180px;}}
+@media(max-width:768px){.cf-trending__arrow{display:none;}.cf-trending__card{min-width:180px;}}
 </style>
 <script>
 (function(){const s=document.getElementById('cf-ts');document.getElementById('cf-tl')?.addEventListener('click',()=>s.scrollBy({left:-280,behavior:'smooth'}));document.getElementById('cf-tr')?.addEventListener('click',()=>s.scrollBy({left:280,behavior:'smooth'}));})();
