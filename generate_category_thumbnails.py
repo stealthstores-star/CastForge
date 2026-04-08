@@ -1,96 +1,151 @@
 #!/usr/bin/env python3
 """
-Generate category thumbnails — pick the SINGLE best product image per collection
-using Haiku vision scoring. Upload as collection image.
+Generate branded category thumbnails using Gemini 2.5 Flash image generation.
+Creates premium dark-themed hero images for each collection.
 
-Usage: python3 generate_category_thumbnails.py
-       python3 generate_category_thumbnails.py --dry-run   # Score but don't upload
+Setup:
+    pip install google-generativeai Pillow
+    export GEMINI_API_KEY=your_key_here
+
+Usage:
+    python3 generate_category_thumbnails.py --test          # Generate 1 category
+    python3 generate_category_thumbnails.py                 # Generate all 12
+    python3 generate_category_thumbnails.py --no-upload     # Generate without uploading
 """
-import json, os, sys, time, io, base64, requests
+import base64, io, json, os, sys, time
 from pathlib import Path
+
+import requests
 from PIL import Image
 
 import config
 from uploader import get_shopify_token
 
-CATEGORIES = [
-    ("wargaming-heroes-characters", "Wargaming Heroes"),
-    ("wargaming-infantry", "Wargaming Infantry"),
-    ("scale-military-vehicles", "Military Vehicles"),
-    ("scale-aircraft", "Aircraft"),
-    ("scale-ships-naval", "Ships & Naval"),
-    ("busts-portraits", "Busts & Portraits"),
-    ("fantasy-warriors", "Fantasy Warriors"),
-    ("scifi-figures", "Sci-Fi Figures"),
-    ("anime-characters", "Anime Characters"),
-    ("terrain-buildings-ruins", "Terrain & Buildings"),
-    ("scale-cars-motorcycles", "Cars & Motorcycles"),
-    ("accessories", "Accessories"),
-]
-
 OUTPUT_DIR = Path("category_thumbnails")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-SCORE_PROMPT = "Rate this image 1-10 on how visually striking and clean it is for a premium hobby store category thumbnail. Criteria: professional lighting, no watermarks, no Chinese text overlays, clear subject, dark or neutral background. Respond with only a number 1-10."
+CATEGORIES = {
+    "wargaming-heroes-characters": {
+        "name": "Wargaming Heroes",
+        "detail": "a detailed 28mm fantasy warrior miniature centered, ornate armor and weapon visible, heroic pose"
+    },
+    "wargaming-infantry": {
+        "name": "Wargaming Infantry",
+        "detail": "a WWII soldier resin figure in dynamic combat pose, detailed uniform and equipment"
+    },
+    "scale-military-vehicles": {
+        "name": "Military Vehicles",
+        "detail": "a detailed 1/35 scale tank model on display, visible track links and turret detail"
+    },
+    "scale-aircraft": {
+        "name": "Aircraft",
+        "detail": "a 1/48 scale fighter jet model on a display stand, detailed cockpit and panel lines"
+    },
+    "scale-ships-naval": {
+        "name": "Ships & Naval",
+        "detail": "a 1/700 scale battleship model with detailed rigging and gun turrets"
+    },
+    "busts-portraits": {
+        "name": "Busts & Portraits",
+        "detail": "a premium resin character bust on a black pedestal, detailed facial features and shoulders"
+    },
+    "fantasy-warriors": {
+        "name": "Fantasy Warriors",
+        "detail": "a detailed fantasy warrior miniature with dramatic pose, sword and shield, flowing cloak"
+    },
+    "scifi-figures": {
+        "name": "Sci-Fi Figures",
+        "detail": "a futuristic sci-fi soldier resin figure, cyberpunk aesthetic, glowing elements"
+    },
+    "anime-characters": {
+        "name": "Anime Characters",
+        "detail": "a stylized anime character resin figure, dynamic action pose, detailed base"
+    },
+    "terrain-buildings-ruins": {
+        "name": "Terrain & Buildings",
+        "detail": "a detailed diorama terrain piece, ruined gothic building with rubble and debris"
+    },
+    "scale-cars-motorcycles": {
+        "name": "Cars & Motorcycles",
+        "detail": "a 1/24 scale sports car resin model on display, glossy paint finish, detailed interior"
+    },
+    "accessories": {
+        "name": "Accessories",
+        "detail": "a collection of hobby paints, brushes and modeling tools arranged professionally on dark surface"
+    },
+}
 
-def download_and_resize(url, size=512):
+BASE_PROMPT = """Premium dark atmospheric product photography hero image for '{name}' category of a high-end resin model store. Moody studio lighting, dark background with subtle orange rim light, professional product showcase style. {detail}. Cinematic, 8k quality, dramatic shadows, no text, no watermarks, no logos. Square 1:1 format."""
+
+
+def generate_with_gemini(prompt, api_key):
+    """Generate image using Gemini 2.5 Flash via REST API."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={api_key}"
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseModalities": ["TEXT", "IMAGE"],
+        }
+    }
+
+    r = requests.post(url, json=payload, timeout=120)
+    if r.status_code != 200:
+        print(f"    API error {r.status_code}: {r.text[:200]}")
+        return None
+
+    data = r.json()
+    candidates = data.get("candidates", [])
+    if not candidates:
+        print(f"    No candidates in response")
+        return None
+
+    for part in candidates[0].get("content", {}).get("parts", []):
+        if "inlineData" in part:
+            img_data = part["inlineData"]
+            img_bytes = base64.b64decode(img_data["data"])
+            return Image.open(io.BytesIO(img_bytes))
+
+    print(f"    No image in response parts")
+    return None
+
+
+def generate_with_gemini_sdk(prompt, api_key):
+    """Generate image using google-generativeai SDK."""
     try:
-        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code != 200 or len(r.content) < 2000:
-            return None, None
-        img = Image.open(io.BytesIO(r.content)).convert("RGB")
-        img.thumbnail((size, size))
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
-        b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
-        return img, b64
-    except Exception:
-        return None, None
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.ImageGenerationModel("imagen-3.0-generate-002")
+        result = model.generate_images(
+            prompt=prompt,
+            number_of_images=1,
+            aspect_ratio="1:1",
+        )
+        if result.images:
+            return result.images[0]._pil_image
+    except ImportError:
+        print("    google-generativeai not installed, using REST API")
+    except Exception as e:
+        print(f"    SDK error: {e}")
+    return None
 
-def score_image(b64, api_key):
-    try:
-        r = requests.post("https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 10,
-                  "messages": [{"role": "user", "content": [
-                      {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
-                      {"type": "text", "text": SCORE_PROMPT}
-                  ]}]}, timeout=30)
-        if r.status_code == 200:
-            text = r.json()["content"][0]["text"].strip()
-            import re
-            m = re.search(r"(\d+)", text)
-            return int(m.group(1)) if m else 0
-    except Exception:
-        pass
-    return 0
 
-def crop_square_with_gradient(img):
-    """Crop to 1:1 center, add dark gradient on bottom."""
-    w, h = img.size
-    side = min(w, h)
-    left = (w - side) // 2
-    top = (h - side) // 2
-    img = img.crop((left, top, left + side, top + side))
+def process_image(img):
+    """Resize to 1200x1200 and ensure JPEG."""
+    img = img.convert("RGB")
     img = img.resize((1200, 1200), Image.LANCZOS)
-
-    # Add gradient overlay on bottom 40%
-    from PIL import ImageDraw
-    draw = ImageDraw.Draw(img, "RGBA")
-    for y in range(720, 1200):
-        alpha = int((y - 720) / 480 * 180)
-        draw.rectangle([(0, y), (1200, y + 1)], fill=(0, 0, 0, min(alpha, 180)))
-
     return img
 
-def set_collection_image(col_id, image_path, token):
-    """Upload image as collection image via base64."""
+
+def upload_as_collection_image(col_id, image_path, token):
+    """Upload image as collection image via base64 attachment."""
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
     base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
 
     with open(image_path, "rb") as f:
         encoded = base64.b64encode(f.read()).decode("utf-8")
 
-    # Try custom collection
+    # Try custom collection first
     r = requests.put(f"{base}/custom_collections/{col_id}.json", headers=headers,
         json={"custom_collection": {"id": col_id, "image": {"attachment": encoded}}}, timeout=60)
     if r.status_code in (200, 201):
@@ -100,83 +155,69 @@ def set_collection_image(col_id, image_path, token):
         json={"smart_collection": {"id": col_id, "image": {"attachment": encoded}}}, timeout=60)
     return r.status_code in (200, 201)
 
+
 def main():
-    dry_run = "--dry-run" in sys.argv
-    api_key = config.ANTHROPIC_API_KEY
-    token = get_shopify_token()
-    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
-    base = f"https://{config.SHOPIFY_STORE}/admin/api/{config.API_VERSION}"
+    test_mode = "--test" in sys.argv
+    no_upload = "--no-upload" in sys.argv
+
+    api_key = GEMINI_API_KEY
+    if not api_key:
+        print("\n  ERROR: Set GEMINI_API_KEY environment variable")
+        print("  Get one at: https://aistudio.google.com/apikey\n")
+        sys.exit(1)
+
+    token = get_shopify_token() if not no_upload else None
     col_map = json.loads(Path("collection_map.json").read_text()) if Path("collection_map.json").exists() else {}
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    print(f"\n  Generating category thumbnails ({len(CATEGORIES)} collections)")
-    print(f"  Method: Haiku vision scoring, pick best single image\n")
+    categories = list(CATEGORIES.items())
+    if test_mode:
+        categories = categories[:1]
 
-    for handle, title in CATEGORIES:
+    print(f"\n  Generating {len(categories)} category thumbnails via Gemini\n")
+
+    for handle, info in categories:
+        name = info["name"]
+        detail = info["detail"]
+        prompt = BASE_PROMPT.format(name=name, detail=detail)
         col_id = col_map.get(handle)
-        if not col_id:
-            print(f"  {title}: no collection ID, skipping")
+
+        print(f"  [{name}]")
+        print(f"    Generating...", end=" ", flush=True)
+
+        # Try SDK first, fall back to REST
+        img = generate_with_gemini_sdk(prompt, api_key)
+        if not img:
+            img = generate_with_gemini(prompt, api_key)
+
+        if not img:
+            print("FAILED — no image generated")
             continue
 
-        print(f"  {title}...", flush=True)
-
-        # Fetch top 20 products
-        r = requests.get(f"{base}/collections/{col_id}/products.json?limit=20&fields=id,title,images",
-            headers=headers, timeout=15)
-        products = r.json().get("products", []) if r.status_code == 200 else []
-
-        if not products:
-            print(f"    0 products, skipping")
-            continue
-
-        # Score each product's first image
-        best_score, best_img, best_title = 0, None, ""
-        candidates = 0
-        for p in products:
-            imgs = p.get("images", [])
-            if not imgs:
-                continue
-            src = imgs[0].get("src", "")
-            if not src:
-                continue
-
-            img, b64 = download_and_resize(src)
-            if not b64:
-                continue
-
-            candidates += 1
-            score = score_image(b64, api_key)
-            ptitle = p.get("title", "")[:40]
-            print(f"    {score}/10 — {ptitle}")
-
-            if score > best_score:
-                best_score = score
-                best_img = img
-                best_title = ptitle
-
-            time.sleep(0.3)
-            if candidates >= 10:  # Cap at 10 evaluations per collection
-                break
-
-        if not best_img:
-            print(f"    No usable images found")
-            continue
-
-        # Crop to square with gradient
-        final = crop_square_with_gradient(best_img)
+        # Process and save
+        img = process_image(img)
         output_path = OUTPUT_DIR / f"category-{handle}.jpg"
-        final.save(str(output_path), "JPEG", quality=92)
-        print(f"    Winner: {best_score}/10 — {best_title}")
+        img.save(str(output_path), "JPEG", quality=92)
+        print(f"saved → {output_path}")
 
-        if not dry_run and col_id:
-            if set_collection_image(col_id, output_path, token):
-                print(f"    ✓ Uploaded as collection image")
+        # Upload
+        if not no_upload and col_id and token:
+            print(f"    Uploading to Shopify...", end=" ", flush=True)
+            if upload_as_collection_image(col_id, output_path, token):
+                print("✓ set as collection image")
             else:
-                print(f"    ✗ Upload failed")
+                print("✗ upload failed (check collection type)")
+        elif not col_id:
+            print(f"    No collection ID for {handle} — saved locally only")
 
-        time.sleep(0.5)
+        time.sleep(2)  # Rate limit between generations
 
-    print(f"\n  Done! Thumbnails in {OUTPUT_DIR}/\n")
+    print(f"\n  Done! Thumbnails in {OUTPUT_DIR}/")
+    if test_mode:
+        print(f"  Test mode — only generated 1. Run without --test for all 12.\n")
+    else:
+        print()
+
 
 if __name__ == "__main__":
     main()
