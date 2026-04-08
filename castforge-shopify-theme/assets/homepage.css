@@ -19,7 +19,7 @@
 .cf-container { max-width: var(--cf-max-width); margin: 0 auto; padding: 0 24px; width: 100%; }
 
 /* ── Section rhythm ── */
-.cf-section { padding: 80px 0; position: relative; }
+.cf-section { padding: 48px 0; position: relative; }
 .cf-section--alt { background: var(--cf-bg-alt); }
 
 /* Divider dot between sections */
@@ -66,7 +66,7 @@
   text-transform: uppercase;
   letter-spacing: 1px;
   text-align: center;
-  margin: 0 0 40px;
+  margin: 0 0 28px;
 }
 .cf-section-title { /* legacy compat */
   font-family: var(--cf-font-display);
@@ -74,7 +74,7 @@
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--cf-accent);
-  margin: 0 0 40px;
+  margin: 0 0 28px;
   text-align: center;
 }
 
@@ -95,7 +95,7 @@
 
 /* ── Mobile ── */
 @media (max-width: 768px) {
-  .cf-section { padding: 48px 0; }
+  .cf-section { padding: 36px 0; }
   .cf-container { padding: 0 16px; }
   .cf-h2 { font-size: 24px; margin-bottom: 28px; }
   .cf-home-hero__title { font-size: 28px; }
