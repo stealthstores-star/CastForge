@@ -131,11 +131,10 @@ async function executeTool(
  * Sonnet for initial messages (richer reasoning), Haiku for follow-ups (faster/cheaper).
  */
 function pickModel(historyLength: number): string {
-  // Use the correct model IDs from Anthropic's API
   if (historyLength < 6) {
-    return "claude-sonnet-4-5-20241022";
+    return "claude-sonnet-4-5";
   }
-  return "claude-haiku-4-5-20251001";
+  return "claude-haiku-4-5";
 }
 
 /**
