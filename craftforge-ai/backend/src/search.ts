@@ -51,7 +51,6 @@ async function embedQuery(text: string, apiKey: string): Promise<number[]> {
         model: "voyage-3-lite",
         input: [text],
         input_type: "query",
-        output_dimension: 1024,
       }),
     });
   } catch (err) {

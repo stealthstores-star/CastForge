@@ -122,7 +122,8 @@ async function executeTool(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[chat] executeTool ${toolName} FAILED:`, msg);
-    return { result: `Tool error: ${msg}` };
+    // Return structured error so the model knows search is broken, not empty
+    return { result: '{"error": "search_unavailable", "message": "Product search is temporarily unavailable. Ask the user for more details and offer to retry."}' };
   }
 }
 

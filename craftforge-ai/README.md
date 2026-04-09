@@ -40,7 +40,7 @@ npm install
 wrangler login
 
 # Create the vector index
-wrangler vectorize create castforge-products --dimensions=1024 --metric=cosine
+wrangler vectorize create castforge-products --dimensions=512 --metric=cosine
 
 # Set secrets
 wrangler secret put ANTHROPIC_API_KEY

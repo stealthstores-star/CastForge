@@ -3,7 +3,7 @@
 One-time product embedding job for CraftForge AI.
 
 Fetches all products from Shopify, builds embedding text for each,
-calls Voyage AI to generate 1024-dim vectors, then upserts to
+calls Voyage AI to generate 512-dim vectors (voyage-3-lite default), then upserts to
 Cloudflare Vectorize.
 
 Resumable via progress file. ~$3-5 for 14k products, ~10 minutes.
