@@ -1,5 +1,5 @@
 /* CraftForge AI Chat Widget */
-.cf-ai-bubble{position:fixed;bottom:24px;right:24px;z-index:800;width:60px;height:60px;border-radius:50%;background:#FF6B1A;border:none;cursor:pointer;box-shadow:0 4px 20px rgba(255,107,26,0.4);display:flex;align-items:center;justify-content:center;transition:all 0.3s;}
+.cf-ai-bubble{position:fixed;bottom:24px;right:24px;z-index:9989;width:60px;height:60px;border-radius:50%;background:#FF6B1A;border:none;cursor:pointer;box-shadow:0 4px 20px rgba(255,107,26,0.4);display:flex;align-items:center;justify-content:center;transition:all 0.3s;}
 .cf-ai-bubble:hover{transform:scale(1.08);box-shadow:0 6px 28px rgba(255,107,26,0.5);}
 .cf-ai-bubble svg{width:28px;height:28px;fill:#fff;}
 .cf-ai-bubble--pulse{animation:cfAiPulse 2s ease-in-out 3;}
@@ -7,8 +7,8 @@
 .cf-ai-bubble--hidden{display:none;}
 
 /* Panel */
-.cf-ai-panel{position:fixed;bottom:24px;right:24px;z-index:801;width:400px;height:600px;max-height:calc(100vh - 48px);background:#0a0a0a;border:1px solid #222;border-radius:16px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);transform:translateY(20px);opacity:0;transition:all 0.25s ease;pointer-events:none;}
-.cf-ai-panel--open{transform:translateY(0);opacity:1;pointer-events:all;}
+.cf-ai-panel{position:fixed;bottom:24px;right:24px;z-index:9990;width:400px;height:600px;max-height:calc(100vh - 48px);background:#0a0a0a;border:1px solid #222;border-radius:16px;display:none;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);}
+.cf-ai-panel--open{display:flex;}
 
 /* Header */
 .cf-ai-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:#111;border-bottom:1px solid #222;}
