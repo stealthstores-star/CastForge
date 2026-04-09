@@ -5,6 +5,12 @@
 (function () {
   'use strict';
 
+  if (window.__CRAFTFORGE_LOADED) {
+    console.warn('[CraftForge] Already initialized — skipping duplicate');
+    return;
+  }
+  window.__CRAFTFORGE_LOADED = true;
+
   console.log('[CraftForge] Widget script loaded');
   console.log('[CraftForge] CRAFTFORGE_CONFIG:', window.CRAFTFORGE_CONFIG);
 
