@@ -33,24 +33,39 @@ interface Env {
  * Embed a query string via Voyage AI.
  */
 async function embedQuery(text: string, apiKey: string): Promise<number[]> {
-  const resp = await fetch("https://api.voyageai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "voyage-3-lite",
-      input: [text],
-      input_type: "query",
-    }),
-  });
+  console.log(`[search] embedQuery: "${text.substring(0, 80)}..."`);
+
+  if (!apiKey) {
+    throw new Error("VOYAGE_API_KEY is not set");
+  }
+
+  let resp: Response;
+  try {
+    resp = await fetch("https://api.voyageai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "voyage-3-lite",
+        input: [text],
+        input_type: "query",
+      }),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Voyage fetch failed: ${msg}`);
+  }
 
   if (!resp.ok) {
-    throw new Error(`Voyage API error: ${resp.status} ${await resp.text()}`);
+    let body = "";
+    try { body = await resp.text(); } catch {}
+    throw new Error(`Voyage API error ${resp.status}: ${body.substring(0, 200)}`);
   }
 
   const data = (await resp.json()) as { data: Array<{ embedding: number[] }> };
+  console.log(`[search] embedQuery: got ${data.data[0].embedding.length}-dim vector`);
   return data.data[0].embedding;
 }
 
@@ -62,6 +77,8 @@ export async function searchProducts(
   filters: SearchFilters,
   env: Env,
 ): Promise<ProductResult[]> {
+  console.log(`[search] searchProducts: query="${query}" filters=`, JSON.stringify(filters));
+
   // Embed the query
   const queryVec = await embedQuery(query, env.VOYAGE_API_KEY);
 
@@ -72,11 +89,20 @@ export async function searchProducts(
   if (filters.difficulty) metadataFilter.difficulty = filters.difficulty;
 
   // Query Vectorize
-  const results = await env.PRODUCTS.query(queryVec, {
-    topK: 20,
-    returnMetadata: "all",
-    filter: Object.keys(metadataFilter).length > 0 ? metadataFilter : undefined,
-  });
+  console.log("[search] Querying Vectorize...", Object.keys(metadataFilter).length > 0 ? `filters: ${JSON.stringify(metadataFilter)}` : "no filters");
+  let results: VectorizeMatches;
+  try {
+    results = await env.PRODUCTS.query(queryVec, {
+      topK: 20,
+      returnMetadata: "all",
+      filter: Object.keys(metadataFilter).length > 0 ? metadataFilter : undefined,
+    });
+    console.log(`[search] Vectorize returned ${results.matches.length} matches`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[search] Vectorize query FAILED:", msg);
+    throw new Error(`Vectorize query failed: ${msg}`);
+  }
 
   // Map to ProductResult, apply price filter client-side (Vectorize doesn't support range filters)
   const products: ProductResult[] = [];
