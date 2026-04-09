@@ -1,0 +1,21 @@
+name = "craftforge-ai"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+
+[triggers]
+crons = ["0 3 * * *"]  # Daily product sync at 3am UTC
+
+[[vectorize]]
+binding = "PRODUCTS"
+index_name = "castforge-products"
+
+[vars]
+ENVIRONMENT = "production"
+SHOPIFY_STORE = "v614bh-2z.myshopify.com"
+MAX_MESSAGES_PER_SESSION = "20"
+
+# Secrets (set via: wrangler secret put <KEY>)
+# ANTHROPIC_API_KEY
+# VOYAGE_API_KEY
+# SHOPIFY_TOKEN
+# ADMIN_SECRET
