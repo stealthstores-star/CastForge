@@ -1,9 +1,9 @@
 {%- comment -%}
-  Sticky Help Button - bottom-right floating action button with modal.
+  Sticky Help Button - bottom-left floating action button with modal.
   {% render 'help-button' %}
 
   - Orange circle, 56px, question mark SVG icon
-  - Fixed position bottom:24px right:24px, z-index:90
+  - Fixed position bottom:24px left:24px, z-index:90
   - Click opens modal with 4 navigation links
   - Click outside modal or X button closes it
   - Full CSS + JS inline
@@ -14,7 +14,7 @@
   .cf-help-fab {
     position: fixed;
     bottom: 24px;
-    right: 24px;
+    left: 24px;
     z-index: 90;
     width: 56px;
     height: 56px;
