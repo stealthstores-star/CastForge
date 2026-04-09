@@ -1,0 +1,18 @@
+{%- comment -%}
+  CraftForge AI — Chat widget integration.
+  Add {% render 'craftforge' %} to layout/theme.liquid before </body>.
+
+  Requires:
+  - craftforge-widget.js uploaded to theme assets
+  - craftforge-widget.css uploaded to theme assets
+  - Cloudflare Worker deployed at the configured URL
+{%- endcomment -%}
+
+{{ 'craftforge-widget.css' | asset_url | stylesheet_tag }}
+<script>
+  window.CRAFTFORGE_CONFIG = {
+    workerUrl: 'https://craftforge-ai.castforge.workers.dev',
+    storeUrl: '{{ shop.url }}'
+  };
+</script>
+<script src="{{ 'craftforge-widget.js' | asset_url }}" defer></script>
