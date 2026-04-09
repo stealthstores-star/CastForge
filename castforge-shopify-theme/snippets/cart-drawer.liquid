@@ -138,7 +138,12 @@
     } else {
       bar.classList.remove('cf-gift-bar--unlocked');
       var remaining = GIFT_THRESHOLD - total;
-      var fmt = Shopify.formatMoney ? Shopify.formatMoney(remaining) : '$' + (remaining / 100).toFixed(2);
+      var fmt;
+      try {
+        fmt = new Intl.NumberFormat(undefined, { style: 'currency', currency: cart.currency || 'USD' }).format(remaining / 100);
+      } catch (e) {
+        fmt = (cart.currency || '') + ' ' + (remaining / 100).toFixed(2);
+      }
       text.innerHTML = '🎁 Spend <strong>' + fmt + '</strong> more to unlock a free sticker pack!';
       fill.style.width = Math.min(100, (total / GIFT_THRESHOLD) * 100) + '%';
       // Remove free gift if cart dropped below threshold

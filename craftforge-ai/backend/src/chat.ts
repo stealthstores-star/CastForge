@@ -141,7 +141,7 @@ export async function handleChat(
     if (request.context?.cartTotal) {
       const total = request.context.cartTotal / 100;
       if (total > 0 && total < 50) {
-        contextNote = `\n[Context: User has $${total.toFixed(2)} in cart.]`;
+        contextNote = `\n[Context: User has ${total.toFixed(2)} (shop currency) in cart.]`;
       }
     }
     if (request.context?.currentPage) {

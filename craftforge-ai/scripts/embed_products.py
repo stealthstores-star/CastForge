@@ -89,7 +89,7 @@ def save_progress(progress):
 def fetch_all_products(session):
     """Fetch all products from Shopify."""
     products = []
-    url = f"https://{SHOPIFY_STORE}/admin/api/{API_VERSION}/products.json?limit=250&fields=id,title,handle,body_html,tags,variants,images"
+    url = f"https://{SHOPIFY_STORE}/admin/api/{API_VERSION}/products.json?limit=250&status=active&published_status=published&fields=id,title,handle,body_html,tags,variants,images"
     headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
 
     while url:

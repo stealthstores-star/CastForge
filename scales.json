@@ -1,0 +1,327 @@
+[
+  {
+    "scale": "1/35",
+    "count": 5000,
+    "slug": "1-35"
+  },
+  {
+    "scale": "1/72",
+    "count": 900,
+    "slug": "1-72"
+  },
+  {
+    "scale": "1/24",
+    "count": 807,
+    "slug": "1-24"
+  },
+  {
+    "scale": "1/64",
+    "count": 631,
+    "slug": "1-64"
+  },
+  {
+    "scale": "1/6",
+    "count": 506,
+    "slug": "1-6"
+  },
+  {
+    "scale": "1/144",
+    "count": 466,
+    "slug": "1-144"
+  },
+  {
+    "scale": "1/48",
+    "count": 459,
+    "slug": "1-48"
+  },
+  {
+    "scale": "1/10",
+    "count": 419,
+    "slug": "1-10"
+  },
+  {
+    "scale": "1/700",
+    "count": 355,
+    "slug": "1-700"
+  },
+  {
+    "scale": "1/16",
+    "count": 345,
+    "slug": "1-16"
+  },
+  {
+    "scale": "1/350",
+    "count": 336,
+    "slug": "1-350"
+  },
+  {
+    "scale": "75mm",
+    "count": 313,
+    "slug": "75mm"
+  },
+  {
+    "scale": "1/87",
+    "count": 297,
+    "slug": "1-87"
+  },
+  {
+    "scale": "1/12",
+    "count": 270,
+    "slug": "1-12"
+  },
+  {
+    "scale": "1/32",
+    "count": 240,
+    "slug": "1-32"
+  },
+  {
+    "scale": "28mm",
+    "count": 216,
+    "slug": "28mm"
+  },
+  {
+    "scale": "1/56",
+    "count": 182,
+    "slug": "1-56"
+  },
+  {
+    "scale": "38mm",
+    "count": 179,
+    "slug": "38mm"
+  },
+  {
+    "scale": "54mm",
+    "count": 133,
+    "slug": "54mm"
+  },
+  {
+    "scale": "1/18",
+    "count": 125,
+    "slug": "1-18"
+  },
+  {
+    "scale": "1/200",
+    "count": 90,
+    "slug": "1-200"
+  },
+  {
+    "scale": "1/9",
+    "count": 86,
+    "slug": "1-9"
+  },
+  {
+    "scale": "1/20",
+    "count": 83,
+    "slug": "1-20"
+  },
+  {
+    "scale": "1/220",
+    "count": 80,
+    "slug": "1-220"
+  },
+  {
+    "scale": "50mm",
+    "count": 66,
+    "slug": "50mm"
+  },
+  {
+    "scale": "40mm",
+    "count": 61,
+    "slug": "40mm"
+  },
+  {
+    "scale": "90mm",
+    "count": 59,
+    "slug": "90mm"
+  },
+  {
+    "scale": "1/100",
+    "count": 40,
+    "slug": "1-100"
+  },
+  {
+    "scale": "30mm",
+    "count": 39,
+    "slug": "30mm"
+  },
+  {
+    "scale": "55mm",
+    "count": 35,
+    "slug": "55mm"
+  },
+  {
+    "scale": "1/43",
+    "count": 31,
+    "slug": "1-43"
+  },
+  {
+    "scale": "70mm",
+    "count": 27,
+    "slug": "70mm"
+  },
+  {
+    "scale": "1/25",
+    "count": 24,
+    "slug": "1-25"
+  },
+  {
+    "scale": "60mm",
+    "count": 23,
+    "slug": "60mm"
+  },
+  {
+    "scale": "1/160",
+    "count": 22,
+    "slug": "1-160"
+  },
+  {
+    "scale": "1/8",
+    "count": 19,
+    "slug": "1-8"
+  },
+  {
+    "scale": "120mm",
+    "count": 19,
+    "slug": "120mm"
+  },
+  {
+    "scale": "1/1250",
+    "count": 17,
+    "slug": "1-1250"
+  },
+  {
+    "scale": "80mm",
+    "count": 14,
+    "slug": "80mm"
+  },
+  {
+    "scale": "25mm",
+    "count": 14,
+    "slug": "25mm"
+  },
+  {
+    "scale": "1/50",
+    "count": 13,
+    "slug": "1-50"
+  },
+  {
+    "scale": "32mm",
+    "count": 13,
+    "slug": "32mm"
+  },
+  {
+    "scale": "155mm",
+    "count": 13,
+    "slug": "155mm"
+  },
+  {
+    "scale": "1/400",
+    "count": 13,
+    "slug": "1-400"
+  },
+  {
+    "scale": "35mm",
+    "count": 12,
+    "slug": "35mm"
+  },
+  {
+    "scale": "1/2000",
+    "count": 12,
+    "slug": "1-2000"
+  },
+  {
+    "scale": "100mm",
+    "count": 10,
+    "slug": "100mm"
+  },
+  {
+    "scale": "65mm",
+    "count": 10,
+    "slug": "65mm"
+  },
+  {
+    "scale": "88mm",
+    "count": 9,
+    "slug": "88mm"
+  },
+  {
+    "scale": "1/150",
+    "count": 8,
+    "slug": "1-150"
+  },
+  {
+    "scale": "20mm",
+    "count": 8,
+    "slug": "20mm"
+  },
+  {
+    "scale": "45mm",
+    "count": 8,
+    "slug": "45mm"
+  },
+  {
+    "scale": "130mm",
+    "count": 7,
+    "slug": "130mm"
+  },
+  {
+    "scale": "152mm",
+    "count": 7,
+    "slug": "152mm"
+  },
+  {
+    "scale": "85mm",
+    "count": 7,
+    "slug": "85mm"
+  },
+  {
+    "scale": "105mm",
+    "count": 7,
+    "slug": "105mm"
+  },
+  {
+    "scale": "1/3000",
+    "count": 7,
+    "slug": "1-3000"
+  },
+  {
+    "scale": "122mm",
+    "count": 7,
+    "slug": "122mm"
+  },
+  {
+    "scale": "1/22",
+    "count": 6,
+    "slug": "1-22"
+  },
+  {
+    "scale": "200mm",
+    "count": 6,
+    "slug": "200mm"
+  },
+  {
+    "scale": "1/60",
+    "count": 6,
+    "slug": "1-60"
+  },
+  {
+    "scale": "76mm",
+    "count": 6,
+    "slug": "76mm"
+  },
+  {
+    "scale": "150mm",
+    "count": 5,
+    "slug": "150mm"
+  },
+  {
+    "scale": "1/11",
+    "count": 5,
+    "slug": "1-11"
+  },
+  {
+    "scale": "1/1",
+    "count": 5,
+    "slug": "1-1"
+  }
+]

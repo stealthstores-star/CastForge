@@ -33,3 +33,17 @@ ali_cookies.json
 ali_state.json
 price_scrape_failed.csv
 *_failed.txt
+node_modules/
+.wrangler/
+*.bak
+embed_progress.json
+shopify_fix_progress.json
+alt_text_progress.json
+cleanup_progress.json
+difficulty_progress.json
+meta_desc_progress.json
+paint_codes_progress.json
+reviews_progress.json
+tag_scales_progress.json
+dsers_progress.txt
+live-theme/

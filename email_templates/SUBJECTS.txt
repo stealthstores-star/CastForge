@@ -1,0 +1,18 @@
+CastForge Email Template Subjects
+==================================================
+
+welcome_email.html
+  Subject: Welcome to CastForge — Here's 10% Off Your First Order
+
+abandoned_cart.html
+  Subject: You left something on the workbench — your cart is waiting
+
+order_confirmation.html
+  Subject: Order confirmed — your models are being prepared
+
+shipping_confirmation.html
+  Subject: Your models are on the way! Tracking inside
+
+review_request.html
+  Subject: How are your new models? Leave a review
+

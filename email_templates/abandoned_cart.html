@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Your CastForge Cart</title>
+</head>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:'Inter',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;">
+<tr><td align="center" style="padding:40px 20px;">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#141414;border-radius:12px;border:1px solid #222;">
+  <!-- Header -->
+  <tr><td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #222;">
+    <h1 style="font-family:'Bebas Neue',Impact,sans-serif;font-size:36px;color:#c9a84c;margin:0;letter-spacing:2px;">CASTFORGE</h1>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:40px;">
+    <h2 style="font-size:24px;color:#e8e8e8;margin:0 0 16px;font-weight:600;">Still thinking it over?</h2>
+    <p style="font-size:15px;color:#888;line-height:1.7;margin:0 0 20px;">
+      You left some models in your cart. Resin miniatures are produced in limited runs — once a batch sells out, restocking can take weeks.
+    </p>
+    <p style="font-size:15px;color:#888;line-height:1.7;margin:0 0 8px;">
+      Here's what's waiting for you:
+    </p>
+
+    <!-- Cart items placeholder -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;border:1px solid #222;border-radius:8px;overflow:hidden;">
+      <tr style="background:#1a1a1a;">
+        <td style="padding:12px 16px;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #222;">Item</td>
+        <td style="padding:12px 16px;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #222;text-align:right;">Price</td>
+      </tr>
+      <!-- Shopify will populate via Liquid: {% for line in checkout.line_items %} -->
+      <tr>
+        <td style="padding:14px 16px;">
+          <span style="font-size:14px;color:#e8e8e8;">{{ line.title }}</span><br>
+          <span style="font-size:12px;color:#666;">Qty: {{ line.quantity }}</span>
+        </td>
+        <td style="padding:14px 16px;text-align:right;font-size:14px;color:#c9a84c;font-weight:600;">{{ line.line_price | money }}</td>
+      </tr>
+      <!-- {% endfor %} -->
+    </table>
+
+    <!-- CTA -->
+    <table width="100%" cellpadding="0" cellspacing="0">
+    <tr><td align="center" style="padding:24px 0;">
+      <a href="{{ abandoned_checkout_url }}" style="display:inline-block;background:#c9a84c;color:#000;padding:14px 36px;border-radius:6px;font-weight:700;font-size:14px;text-decoration:none;text-transform:uppercase;letter-spacing:1px;">Complete Your Order</a>
+    </td></tr>
+    </table>
+
+    <!-- Trust signals -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;">
+    <tr>
+      <td style="font-size:12px;color:#666;text-align:center;padding:4px 0;">🔒 Secure checkout &nbsp;·&nbsp; 🚚 Free worldwide shipping &nbsp;·&nbsp; ↩️ 30-day returns</td>
+    </tr>
+    </table>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="padding:24px 40px;border-top:1px solid #222;text-align:center;">
+    <p style="font-size:11px;color:#555;margin:0;line-height:1.6;">
+      CastForge — Premium Resin Miniatures<br>
+      <a href="{{ shop.url }}" style="color:#c9a84c;text-decoration:none;">castforge.co.uk</a><br>
+      <a href="{% customer_login_url %}" style="color:#555;text-decoration:none;font-size:10px;">Manage preferences</a>
+    </p>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

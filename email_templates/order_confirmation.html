@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Order Confirmed</title>
+</head>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:'Inter',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;">
+<tr><td align="center" style="padding:40px 20px;">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#141414;border-radius:12px;border:1px solid #222;">
+  <!-- Header -->
+  <tr><td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #222;">
+    <h1 style="font-family:'Bebas Neue',Impact,sans-serif;font-size:36px;color:#c9a84c;margin:0;letter-spacing:2px;">CASTFORGE</h1>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:40px;">
+    <h2 style="font-size:24px;color:#e8e8e8;margin:0 0 16px;font-weight:600;">Order confirmed!</h2>
+    <p style="font-size:15px;color:#888;line-height:1.7;margin:0 0 20px;">
+      Thanks for your order, {{ customer.first_name | default: "collector" }}. Your models are being carefully packed and will be dispatched within 48 hours.
+    </p>
+
+    <!-- Order summary -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background:#1a1a1a;border-radius:8px;border:1px solid #222;">
+      <tr>
+        <td style="padding:16px 20px;border-bottom:1px solid #222;">
+          <span style="font-size:12px;color:#666;text-transform:uppercase;">Order</span><br>
+          <span style="font-size:14px;color:#e8e8e8;font-weight:600;">{{ order.name }}</span>
+        </td>
+        <td style="padding:16px 20px;border-bottom:1px solid #222;text-align:right;">
+          <span style="font-size:12px;color:#666;text-transform:uppercase;">Total</span><br>
+          <span style="font-size:14px;color:#c9a84c;font-weight:600;">{{ order.total_price | money }}</span>
+        </td>
+      </tr>
+      <tr><td colspan="2" style="padding:16px 20px;">
+        <span style="font-size:12px;color:#666;text-transform:uppercase;">Shipping to</span><br>
+        <span style="font-size:13px;color:#888;">{{ order.shipping_address.city }}, {{ order.shipping_address.country }}</span>
+      </td></tr>
+    </table>
+
+    <!-- CTA -->
+    <table width="100%" cellpadding="0" cellspacing="0">
+    <tr><td align="center" style="padding:24px 0;">
+      <a href="{{ order.order_status_url }}" style="display:inline-block;background:#c9a84c;color:#000;padding:14px 36px;border-radius:6px;font-weight:700;font-size:14px;text-decoration:none;text-transform:uppercase;letter-spacing:1px;">Track Your Order</a>
+    </td></tr>
+    </table>
+
+    <!-- What's next -->
+    <h3 style="font-size:16px;color:#e8e8e8;margin:24px 0 12px;">What happens next?</h3>
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="padding:8px 0;font-size:14px;color:#888;vertical-align:top;">
+          <span style="color:#c9a84c;font-weight:700;margin-right:8px;">1.</span>
+          Your order is packed with care (bubble wrap + rigid box)
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;font-size:14px;color:#888;vertical-align:top;">
+          <span style="color:#c9a84c;font-weight:700;margin-right:8px;">2.</span>
+          Tracking number emailed within 48 hours
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;font-size:14px;color:#888;vertical-align:top;">
+          <span style="color:#c9a84c;font-weight:700;margin-right:8px;">3.</span>
+          Delivery in 7–15 business days (free worldwide shipping)
+        </td>
+      </tr>
+    </table>
+
+    <!-- Painting tip -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:24px;background:#1a1a1a;border-radius:8px;border:1px solid #222;">
+    <tr><td style="padding:16px 20px;">
+      <p style="font-size:13px;color:#888;margin:0;line-height:1.6;">
+        <strong style="color:#c9a84c;">Pro tip:</strong> While you wait, check out our <a href="{{ shop.url }}/blogs/news" style="color:#c9a84c;text-decoration:none;">painting guides</a> to prep your workspace. Resin models give their best results when washed in warm soapy water before priming.
+      </p>
+    </td></tr>
+    </table>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="padding:24px 40px;border-top:1px solid #222;text-align:center;">
+    <p style="font-size:11px;color:#555;margin:0;line-height:1.6;">
+      CastForge — Premium Resin Miniatures<br>
+      <a href="{{ shop.url }}" style="color:#c9a84c;text-decoration:none;">castforge.co.uk</a><br>
+      Questions? <a href="{{ shop.url }}/pages/contact" style="color:#c9a84c;text-decoration:none;">Contact us</a>
+    </p>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

@@ -34,6 +34,8 @@
     sessionId: '',
     sending: false,
     preferences: {},
+    currencySymbol: '$',
+    currencyCode: 'USD',
   };
 
   // Load persisted session
@@ -290,7 +292,7 @@
 
     var savings = '';
     if (p.compare_at && parseFloat(p.compare_at) > parseFloat(p.price)) {
-      savings = '<span class="cf-ai-product__was">$' + parseFloat(p.compare_at).toFixed(2) + '</span>';
+      savings = '<span class="cf-ai-product__was">' + state.currencySymbol + parseFloat(p.compare_at).toFixed(2) + '</span>';
     }
 
     card.innerHTML = [
@@ -298,7 +300,7 @@
       '<div class="cf-ai-product__info">',
       '  <div class="cf-ai-product__title">' + (p.title || '') + '</div>',
       '  <div class="cf-ai-product__prices">',
-      '    <span class="cf-ai-product__price">$' + parseFloat(p.price || 0).toFixed(2) + '</span>',
+      '    <span class="cf-ai-product__price">' + state.currencySymbol + parseFloat(p.price || 0).toFixed(2) + '</span>',
       '    ' + savings,
       '  </div>',
       p.rationale ? '  <div class="cf-ai-product__rationale">' + p.rationale + '</div>' : '',
@@ -609,6 +611,15 @@
   }
   document.addEventListener('mousemove', resetIdleTimer);
   document.addEventListener('keydown', resetIdleTimer);
+
+  fetch('/cart.js').then(function(r){return r.json();}).then(function(c){
+    if (c && c.currency) {
+      state.currencyCode = c.currency;
+      var sym = {GBP:'£',USD:'$',EUR:'€',CAD:'C$',AUD:'A$',JPY:'¥'}[c.currency] || c.currency + ' ';
+      state.currencySymbol = sym;
+      console.log('[CraftForge] Currency detected:', c.currency, sym);
+    }
+  }).catch(function(){});
 
   console.log('[CraftForge] Widget fully initialized. Session:', state.sessionId);
 
