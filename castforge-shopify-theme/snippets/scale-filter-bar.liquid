@@ -1,13 +1,34 @@
+{%- comment -%}
+  Scale filter bar — shows only scales that exist in the CURRENT collection.
+  Data source: collection.all_tags filtered to 'scale:*' prefix.
+  Links filter within the current collection via Shopify's native tag filter.
+  Falls back gracefully on non-collection pages.
+{%- endcomment -%}
+
+{%- assign scale_tags = '' -%}
+{%- if collection and collection.all_tags.size > 0 -%}
+  {%- for tag in collection.all_tags -%}
+    {%- if tag contains 'scale:' -%}
+      {%- assign scale_tags = scale_tags | append: tag | append: ',' -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endif -%}
+{%- assign scale_list = scale_tags | split: ',' -%}
+
+{%- if scale_list.size > 0 -%}
 <div class="cf-scale-bar">
   <div class="cf-container">
     <div class="cf-scale-bar__inner">
       <span class="cf-scale-bar__label">Scale</span>
       <div class="cf-scale-bar__track">
         <div class="cf-scale-bar__pills">
-          {%- assign all_scales = "1/6,1/9,1/10,1/12,1/16,1/18,1/20,1/24,1/32,1/35,1/43,1/48,1/56,1/64,1/72,1/76,1/87,1/100,1/144,1/160,1/200,1/220,1/285,1/300,1/350,1/700,120mm,90mm,75mm,54mm,28mm,25mm,20mm,15mm,10mm" | split: "," -%}
-          {%- for scale in all_scales -%}
-            {%- assign slug = scale | replace: '/', '-' | downcase -%}
-            <a href="/collections/all/{{ slug }}" class="cf-scale-pill">{{ scale }}</a>
+          {%- comment -%} "All" pill clears the scale filter within current collection {%- endcomment -%}
+          <a href="{{ collection.url }}" class="cf-scale-pill{% unless current_tags contains 'scale:' %}{% for t in current_tags %}{% if t contains 'scale:' %}{% break %}{% endif %}{% endfor %} cf-scale-pill--active{% endunless %}">All</a>
+          {%- for tag in scale_list -%}
+            {%- assign label = tag | remove: 'scale:' | replace: '-', '/' -%}
+            {%- assign is_active = false -%}
+            {%- if current_tags contains tag -%}{%- assign is_active = true -%}{%- endif -%}
+            <a href="{{ collection.url }}/{{ tag | handle }}" class="cf-scale-pill{% if is_active %} cf-scale-pill--active{% endif %}">{{ label }}</a>
           {%- endfor -%}
         </div>
         <div class="cf-scale-bar__fade"></div>
@@ -25,5 +46,7 @@
 .cf-scale-bar__pills::-webkit-scrollbar { display: none; }
 .cf-scale-pill { display: inline-flex; align-items: center; padding: 5px 14px; border: 1px solid var(--cf-border, #222); border-radius: 16px; font-family: var(--cf-font-body); font-size: 12px; font-weight: 600; color: var(--cf-text, #e8e8e8); text-decoration: none; white-space: nowrap; flex-shrink: 0; scroll-snap-align: start; transition: all 0.15s; }
 .cf-scale-pill:hover { background: var(--cf-accent, #FF6B1A); border-color: var(--cf-accent); color: #fff; }
+.cf-scale-pill--active { background: var(--cf-accent, #FF6B1A); border-color: var(--cf-accent); color: #fff; }
 .cf-scale-bar__fade { position: absolute; top: 0; right: 0; width: 48px; height: 100%; background: linear-gradient(to right, transparent, var(--cf-bg-card, #141414)); pointer-events: none; }
 </style>
+{%- endif -%}
