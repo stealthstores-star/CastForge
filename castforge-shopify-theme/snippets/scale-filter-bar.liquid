@@ -1,52 +1,23 @@
-{%- comment -%}
-  Scale filter bar — shows only scales that exist in the CURRENT collection.
-  Data source: collection.all_tags filtered to 'scale:*' prefix.
-  Links filter within the current collection via Shopify's native tag filter.
-  Falls back gracefully on non-collection pages.
-{%- endcomment -%}
+{%- comment -%} DEBUG VERSION — shows raw data so we can diagnose {%- endcomment -%}
+<div style="background:#ff0;color:#000;padding:12px;font-family:monospace;font-size:11px;white-space:pre-wrap;">
+DEBUG scale-filter-bar
+template: {{ template }}
+template.name: {{ template.name }}
+collection.handle: {{ collection.handle | default: 'NONE' }}
+collection.id: {{ collection.id | default: 'NONE' }}
+collection.url: {{ collection.url | default: 'NONE' }}
+collection.products_count: {{ collection.products_count | default: 'NONE' }}
+collection.all_tags.size: {{ collection.all_tags.size | default: '0' }}
+collection.tags.size: {{ collection.tags.size | default: '0' }}
+current_tags: {{ current_tags | join: ',' | default: 'NONE' }}
 
-{%- assign scale_tags = '' -%}
-{%- if collection and collection.all_tags.size > 0 -%}
-  {%- for tag in collection.all_tags -%}
-    {%- if tag contains 'scale:' -%}
-      {%- assign scale_tags = scale_tags | append: tag | append: ',' -%}
-    {%- endif -%}
-  {%- endfor -%}
-{%- endif -%}
-{%- assign scale_list = scale_tags | split: ',' -%}
+--- first 20 all_tags ---
+{%- for tag in collection.all_tags limit: 20 -%}
+  {{ tag }}
+{% endfor -%}
 
-{%- if scale_list.size > 0 -%}
-<div class="cf-scale-bar">
-  <div class="cf-container">
-    <div class="cf-scale-bar__inner">
-      <span class="cf-scale-bar__label">Scale</span>
-      <div class="cf-scale-bar__track">
-        <div class="cf-scale-bar__pills">
-          {%- comment -%} "All" pill clears the scale filter within current collection {%- endcomment -%}
-          <a href="{{ collection.url }}" class="cf-scale-pill{% unless current_tags contains 'scale:' %}{% for t in current_tags %}{% if t contains 'scale:' %}{% break %}{% endif %}{% endfor %} cf-scale-pill--active{% endunless %}">All</a>
-          {%- for tag in scale_list -%}
-            {%- assign label = tag | remove: 'scale:' | replace: '-', '/' -%}
-            {%- assign is_active = false -%}
-            {%- if current_tags contains tag -%}{%- assign is_active = true -%}{%- endif -%}
-            <a href="{{ collection.url }}/{{ tag | handle }}" class="cf-scale-pill{% if is_active %} cf-scale-pill--active{% endif %}">{{ label }}</a>
-          {%- endfor -%}
-        </div>
-        <div class="cf-scale-bar__fade"></div>
-      </div>
-    </div>
-  </div>
+--- scale-prefixed from all_tags ---
+{%- for tag in collection.all_tags -%}
+  {%- if tag contains 'scale:' -%}{{ tag }} {%- endif -%}
+{%- endfor -%}
 </div>
-
-<style>
-.cf-scale-bar { padding: 14px 0; background: var(--cf-bg-card, #141414); border-bottom: 1px solid var(--cf-border, #222); }
-.cf-scale-bar__inner { display: flex; align-items: center; gap: 14px; }
-.cf-scale-bar__label { font-family: var(--cf-font-body); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--cf-accent, #FF6B1A); white-space: nowrap; flex-shrink: 0; }
-.cf-scale-bar__track { position: relative; flex: 1; overflow: hidden; }
-.cf-scale-bar__pills { display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding-right: 40px; }
-.cf-scale-bar__pills::-webkit-scrollbar { display: none; }
-.cf-scale-pill { display: inline-flex; align-items: center; padding: 5px 14px; border: 1px solid var(--cf-border, #222); border-radius: 16px; font-family: var(--cf-font-body); font-size: 12px; font-weight: 600; color: var(--cf-text, #e8e8e8); text-decoration: none; white-space: nowrap; flex-shrink: 0; scroll-snap-align: start; transition: all 0.15s; }
-.cf-scale-pill:hover { background: var(--cf-accent, #FF6B1A); border-color: var(--cf-accent); color: #fff; }
-.cf-scale-pill--active { background: var(--cf-accent, #FF6B1A); border-color: var(--cf-accent); color: #fff; }
-.cf-scale-bar__fade { position: absolute; top: 0; right: 0; width: 48px; height: 100%; background: linear-gradient(to right, transparent, var(--cf-bg-card, #141414)); pointer-events: none; }
-</style>
-{%- endif -%}
